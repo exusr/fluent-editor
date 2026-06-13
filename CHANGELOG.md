@@ -1,3 +1,6 @@
+## 1.0.3
+* Improved mobile web keyboard support - enabled hidden TextField for web browsers on mobile devices
+
 ## 1.0.2
 
 * Fixed selection rendering when crossing multiple logical nodes during ctrl+shift+arrow (word selection)

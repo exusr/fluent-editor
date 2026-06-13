@@ -1,6 +1,6 @@
 name: fluent_editor
 description: "A powerful and feature-rich rich word processor for Flutter applications with support for rich text editing, tables, images, lists, and export to DOCX, ODT, and PDF formats."
-version: 1.0.2
+version: 1.0.3
 homepage: https://github.com/exusr/fluent-editor
 
 environment:
