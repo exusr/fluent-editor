@@ -83,6 +83,8 @@ class _FluentSelectableAreaState extends State<FluentSelectableArea> {
   void onPanEnd(DragEndDetails details) {
     _isSelecting = false;
     _pointerDownPosition = null;
+    // Request mobile keyboard focus after drag selection ends
+    widget.document.requestMobileKeyboardFocus();
   }
   
   void onPanCancel() {

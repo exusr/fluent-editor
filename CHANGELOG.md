@@ -1,3 +1,6 @@
+## 1.0.4
+* Fixed keyboard not appearing after text selection on mobile web - now shows keyboard when drag selection ends
+
 ## 1.0.3
 * Improved mobile web keyboard support - enabled hidden TextField for web browsers on mobile devices
 
