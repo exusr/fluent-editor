@@ -1,7 +1,7 @@
 import 'dart:convert';
 import 'dart:io' show Platform;
 
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show kIsWeb, defaultTargetPlatform;
 import 'package:fluent_editor/controllers/document_language_controller.dart';
 import 'package:fluent_editor/comments/comment_provider.dart';
 import 'package:fluent_editor/spell_check/spell_check_provider.dart';
@@ -687,8 +687,8 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
     super.initState();
     widget.document.addListener(_onDocumentChanged);
     widget.document.mobileTextFieldFocusNode = _hiddenTextFieldFocusNode;
-    // Platform.isAndroid and Platform.isIOS are not supported on web
-    if (!kIsWeb && (Platform.isAndroid || Platform.isIOS)) {
+    // Enable mobile keyboard support for native mobile and mobile web
+    if (_isMobilePlatform()) {
       _previousText = '\u200B';
       _textEditingController.text = '\u200B';
       _textEditingController.addListener(_onMobileTextChanged);
@@ -828,12 +828,23 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
         .removeListener(_onLanguageChanged);
     _scrollController.dispose();
     _focusNode.dispose();
-    if (!kIsWeb && (Platform.isAndroid || Platform.isIOS)) {
+    if (_isMobilePlatform()) {
       _textEditingController.removeListener(_onMobileTextChanged);
     }
     _textEditingController.dispose();
     _hiddenTextFieldFocusNode.dispose();
     super.dispose();
+  }
+
+  /// Detects if the current platform is mobile (native or web).
+  bool _isMobilePlatform() {
+    if (!kIsWeb) {
+      // Native mobile platforms
+      return Platform.isAndroid || Platform.isIOS;
+    }
+    // Web: check if running on mobile browser
+    return defaultTargetPlatform == TargetPlatform.android ||
+           defaultTargetPlatform == TargetPlatform.iOS;
   }
 
   @override
@@ -846,8 +857,8 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
           Expanded(
             child: Stack(
               children: [
-                // Hidden TextField for mobile keyboard support (only on mobile)
-                if (!kIsWeb && (Platform.isAndroid || Platform.isIOS))
+                // Hidden TextField for mobile keyboard support (native and web)
+                if (_isMobilePlatform())
                   IgnorePointer(
                     child: Opacity(
                       opacity: 0.0,
