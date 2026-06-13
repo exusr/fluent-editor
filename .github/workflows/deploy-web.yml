@@ -32,6 +32,11 @@ jobs:
           cd example
           flutter pub get
 
+      - name: Configure web platform
+        run: |
+          cd example
+          flutter create . --platforms web
+
       - name: Build web app
         run: |
           cd example
