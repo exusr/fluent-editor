@@ -1,7 +1,7 @@
 import 'dart:convert';
 import 'dart:io' show Platform;
 
-import 'package:flutter/foundation.dart' show kIsWeb, defaultTargetPlatform;
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:fluent_editor/controllers/document_language_controller.dart';
 import 'package:fluent_editor/comments/comment_provider.dart';
 import 'package:fluent_editor/spell_check/spell_check_provider.dart';
@@ -842,9 +842,9 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
       // Native mobile platforms
       return Platform.isAndroid || Platform.isIOS;
     }
-    // Web: check if running on mobile browser
-    return defaultTargetPlatform == TargetPlatform.android ||
-           defaultTargetPlatform == TargetPlatform.iOS;
+    // Web: always enable keyboard support on web
+    // Mobile browsers will show virtual keyboard, desktop browsers won't
+    return true;
   }
 
   @override
@@ -859,14 +859,22 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
               children: [
                 // Hidden TextField for mobile keyboard support (native and web)
                 if (_isMobilePlatform())
-                  IgnorePointer(
-                    child: Opacity(
-                      opacity: 0.0,
+                  Positioned(
+                    top: 0,
+                    left: 0,
+                    child: SizedBox(
+                      width: 1,
+                      height: 1,
                       child: TextField(
                         controller: _textEditingController,
                         focusNode: _hiddenTextFieldFocusNode,
                         keyboardType: TextInputType.multiline,
                         maxLines: null,
+                        decoration: const InputDecoration(
+                          border: InputBorder.none,
+                          contentPadding: EdgeInsets.zero,
+                        ),
+                        style: const TextStyle(fontSize: 0),
                       ),
                     ),
                   ),

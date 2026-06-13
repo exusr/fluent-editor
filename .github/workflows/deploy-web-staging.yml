@@ -1,0 +1,45 @@
+name: Deploy to GitHub Pages (Staging)
+
+on:
+  push:
+    branches: [ staging ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Install dependencies
+        run: |
+          cd example
+          flutter pub get
+
+      - name: Configure web platform
+        run: |
+          cd example
+          flutter create . --platforms web
+
+      - name: Build web app
+        run: |
+          cd example
+          flutter build web --release --base-href "/fluent-editor/staging/"
+
+      - name: Deploy to gh-pages-staging branch
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./example/build/web
+          publish_branch: gh-pages-staging
+          force_orphan: true
