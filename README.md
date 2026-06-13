@@ -14,6 +14,9 @@
   <a href="https://github.com/exusr/fluent-editor/releases">
     <img src="https://img.shields.io/badge/version-1.0.2-orange" alt="Version">
   </a>
+  <a href="https://exusr.github.io/fluent-editor/">
+    <img src="https://img.shields.io/badge/demo-live-brightgreen" alt="Live Demo">
+  </a>
 </p>
 
 A powerful and feature-rich rich word processor for Flutter applications, inspired by nature 🍃.
