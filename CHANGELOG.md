@@ -1,0 +1,28 @@
+## 1.0.2
+
+* Fixed selection rendering when crossing multiple logical nodes during ctrl+shift+arrow (word selection)
+* Added Linux-specific workaround for key repeat events to ensure selection highlights update in real-time during key hold
+
+## 1.0.1
+
+* Fixed cursor initialization to point to first paragraph in empty documents
+* Improved modifier key tracking during key repeat events
+
+## 1.0.0
+
+* Initial release of FluentEditor
+* Rich text editing with bold, italic, underline, strikethrough
+* Paragraph styles (headings, normal text, code and quote)
+* Ordered and unordered lists with nested sublists
+* Tables with cell spanning support
+* Image insertion and resizing (inline and block positioning)
+* Hyperlink management
+* Text color and highlight color support
+* Text alignment (left, center, right, justify)
+* Export to DOCX, ODT, and PDF formats
+* Undo/Redo with intelligent action grouping
+* Mouse and keyboard selection support
+* Word count and character count
+* Cut, copy, and paste with formatting support
+* Precise cursor navigation with caret stops
+* Localization support with FluentEditorLabels
