@@ -22,6 +22,7 @@ dependencies:
   json_serializable: ^6.7.1
   shared_preferences: ^2.3.0
   vector_math: ^2.1.4
+  url_launcher: ^6.3.0
 
 dev_dependencies:
   flutter_test:

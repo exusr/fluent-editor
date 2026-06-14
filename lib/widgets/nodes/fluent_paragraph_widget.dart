@@ -16,6 +16,8 @@ import 'package:fluent_editor/widgets/editor/fluent_link_dialog.dart';
 import 'package:fluent_editor/widgets/editor/fluent_context_menu.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 /// Paragraph with single TextPainter.
 /// The widget is simple: manages only tap and passes cursor offsets to the render object.
@@ -539,6 +541,49 @@ class FluentParagraphWidgetState<T extends FluentParagraphWidget> extends State<
       context: context,
       globalPosition: globalPosition,
       items: [
+        FluentContextMenuItem(
+          icon: Icons.open_in_new,
+          label: widget.document.labels?.goToLink ?? 'Go to link',
+          onPressed: () async {
+            final uri = Uri.tryParse(link.url);
+            if (uri != null) {
+              // On Linux, url_launcher may have channel errors, so copy to clipboard directly
+              if (Platform.isLinux) {
+                await Clipboard.setData(ClipboardData(text: link.url));
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('URL copied to clipboard.'),
+                    duration: const Duration(seconds: 2),
+                  ),
+                );
+                return;
+              }
+              
+              try {
+                final launched = await launchUrl(uri);
+                if (!launched) {
+                  // If launch fails, copy URL to clipboard as fallback
+                  await Clipboard.setData(ClipboardData(text: link.url));
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Could not open link. URL copied to clipboard.'),
+                      duration: const Duration(seconds: 2),
+                    ),
+                  );
+                }
+              } catch (e) {
+                // Handle platform-specific errors
+                await Clipboard.setData(ClipboardData(text: link.url));
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('Could not open link. URL copied to clipboard.'),
+                    duration: const Duration(seconds: 2),
+                  ),
+                );
+              }
+            }
+          },
+        ),
         FluentContextMenuItem(
           icon: Icons.link,
           label: widget.document.labels?.replaceLink ?? 'Replace link',

@@ -116,6 +116,7 @@ class FluentEditorLabels {
   final String replaceLink;
   final String deleteImage;
   final String deleteLink;
+  final String goToLink;
 
   // Table
   final String insertRowAbove;
@@ -238,6 +239,7 @@ class FluentEditorLabels {
     this.replaceLink = 'Replace link',
     this.deleteImage = 'Delete',
     this.deleteLink = 'Delete',
+    this.goToLink = 'Go to link',
 
     this.insertRowAbove = 'Insert row above',
     this.insertRowBelow = 'Insert row below',
