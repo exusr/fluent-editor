@@ -663,3 +663,109 @@ String? _charLeft(
   }
   return null;
 }
+
+// ─── Line navigation (Home/End) ─────────────────────────────────────
+
+/// Moves the cursor to the start of the current logical line.
+NavigationResult moveToLineStart(
+  Root root,
+  CaretStop current,
+) {
+  final lines = buildAllLogicalLines(root);
+  final lineInfo = findLineForStop(lines, current);
+  if (lineInfo == null) return NavigationResult.none;
+
+  final line = lines[lineInfo.lineIndex];
+  if (line.stops.isEmpty) return NavigationResult.none;
+
+  final firstStop = line.stops.first;
+  if (firstStop == current) return NavigationResult.none;
+
+  return NavigationResult(position: firstStop, preferredX: 0.0);
+}
+
+/// Moves the cursor to the end of the current logical line.
+NavigationResult moveToLineEnd(
+  Root root,
+  CaretStop current,
+) {
+  final lines = buildAllLogicalLines(root);
+  final lineInfo = findLineForStop(lines, current);
+  if (lineInfo == null) return NavigationResult.none;
+
+  final line = lines[lineInfo.lineIndex];
+  if (line.stops.isEmpty) return NavigationResult.none;
+
+  final lastStop = line.stops.last;
+  if (lastStop == current) return NavigationResult.none;
+
+  return NavigationResult(position: lastStop, preferredX: 0.0);
+}
+
+// ─── Page navigation (Page Up/Down) ───────────────────────────────────
+
+/// Moves the cursor up by approximately 10-15 logical lines.
+NavigationResult movePageUp(
+  Root root,
+  CaretStop current,
+  double preferredX,
+  CaretXResolver resolveX,
+  CaretYResolver resolveY,
+) {
+  final lines = buildAllLogicalLines(root);
+  final lineInfo = findLineForStop(lines, current);
+  if (lineInfo == null) return NavigationResult.none;
+
+  final currentLineIndex = lineInfo.lineIndex;
+  final targetLineIndex = (currentLineIndex - 10).clamp(0, lines.length - 1);
+
+  if (targetLineIndex == currentLineIndex) {
+    // Already at or near the top, go to document start
+    final stops = buildAllStops(root);
+    if (stops.isEmpty) return NavigationResult.none;
+    final firstStop = stops.first;
+    if (firstStop == current) return NavigationResult.none;
+    return NavigationResult(position: firstStop, preferredX: preferredX);
+  }
+
+  final targetLine = lines[targetLineIndex];
+  if (targetLine.stops.isEmpty) return NavigationResult.none;
+
+  final x = preferredX >= 0.0 ? preferredX : resolveX(current);
+  final best = _stopNearestX(targetLine.stops, x, resolveX);
+
+  return NavigationResult(position: best, preferredX: x);
+}
+
+/// Moves the cursor down by approximately 10-15 logical lines.
+NavigationResult movePageDown(
+  Root root,
+  CaretStop current,
+  double preferredX,
+  CaretXResolver resolveX,
+  CaretYResolver resolveY,
+) {
+  final lines = buildAllLogicalLines(root);
+  final lineInfo = findLineForStop(lines, current);
+  if (lineInfo == null) return NavigationResult.none;
+
+  final currentLineIndex = lineInfo.lineIndex;
+  final targetLineIndex = (currentLineIndex + 10).clamp(0, lines.length - 1);
+
+  if (targetLineIndex == currentLineIndex) {
+    // Already at or near the bottom, go to document end
+    final stops = buildAllStops(root);
+    if (stops.isEmpty) return NavigationResult.none;
+    final lastStop = stops.last;
+    if (lastStop == current) return NavigationResult.none;
+    return NavigationResult(position: lastStop, preferredX: preferredX);
+  }
+
+  final targetLine = lines[targetLineIndex];
+  if (targetLine.stops.isEmpty) return NavigationResult.none;
+
+  final x = preferredX >= 0.0 ? preferredX : resolveX(current);
+  final best = _stopNearestX(targetLine.stops, x, resolveX);
+
+  return NavigationResult(position: best, preferredX: x);
+}

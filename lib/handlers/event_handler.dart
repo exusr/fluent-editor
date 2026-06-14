@@ -3,6 +3,7 @@ import 'package:fluent_editor/factories.dart';
 import 'package:fluent_editor/handlers/arrow_key_repeater.dart';
 import 'package:fluent_editor/handlers/handle_arrow_key.dart';
 import 'package:fluent_editor/handlers/handle_backspace.dart';
+import 'package:fluent_editor/handlers/handle_delete.dart';
 import 'package:fluent_editor/handlers/handle_font_family.dart';
 import 'package:fluent_editor/handlers/handle_font_size.dart';
 import 'package:fluent_editor/handlers/handle_formats.dart';
@@ -20,6 +21,7 @@ import 'package:fluent_editor/handlers/handle_paragraph_style.dart';
 import 'package:fluent_editor/renderers/render_paragraph.dart';
 import 'package:fluent_editor/styles.dart';
 import 'package:fluent_editor/utils/cursor_utils.dart';
+import 'package:fluent_editor/utils/cursor_navigation.dart';
 import 'package:fluent_editor/utils/node_operations.dart';
 import 'package:fluent_editor/widgets/editor/fluent_link_dialog.dart';
 import 'package:fluent_editor/widgets/dialogs/image_insert_dialog.dart';
@@ -208,10 +210,15 @@ class EventHandler {
   void handleKeyDown(KeyEvent event, FluentDocument document) {
     this.document = document;
     if (handleBackspaceKey(event)) return;
+    if (handleDeleteKey(event)) return;
     if (handleMetaActions(event)) return;
     if (handleEnterKey(event)) return;
     if (handleTabKey(event)) return;
     if (handleArrowKeys(event)) return;
+    if (handleHomeKey(event)) return;
+    if (handleEndKey(event)) return;
+    if (handlePageUpKey(event)) return;
+    if (handlePageDownKey(event)) return;
     handleCharacterInput(event);
   }
 
@@ -247,6 +254,122 @@ class EventHandler {
       // Save state before deletion
       document.saveState(description: 'Delete', forceNewAction: true);
       executeHandleBackspace(document, ctrl: isCtrlPressed);
+      return true;
+    }
+    return false;
+  }
+
+  bool handleDeleteKey(KeyEvent event) {
+    if (event.logicalKey == LogicalKeyboardKey.delete) {
+      // Save state before deletion
+      document.saveState(description: 'Delete', forceNewAction: true);
+      executeHandleDelete(document, ctrl: isCtrlPressed);
+      return true;
+    }
+    return false;
+  }
+
+  bool handleHomeKey(KeyEvent event) {
+    if (event.logicalKey == LogicalKeyboardKey.home) {
+      final cursor = document.cursor;
+      final current = CaretStop(cursor.anchorId, cursor.anchorOffset);
+      final result = moveToLineStart(document.content, current);
+      
+      if (result.position != null) {
+        if (isShiftPressed) {
+          cursor.focusTo(result.position!.fragmentId, result.position!.offset);
+          _syncSelectionManager(document);
+        } else {
+          cursor.moveTo(result.position!.fragmentId, result.position!.offset);
+          document.selectionManager.collapse();
+        }
+        document.syncPendingFontWithCursor();
+        document.updateContent();
+      }
+      return true;
+    }
+    return false;
+  }
+
+  bool handleEndKey(KeyEvent event) {
+    if (event.logicalKey == LogicalKeyboardKey.end) {
+      final cursor = document.cursor;
+      final current = CaretStop(cursor.anchorId, cursor.anchorOffset);
+      final result = moveToLineEnd(document.content, current);
+      
+      if (result.position != null) {
+        if (isShiftPressed) {
+          cursor.focusTo(result.position!.fragmentId, result.position!.offset);
+          _syncSelectionManager(document);
+        } else {
+          cursor.moveTo(result.position!.fragmentId, result.position!.offset);
+          document.selectionManager.collapse();
+        }
+        document.syncPendingFontWithCursor();
+        document.updateContent();
+      }
+      return true;
+    }
+    return false;
+  }
+
+  bool handlePageUpKey(KeyEvent event) {
+    if (event.logicalKey == LogicalKeyboardKey.pageUp) {
+      final cursor = document.cursor;
+      final current = CaretStop(cursor.anchorId, cursor.anchorOffset);
+      final registry = document.paragraphRegistry;
+      
+      final result = movePageUp(
+        document.content,
+        current,
+        cursor.preferredX,
+        (stop) => registry.resolveCaretX(stop),
+        (stop) => registry.resolveCaretY(stop),
+      );
+      
+      if (result.position != null) {
+        if (isShiftPressed) {
+          cursor.focusTo(result.position!.fragmentId, result.position!.offset);
+          _syncSelectionManager(document);
+        } else {
+          cursor.moveTo(result.position!.fragmentId, result.position!.offset);
+          document.selectionManager.collapse();
+        }
+        cursor.preferredX = result.preferredX;
+        document.syncPendingFontWithCursor();
+        document.updateContent();
+      }
+      return true;
+    }
+    return false;
+  }
+
+  bool handlePageDownKey(KeyEvent event) {
+    if (event.logicalKey == LogicalKeyboardKey.pageDown) {
+      final cursor = document.cursor;
+      final current = CaretStop(cursor.anchorId, cursor.anchorOffset);
+      final registry = document.paragraphRegistry;
+      
+      final result = movePageDown(
+        document.content,
+        current,
+        cursor.preferredX,
+        (stop) => registry.resolveCaretX(stop),
+        (stop) => registry.resolveCaretY(stop),
+      );
+      
+      if (result.position != null) {
+        if (isShiftPressed) {
+          cursor.focusTo(result.position!.fragmentId, result.position!.offset);
+          _syncSelectionManager(document);
+        } else {
+          cursor.moveTo(result.position!.fragmentId, result.position!.offset);
+          document.selectionManager.collapse();
+        }
+        cursor.preferredX = result.preferredX;
+        document.syncPendingFontWithCursor();
+        document.updateContent();
+      }
       return true;
     }
     return false;
