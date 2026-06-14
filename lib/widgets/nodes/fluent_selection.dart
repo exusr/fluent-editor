@@ -33,27 +33,35 @@ class _FluentSelectableAreaState extends State<FluentSelectableArea> {
   void _onPointerDown(PointerDownEvent event) {
     _pointerDownPosition = event.position;
   }
+
+  /// Returns true on native mobile (Android/iOS) or on web.
+  bool _isMobilePlatform() {
+    if (kIsWeb) return true;
+    return Platform.isAndroid || Platform.isIOS;
+  }
   
   void onPanStart(DragStartDetails details) {
-    widget.document.requestEditorFocus();
-
-    // Request focus on hidden TextField for mobile platforms to show virtual keyboard
-    if (!kIsWeb && (Platform.isAndroid || Platform.isIOS)) {
+    // Request focus on the hidden TextField first so the virtual keyboard
+    // opens on mobile (native and web). The editorFocusNode is a descendant
+    // in the same FocusScope, so shortcut events still reach it via
+    // Flutter's key-event bubbling.
+    if (_isMobilePlatform()) {
       widget.document.requestMobileKeyboardFocus();
     }
 
+    // Always request editor focus so onKeyEvent fires for shortcuts.
+    widget.document.requestEditorFocus();
+
     // CRITICAL: Use the PointerDown position if available,
-    // because details.globalPosition arrives AFTER the slop of the gesture recognizer
-    // and could be on a different line than the initial click
+    // because details.globalPosition arrives AFTER the slop of the gesture
+    // recognizer and could be on a different line than the initial click.
     final startPosition = _pointerDownPosition ?? details.globalPosition;
 
-    // Find the fragment at the initial position (the click position, not the slop)
     final result = _findFragmentAtPosition(startPosition);
 
     if (result != null) {
       _isSelecting = true;
 
-      // Start the selection
       widget.document.selectionManager.startSelection(
         result.nodeId,
         result.fragmentId,
@@ -66,11 +74,9 @@ class _FluentSelectableAreaState extends State<FluentSelectableArea> {
   void onPanUpdate(DragUpdateDetails details) {
     if (!_isSelecting) return;
 
-    // Find the fragment at the new position
     final result = _findFragmentAtPosition(details.globalPosition);
 
     if (result != null) {
-      // Update the selection focus
       widget.document.selectionManager.updateFocus(
         result.nodeId,
         result.fragmentId,
@@ -83,8 +89,10 @@ class _FluentSelectableAreaState extends State<FluentSelectableArea> {
   void onPanEnd(DragEndDetails details) {
     _isSelecting = false;
     _pointerDownPosition = null;
-    // Request mobile keyboard focus after drag selection ends
-    widget.document.requestMobileKeyboardFocus();
+    // Re-request mobile keyboard focus after drag selection ends
+    if (_isMobilePlatform()) {
+      widget.document.requestMobileKeyboardFocus();
+    }
   }
   
   void onPanCancel() {
@@ -94,7 +102,6 @@ class _FluentSelectableAreaState extends State<FluentSelectableArea> {
 
   /// Finds the fragment and local offset at a global position
   _FragmentHitResult? _findFragmentAtPosition(Offset globalPosition) {
-    // Get the RenderBox of the Scrollable or main container
     final renderBox = context.findRenderObject() as RenderBox?;
     if (renderBox == null) return null;
     
@@ -115,19 +122,16 @@ class _FluentSelectableAreaState extends State<FluentSelectableArea> {
       }
     }
 
-    // 2. Fallback: FluentImage block-level (direct children of Root/ListItem/
-    //    FluentCell). The hit test doesn't find a RenderFluentParagraph because
-    //    these widgets don't have a paragraph as render object.
+    // 2. Fallback: FluentImage block-level
     return _findBlockImageAtPosition(globalPosition);
   }
 
-  /// Searches among FluentImage and HorizontalRule in the document for the one that contains
-  /// [globalPosition] (matches via the GlobalKey registered in FluentDocument).
-  /// Returns offset 0 (left) or 1 (right) based on the tap side.
+  /// Searches among FluentImage and HorizontalRule in the document for the one
+  /// that contains [globalPosition].
   _FragmentHitResult? _findBlockImageAtPosition(Offset globalPosition) {
     _FragmentHitResult? hit;
     walkTree(widget.document.content, (node, _) {
-      if (hit != null) return false; // stop
+      if (hit != null) return false;
       if (node is FluentImage || node is HorizontalRule) {
         final keyCtx = widget.document.getKeyForNode(node.id).currentContext;
         final box = keyCtx?.findRenderObject() as RenderBox?;
@@ -143,7 +147,7 @@ class _FluentSelectableAreaState extends State<FluentSelectableArea> {
               fragmentId: node.id,
               localOffset: offset,
             );
-            return false; // stop walk
+            return false;
           }
         }
       }
@@ -153,8 +157,6 @@ class _FluentSelectableAreaState extends State<FluentSelectableArea> {
   }
   
   /// Finds the RenderFluentParagraph at a local position.
-  /// If the hit test fails (e.g. beyond the last line), searches for the paragraph
-  /// closest vertically for a fluid selection.
   RenderFluentParagraph? _findParagraphAtPosition(RenderBox root, Offset localPosition) {
     // 1. Try exact hit test
     final result = BoxHitTestResult();
@@ -167,30 +169,23 @@ class _FluentSelectableAreaState extends State<FluentSelectableArea> {
     }
 
     // 2. Fallback: find the nearest paragraph vertically
-    // This handles the case where we are beyond the last line of the document
     RenderFluentParagraph? nearestParagraph;
     double minVerticalDistance = double.infinity;
 
-    // Iterate over all render paragraphs registered in the document
     for (final paragraph in _collectAllParagraphs(root)) {
       final paragraphBox = paragraph as RenderBox;
       final paragraphRect = paragraphBox.localToGlobal(Offset.zero) & paragraphBox.size;
       final rootLocalRect = root.globalToLocal(paragraphRect.topLeft) & paragraphBox.size;
 
-      // Calculate vertical distance (consider above and below)
       double verticalDistance;
       if (localPosition.dy < rootLocalRect.top) {
-        // Above the paragraph
         verticalDistance = rootLocalRect.top - localPosition.dy;
       } else if (localPosition.dy > rootLocalRect.bottom) {
-        // Below the paragraph
         verticalDistance = localPosition.dy - rootLocalRect.bottom;
       } else {
-        // Inside the paragraph vertically (but not found by hit test)
         verticalDistance = 0;
       }
 
-      // Also consider horizontal distance if we are very far
       double horizontalDistance = 0;
       if (localPosition.dx < rootLocalRect.left) {
         horizontalDistance = rootLocalRect.left - localPosition.dx;
@@ -198,7 +193,6 @@ class _FluentSelectableAreaState extends State<FluentSelectableArea> {
         horizontalDistance = localPosition.dx - rootLocalRect.right;
       }
 
-      // Total distance (priority to vertical)
       final totalDistance = verticalDistance + horizontalDistance * 0.5;
 
       if (totalDistance < minVerticalDistance) {
@@ -210,11 +204,10 @@ class _FluentSelectableAreaState extends State<FluentSelectableArea> {
     return nearestParagraph;
   }
 
-  /// Collects all RenderFluentParagraph in the tree
+  /// Collects all RenderFluentParagraph in the render tree
   List<RenderFluentParagraph> _collectAllParagraphs(RenderBox root) {
     final paragraphs = <RenderFluentParagraph>[];
 
-    // Visit the entire tree to find RenderFluentParagraph
     void visit(RenderObject node) {
       if (node is RenderFluentParagraph) {
         paragraphs.add(node);
@@ -228,8 +221,6 @@ class _FluentSelectableAreaState extends State<FluentSelectableArea> {
 
   @override
   Widget build(BuildContext context) {
-    // Listener intercepts PointerDownEvent BEFORE the gesture recognizer
-    // This is essential to capture the exact position of the click
     return Listener(
       onPointerDown: _onPointerDown,
       child: RawGestureDetector(
@@ -258,7 +249,7 @@ class _FluentSelectableAreaState extends State<FluentSelectableArea> {
   }
 }
 
-/// Risultato di un hit test su un fragment
+/// Result of a hit test on a fragment
 class _FragmentHitResult {
   final String nodeId;
   final String fragmentId;

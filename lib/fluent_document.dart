@@ -14,6 +14,7 @@ import 'package:fluent_editor/utils/editor_utils.dart';
 import 'package:fluent_editor/widgets/editor/fluent_toolbar_widget.dart';
 import 'package:fluent_editor/widgets/nodes/fluent_selection.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:fluent_editor/factories.dart';
 import 'package:fluent_editor/handlers/event_handler.dart';
 import 'package:fluent_editor/handlers/handle_backspace.dart';
@@ -204,7 +205,8 @@ class FluentDocument extends ChangeNotifier {
   void requestEditorFocus() => editorFocusNode.requestFocus();
 
   /// FocusNode for the hidden TextField used for mobile keyboard support.
-  /// This is exposed to allow requesting focus specifically for mobile virtual keyboard.
+  /// Exposed to allow requesting focus on tap (opens the virtual keyboard
+  /// on both native mobile and mobile web).
   FocusNode? mobileTextFieldFocusNode;
   void requestMobileKeyboardFocus() => mobileTextFieldFocusNode?.requestFocus();
 
@@ -246,9 +248,6 @@ class FluentDocument extends ChangeNotifier {
 
   /// Returns the id of the inline container that directly contains
   /// the fragment (Paragraph inside a ListItem/Cell, or standalone Paragraph).
-  /// This ID is used by SelectionManager: it must match the id
-  /// of the widget that renders the text (Paragraph), so the comparison with
-  /// `getNodePath` in the widget aligns the paths correctly.
   String? findLogicalContainerId(String fragmentId) {
     final container = findLogicalContainer(_content, fragmentId);
     if (container == null) return null;
@@ -256,16 +255,12 @@ class FluentDocument extends ChangeNotifier {
   }
 
   /// Caret coordinate resolver for vertical navigation.
-  /// Tries `paragraphRegistry` first; if the stop belongs to a block-level
-  /// FluentImage (not registered as paragraph), derives coordinates from
-  /// the widget's `RenderBox` via the node's `GlobalKey`.
   double resolveCaretX(CaretStop stop) {
     final fromParagraph = _paragraphRegistry.resolveCaretX(stop);
     if (fromParagraph != 0.0) return fromParagraph;
     final box = _findBlockImageBox(stop.fragmentId);
     if (box == null) return fromParagraph;
     final origin = box.localToGlobal(Offset.zero);
-    // offset 0 = left edge, offset 1 = right edge
     return origin.dx + (stop.offset == 0 ? 0 : box.size.width);
   }
 
@@ -297,7 +292,6 @@ class FluentDocument extends ChangeNotifier {
   
   /// Helper to get the parent node ID of a fragment
   String? findParentNodeId(String fragmentId) {
-    // Search recursively in document nodes
     for (final node in _content.nodes) {
       final found = _findInNode(node, fragmentId, _content.id);
       if (found != null) return found;
@@ -308,7 +302,6 @@ class FluentDocument extends ChangeNotifier {
   String? _findInNode(FNode node, String fragmentId, String parentId) {
     if (node.id == fragmentId) return parentId;
     
-    // For InlineContainerNode (Paragraph, ListItem, Link, etc.), search in children
     if (node is InlineContainerNode) {
       for (final child in (node as InlineContainerNode).getChildren()) {
         final found = _findInNode(child, fragmentId, node.id);
@@ -316,7 +309,6 @@ class FluentDocument extends ChangeNotifier {
       }
     }
     
-    // For FluentList, also search in ListItem (which are direct children)
     if (node is FluentList) {
       for (final item in node.items) {
         final found = _findInNode(item, fragmentId, node.id);
@@ -328,12 +320,9 @@ class FluentDocument extends ChangeNotifier {
   }
   
   /// Gets the hierarchical path of a node in the document
-  /// Ex: [2] for a root node at index 2
-  /// Ex: [2, 0] for the first ListItem of the FluentList at index 2
   List<int>? getNodePath(String nodeId) {
     for (var i = 0; i < _content.nodes.length; i++) {
       if (_content.nodes[i].id == nodeId) return [i];
-      // Search recursively in children
       final found = _findNodePathRecursive(_content.nodes[i], nodeId, [i]);
       if (found != null) return found;
     }
@@ -343,10 +332,7 @@ class FluentDocument extends ChangeNotifier {
   List<int>? _findNodePathRecursive(FNode node, String targetId, List<int> currentPath) {
     if (node.id == targetId) return currentPath;
     
-    // Complete switch to handle all container node types
     switch (node) {
-      // === FLUENT LIST ===
-      // Has items (ListItem) as direct children
       case FluentList list:
         for (var i = 0; i < list.items.length; i++) {
           final item = list.items[i];
@@ -357,8 +343,6 @@ class FluentDocument extends ChangeNotifier {
         }
         break;
         
-      // === FLUENT TABLE ===
-      // Has rows (FluentRow) as direct children
       case FluentTable table:
         for (var i = 0; i < table.rows.length; i++) {
           final row = table.rows[i];
@@ -369,8 +353,6 @@ class FluentDocument extends ChangeNotifier {
         }
         break;
         
-      // === FLUENT ROW ===
-      // Has cells (FluentCell) as direct children
       case FluentRow row:
         for (var i = 0; i < row.cells.length; i++) {
           final cell = row.cells[i];
@@ -381,8 +363,6 @@ class FluentDocument extends ChangeNotifier {
         }
         break;
         
-      // === FLUENT CELL ===
-      // Has generic children (Paragraph, Image, Table, etc.)
       case FluentCell cell:
         for (var i = 0; i < cell.children.length; i++) {
           final child = cell.children[i];
@@ -393,15 +373,7 @@ class FluentDocument extends ChangeNotifier {
         }
         break;
 
-      // === PARAGRAPH, LIST ITEM, LINK ===
-      // All have fragments that can contain:
-      // - Fragment (text)
-      // - Link (from Paragraph)
-      // - FluentList (sublist, from Paragraph/ListItem)
-      // - Other inline nodes
-        
       case Paragraph paragraph when node is! ListItem && node is! Link:
-        // Generic Paragraph (not ListItem, not Link)
         for (var i = 0; i < paragraph.fragments.length; i++) {
           final child = paragraph.fragments[i];
           final newPath = [...currentPath, i];
@@ -412,7 +384,6 @@ class FluentDocument extends ChangeNotifier {
         break;
         
       case ListItem item:
-        // ListItem is a generic container with children (Paragraph, Image, Table, etc.)
         for (var i = 0; i < item.children.length; i++) {
           final child = item.children[i];
           final newPath = [...currentPath, i];
@@ -432,7 +403,6 @@ class FluentDocument extends ChangeNotifier {
         }
         break;
         
-      // Other types (Fragment, FluentImage, etc.) - leaves, have no children
       default:
         break;
     }
@@ -440,30 +410,23 @@ class FluentDocument extends ChangeNotifier {
     return null;
   }
   
-  /// Compares two hierarchical paths (lexicographic)
-  /// Returns -1 if a < b, 0 if a == b, 1 if a > b
   int _comparePaths(List<int> a, List<int> b) {
     final minLen = a.length < b.length ? a.length : b.length;
     for (var i = 0; i < minLen; i++) {
       if (a[i] < b[i]) return -1;
       if (a[i] > b[i]) return 1;
     }
-    // If all elements up to minLen are equal, the shorter path comes first
     if (a.length < b.length) return -1;
     if (a.length > b.length) return 1;
     return 0;
   }
   
-  /// True if target is between base and extent (inclusive)
   bool _isBetweenPaths(List<int> target, List<int> base, List<int> extent) {
     final compareBase = _comparePaths(target, base);
     final compareExtent = _comparePaths(target, extent);
-    // target >= base AND target <= extent
     return (compareBase >= 0) && (compareExtent <= 0);
   }
 
-  /// Determines if a node is selected (partially or completely)
-  /// using hierarchical paths to correctly handle nested structure
   bool isNodeSelected(String nodeId) {
     if (!_selectionManager.hasSelection) return false;
     
@@ -473,25 +436,19 @@ class FluentDocument extends ChangeNotifier {
     
     if (anchor == null || focus == null) return false;
     
-    // Get node paths
     final nodePath = getNodePath(nodeId);
     final anchorPath = getNodePath(anchor.nodeId);
     final focusPath = getNodePath(focus.nodeId);
     
     if (nodePath == null || anchorPath == null || focusPath == null) return false;
     
-    // Determine base and extent using paths
     final compare = _comparePaths(anchorPath, focusPath);
     final basePath = compare <= 0 ? anchorPath : focusPath;
     final extentPath = compare <= 0 ? focusPath : anchorPath;
     
-    final result = _isBetweenPaths(nodePath, basePath, extentPath);
-    
-    return result;
+    return _isBetweenPaths(nodePath, basePath, extentPath);
   }
   
-  /// For a given node, returns the selection range in terms of fragment/offset
-  /// using hierarchical paths
   ({String startFrag, int startOff, String endFrag, int endOff})? getSelectionRangeForNode(String nodeId) {
     if (!_selectionManager.hasSelection) return null;
     if (!isNodeSelected(nodeId)) return null;
@@ -506,7 +463,6 @@ class FluentDocument extends ChangeNotifier {
     
     if (nodePath == null || anchorPath == null || focusPath == null) return null;
     
-    // Determine base and extent
     final compare = _comparePaths(anchorPath, focusPath);
     final basePath = compare <= 0 ? anchorPath : focusPath;
     final extentPath = compare <= 0 ? focusPath : anchorPath;
@@ -517,7 +473,6 @@ class FluentDocument extends ChangeNotifier {
     final isExtentNode = _comparePaths(nodePath, extentPath) == 0;
     
     if (isBaseNode && isExtentNode) {
-      // Selection entirely within this node
       return (
         startFrag: base.fragmentId,
         startOff: base.offset,
@@ -525,27 +480,24 @@ class FluentDocument extends ChangeNotifier {
         endOff: extent.offset,
       );
     } else if (isBaseNode) {
-      // Selection starts here and continues in other nodes
       return (
         startFrag: base.fragmentId,
         startOff: base.offset,
-        endFrag: '',  // "" = end of node
+        endFrag: '',
         endOff: -1,
       );
     } else if (isExtentNode) {
-      // Selection ends here, started in other nodes
       return (
-        startFrag: '',  // "" = start of node
+        startFrag: '',
         startOff: 0,
         endFrag: extent.fragmentId,
         endOff: extent.offset,
       );
     } else {
-      // Node completely selected (in the middle)
       return (
-        startFrag: '',  // start
+        startFrag: '',
         startOff: 0,
-        endFrag: '',    // end
+        endFrag: '',
         endOff: -1,
       );
     }
@@ -555,9 +507,6 @@ class FluentDocument extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Updates [pendingFontFamily] based on the font of the fragment under the
-  /// collapsed cursor. Called after tap or cursor movements to
-  /// keep the font selector aligned to the current position.
   void syncPendingFontWithCursor() {
     if (cursor.isCollapsed) {
       final fragNode = findById(_content, cursor.anchorId);
@@ -568,10 +517,8 @@ class FluentDocument extends ChangeNotifier {
       pendingColor = frag?.color;
       pendingHighlightColor = frag?.highlightColor;
 
-      // Synchronize inline styles (bold, italic, underline)
       pendingStyles = List<String>.from(frag?.styles ?? []);
 
-      // Synchronize alignment, indent and style from the containing paragraph
       final container = findLogicalContainer(_content, cursor.anchorId);
       if (container is Paragraph) {
         pendingTextAlign = container.textAlign;
@@ -687,11 +634,15 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
     super.initState();
     widget.document.addListener(_onDocumentChanged);
     widget.document.mobileTextFieldFocusNode = _hiddenTextFieldFocusNode;
-    // Enable mobile keyboard support for native mobile and mobile web
+    // Enable hidden TextField listener on all mobile platforms (native and web)
     if (_isMobilePlatform()) {
       _previousText = '\u200B';
       _textEditingController.text = '\u200B';
       _textEditingController.addListener(_onMobileTextChanged);
+      // On mobile (including web), register a HardwareKeyboard handler so that
+      // shortcuts (Ctrl+B, Ctrl+Z, arrows, etc.) are intercepted globally,
+      // even when the hidden TextField owns the focus instead of editorFocusNode.
+      HardwareKeyboard.instance.addHandler(_onHardwareKeyEvent);
     }
     if (widget.document.content.nodes.isNotEmpty) {
       widget.document.cursor.document = widget.document;
@@ -708,7 +659,6 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
         widget.document.cursor.moveTo(firstNode.id, 0);
       }
     }
-    // Save the initial state so undo always has a baseline to restore to.
     widget.document.saveState(description: 'Initial state', forceNewAction: true);
     _initSpellCheck();
     DocumentLanguageController.instance.currentLanguage
@@ -717,7 +667,6 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
 
   void _initSpellCheck() async {
     await DocumentLanguageController.instance.initialize();
-    // Sync the document language with the controller (resolves system locale).
     widget.document.documentLanguage =
         DocumentLanguageController.instance.current.code;
     final provider = widget.document.spellCheckProvider;
@@ -731,12 +680,10 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
 
     final currentText = _textEditingController.text;
 
-    // Backspace detected: text became empty or shorter than previous
     if (currentText.isEmpty || currentText.length < _previousText.length) {
       widget.document.saveState(description: 'Delete', forceNewAction: true);
       executeHandleBackspace(widget.document);
     } else if (currentText.length > _previousText.length) {
-      // New character(s) inserted
       String newChars = currentText;
       if (_previousText == '\u200B' && currentText.startsWith('\u200B')) {
         newChars = currentText.substring(1);
@@ -755,7 +702,6 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
       }
     }
 
-    // Reset the text field to placeholder for next input
     _previousText = '\u200B';
     _isResettingText = true;
     _textEditingController.text = '\u200B';
@@ -771,8 +717,59 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
     }
   }
 
-  /// Scrolls the document so the cursor caret is always visible in the
-  /// viewport, with a small margin above and below.
+  /// Global HardwareKeyboard handler active on mobile (native + web).
+  /// Intercepts shortcuts and navigation keys so they reach the EventHandler
+  /// even when the hidden TextField owns the focus.
+  ///
+  /// Returns true only for shortcut/navigation keys so that normal character
+  /// input is NOT consumed here — it arrives via _onMobileTextChanged instead,
+  /// avoiding double insertion.
+  bool _onHardwareKeyEvent(KeyEvent event) {
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent) return false;
+
+    final keyboard = HardwareKeyboard.instance;
+    final isCtrl = keyboard.isControlPressed;
+    final isMeta = keyboard.isMetaPressed;
+    final isShift = keyboard.isShiftPressed;
+    final key = event.logicalKey;
+
+    // Shortcut combos (Ctrl/Meta + key)
+    if (isCtrl || isMeta) {
+      widget.document.manageEvent(event);
+      return true;
+    }
+
+    // Navigation keys
+    final navKeys = {
+      LogicalKeyboardKey.arrowLeft,
+      LogicalKeyboardKey.arrowRight,
+      LogicalKeyboardKey.arrowUp,
+      LogicalKeyboardKey.arrowDown,
+      LogicalKeyboardKey.enter,
+      LogicalKeyboardKey.backspace,
+      LogicalKeyboardKey.delete,
+      LogicalKeyboardKey.tab,
+      LogicalKeyboardKey.home,
+      LogicalKeyboardKey.end,
+      LogicalKeyboardKey.pageUp,
+      LogicalKeyboardKey.pageDown,
+    };
+
+    if (navKeys.contains(key)) {
+      widget.document.manageEvent(event);
+      return true;
+    }
+
+    // Shift + navigation (selection extension)
+    if (isShift && navKeys.contains(key)) {
+      widget.document.manageEvent(event);
+      return true;
+    }
+
+    // Normal character input: do NOT consume — let _onMobileTextChanged handle it.
+    return false;
+  }
+
   void _ensureCursorVisible() {
     if (!_scrollController.hasClients) return;
 
@@ -830,21 +827,19 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
     _focusNode.dispose();
     if (_isMobilePlatform()) {
       _textEditingController.removeListener(_onMobileTextChanged);
+      HardwareKeyboard.instance.removeHandler(_onHardwareKeyEvent);
     }
     _textEditingController.dispose();
     _hiddenTextFieldFocusNode.dispose();
     super.dispose();
   }
 
-  /// Detects if the current platform is mobile (native or web).
+  /// Returns true on native mobile (Android/iOS) and on all web platforms.
+  /// The hidden TextField is always active in these contexts so the virtual
+  /// keyboard opens on tap.
   bool _isMobilePlatform() {
-    if (!kIsWeb) {
-      // Native mobile platforms
-      return Platform.isAndroid || Platform.isIOS;
-    }
-    // Web: always enable keyboard support on web
-    // Mobile browsers will show virtual keyboard, desktop browsers won't
-    return true;
+    if (kIsWeb) return true;
+    return Platform.isAndroid || Platform.isIOS;
   }
 
   @override
@@ -857,7 +852,8 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
           Expanded(
             child: Stack(
               children: [
-                // Hidden TextField for mobile keyboard support (native and web)
+                // Hidden TextField for virtual keyboard (native mobile + mobile web).
+                // fontSize: 1 + transparent color avoids iOS zoom while staying invisible.
                 if (_isMobilePlatform())
                   Positioned(
                     top: 0,
@@ -874,7 +870,10 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
                           border: InputBorder.none,
                           contentPadding: EdgeInsets.zero,
                         ),
-                        style: const TextStyle(fontSize: 0),
+                        style: const TextStyle(
+                          fontSize: 1,
+                          color: Color(0x00000000), // fully transparent
+                        ),
                       ),
                     ),
                   ),
@@ -884,8 +883,9 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
                   child: Stack(
                     key: _contentStackKey,
                     children: [
-                      // Document area with right padding for sidebar.
-                      // Wrapped in Focus so keyboard events go to the editor.
+                      // Document area. Wrapped in Focus so keyboard shortcut
+                      // events reach the editor even when the hidden TextField
+                      // has input focus.
                       Focus(
                         focusNode: widget.document.editorFocusNode,
                         autofocus: true,
@@ -914,7 +914,6 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
                           ),
                         ),
                       ),
-                      // Sidebar area (right side, scrolls with the document)
                       if (widget.sidebar != null && !_isSidebarCollapsed)
                         Positioned(
                           top: 0,
@@ -930,7 +929,6 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
                     ],
                   ),
                 ),
-                // Stats panel in bottom-right corner (fixed, outside scroll view)
                 if (_showStatsPanel)
                   Positioned(
                     bottom: 16,
@@ -955,7 +953,6 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
                       ),
                     ),
                   ),
-                // Toggle stats button (fixed, outside scroll view)
                 Positioned(
                   bottom: _showStatsPanel ? 80 : 16,
                   right: 16,
@@ -971,7 +968,6 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
                     ),
                   ),
                 ),
-                // Sidebar collapse / expand toggle (fixed, outside scroll view)
                 if (widget.sidebar != null)
                   Positioned(
                     top: 8,
