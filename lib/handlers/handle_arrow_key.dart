@@ -122,14 +122,12 @@ bool executeHandleArrowKey(
       final candidateIds = <String>{};
       if (containerIdx >= 0) {
         candidateIds.add(containerOrder[containerIdx]);
-        if (containerIdx > 0) candidateIds.add(containerOrder[containerIdx - 1]);
-        if (containerIdx < containerOrder.length - 1) {
-          candidateIds.add(containerOrder[containerIdx + 1]);
-        }
 
-        // If inside a table or list, expand to include all containers in that
-        // structure (including nested sub-structures) so Up/Down can cross
-        // rows/items and exit the structure correctly.
+        // If inside a table or list, expand to include ALL containers in that
+        // structure so Up/Down can cross rows/items.  The immediate
+        // predecessor / successor in containerOrder are only added if they
+        // are OUTSIDE the structure, otherwise the structural expansion
+        // already covers them and they can point to the wrong column/row.
         String? _nearestStructure(String? id) {
           if (id == null) return null;
           String? pid = id;
@@ -151,12 +149,96 @@ bool executeHandleArrowKey(
           return false;
         }
 
+        String? _cellFor(String? containerId) {
+          if (containerId == null) return null;
+          String? pid = containerId;
+          while (pid != null) {
+            final node = document.nodeById(pid);
+            if (node is FluentCell) return pid;
+            pid = document.findParentCached(pid);
+          }
+          return null;
+        }
+
         final currentEnclosing = _nearestStructure(currentContainerId);
         if (currentEnclosing != null) {
-          for (final id in containerOrder) {
-            if (_isInsideStructure(id, currentEnclosing)) {
-              candidateIds.add(id);
+          final enclosingNode = document.nodeById(currentEnclosing);
+          if (enclosingNode is FluentTable) {
+            final table = enclosingNode;
+            final currentCellId = _cellFor(currentContainerId);
+            if (currentCellId != null) {
+              int rowIndex = -1;
+              int colIndex = -1;
+              for (int r = 0; r < table.rows.length; r++) {
+                final row = table.rows[r];
+                for (int c = 0; c < row.cells.length; c++) {
+                  if (row.cells[c].id == currentCellId) {
+                    rowIndex = r;
+                    colIndex = c;
+                    break;
+                  }
+                }
+                if (rowIndex >= 0) break;
+              }
+              // Current cell + cell above + cell below (same column only)
+              if (rowIndex >= 0 && colIndex >= 0) {
+                for (final id in containerOrder) {
+                  if (_isInsideStructure(id, currentCellId)) {
+                    candidateIds.add(id);
+                  }
+                }
+                if (rowIndex > 0 && colIndex < table.rows[rowIndex - 1].cells.length) {
+                  final aboveCellId = table.rows[rowIndex - 1].cells[colIndex].id;
+                  for (final id in containerOrder) {
+                    if (_isInsideStructure(id, aboveCellId)) {
+                      candidateIds.add(id);
+                    }
+                  }
+                }
+                if (rowIndex < table.rows.length - 1 &&
+                    colIndex < table.rows[rowIndex + 1].cells.length) {
+                  final belowCellId = table.rows[rowIndex + 1].cells[colIndex].id;
+                  for (final id in containerOrder) {
+                    if (_isInsideStructure(id, belowCellId)) {
+                      candidateIds.add(id);
+                    }
+                  }
+                }
+              }
             }
+          } else if (enclosingNode is FluentList) {
+            // Lists are 1-D: full structural expansion
+            for (final id in containerOrder) {
+              if (_isInsideStructure(id, currentEnclosing)) {
+                candidateIds.add(id);
+              }
+            }
+          }
+          // Find first predecessor OUTSIDE the structure (exit upward)
+          if (containerIdx > 0) {
+            for (int i = containerIdx - 1; i >= 0; i--) {
+              final id = containerOrder[i];
+              if (!_isInsideStructure(id, currentEnclosing)) {
+                candidateIds.add(id);
+                break;
+              }
+            }
+          }
+          // Find first successor OUTSIDE the structure (exit downward)
+          if (containerIdx < containerOrder.length - 1) {
+            for (int i = containerIdx + 1; i < containerOrder.length; i++) {
+              final id = containerOrder[i];
+              if (!_isInsideStructure(id, currentEnclosing)) {
+                candidateIds.add(id);
+                break;
+              }
+            }
+          }
+        } else {
+          // Not inside a table/list: use immediate neighbours as before.
+          if (containerIdx > 0) candidateIds.add(containerOrder[containerIdx - 1]);
+          if (containerIdx < containerOrder.length - 1) {
+            candidateIds.add(containerOrder[containerIdx + 1]);
           }
         }
       }
