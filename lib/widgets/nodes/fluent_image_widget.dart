@@ -214,7 +214,7 @@ class _FluentImageWidgetState
     // Check if image is selected
     bool isSelected = false;
     if (!cursor.isCollapsed) {
-      final stops = buildAllStops(widget.document.content);
+      final stops = widget.document.caretStops;
       final anchorIdx = findStopIndex(
         stops,
         cursor.anchorId,

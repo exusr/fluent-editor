@@ -1,6 +1,4 @@
-import 'package:fluent_editor/factories.dart';
 import 'package:fluent_editor/fluent_document.dart';
-import 'package:fluent_editor/utils/cursor_navigation.dart';
 import 'package:flutter/widgets.dart';
 
 /// Document cursor.
@@ -104,40 +102,4 @@ class Cursor extends ChangeNotifier {
         'focusId: $focusId, focusOffset: $focusOffset)';
   }
 
-  // ─── Selection: intersection with a fragment ─────────────────────
-
-  (int, int) getOffsets(FNode node, FNode subnode) {
-    if (subnode is! Fragment || subnode is InlineContainerNode) return (-1, -1);
-
-    if (isCollapsed) {
-      if (anchorId == subnode.id) return (anchorOffset, anchorOffset);
-      return (-1, -1);
-    }
-
-    final stops = buildAllStops(document.content);
-
-    int fragFirst = -1, fragLast = -1;
-    for (int i = 0; i < stops.length; i++) {
-      if (stops[i].fragmentId == subnode.id) {
-        if (fragFirst == -1) fragFirst = i;
-        fragLast = i;
-      }
-    }
-    if (fragFirst == -1) return (-1, -1);
-
-    final anchorIdx = findStopIndex(stops, anchorId, anchorOffset);
-    final focusIdx = findStopIndex(stops, focusId, focusOffset);
-    if (anchorIdx == -1 || focusIdx == -1) return (-1, -1);
-
-    final selStartIdx = anchorIdx <= focusIdx ? anchorIdx : focusIdx;
-    final selEndIdx = anchorIdx <= focusIdx ? focusIdx : anchorIdx;
-
-    if (selEndIdx <= fragFirst || selStartIdx >= fragLast) return (-1, -1);
-
-    final localStartIdx =
-        selStartIdx >= fragFirst ? selStartIdx : fragFirst;
-    final localEndIdx = selEndIdx <= fragLast ? selEndIdx : fragLast;
-
-    return (stops[localStartIdx].offset, stops[localEndIdx].offset);
-  }
 }

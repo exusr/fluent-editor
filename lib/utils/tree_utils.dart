@@ -1,7 +1,6 @@
 import 'package:fluent_editor/core/constants.dart';
 import 'package:fluent_editor/core/types.dart';
 import 'package:fluent_editor/factories.dart';
-import 'package:fluent_editor/handlers/event_handler.dart';
 
 FNodeRange? findDirectParent(FNode root, FNode target) {
   if (root is InlineContainerNode) {
@@ -22,12 +21,23 @@ FNodeRange? findDirectParent(FNode root, FNode target) {
 }
 
 
+/// Counts characters excluding zero-width space (ZWS) without
+/// allocating a new string via replaceAll. Called inside tight
+/// loops (e.g. getNextFragmentRecursive), so every allocation matters.
+int _countWithoutZws(String text) {
+  int count = 0;
+  for (int i = 0; i < text.length; i++) {
+    if (text[i] != Whitespaces.zws) count++;
+  }
+  return count;
+}
+
 // Return node length (sum of all fragments length)
 int nodeLength(FNode node) {
   if (node is InlineContainerNode) {
-    return (node as InlineContainerNode).text.replaceAll(Whitespaces.zws, '').length;
+    return _countWithoutZws((node as InlineContainerNode).text);
   }
-  if (node is Fragment) return node.text.replaceAll(Whitespaces.zws, '').length;
+  if (node is Fragment) return _countWithoutZws(node.text);
   return 0;
 }
 
@@ -92,31 +102,4 @@ InlineContainerNode? findNodeBeforeRecursive(FNode container, FNode targetNode) 
     }
   }
   return null;
-}
-
-void walkForFragments(
-  EventHandler eventHandler,
-  FNode node,
-  List<FragmentRange> results, {
-  required FNode parent,
-}) {
-  if (node is InlineContainerNode) {
-    for (final child in (node as InlineContainerNode).fragments) {
-      walkForFragments(eventHandler, child, results, parent: node);
-    }
-    return;
-  }
-  if (node is Fragment) {
-    // getOffsets finds the top-level container automatically
-    final (anchorOffset, focusOffset) = eventHandler.document.cursor
-        .getOffsets(node, node);
-    if (anchorOffset != -1 && focusOffset != -1) {
-      results.add(FragmentRange(
-        fragment: node,
-        parent: parent,
-        offset: anchorOffset,
-        focus: focusOffset,
-      ));
-    }
-  }
 }

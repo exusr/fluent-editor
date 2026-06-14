@@ -161,16 +161,20 @@ ResolvedSelection? resolveSelection(
   String anchorFragmentId,
   int anchorOffset,
   String focusFragmentId,
-  int focusOffset,
-) {
+  int focusOffset, {
+  List<CaretStop>? cachedStops,
+  List<LogicalLine>? cachedLines,
+}) {
   // Collapsed selection: nothing to resolve
   if (anchorFragmentId == focusFragmentId && anchorOffset == focusOffset) {
     return null;
   }
 
-  // Build the stop rail to determine the order in the document
-  final stops = buildAllStops(root);
-  final lines = buildAllLogicalLines(root);
+  // Build the stop rail to determine the order in the document.
+  // Use cached values when provided (e.g. from document.caretStops /
+  // document.logicalLines) to avoid O(n) rebuild on every key press.
+  final stops = cachedStops ?? buildAllStops(root);
+  final lines = cachedLines ?? buildAllLogicalLines(root);
 
   final anchorIdx = findStopIndex(stops, anchorFragmentId, anchorOffset);
   final focusIdx  = findStopIndex(stops, focusFragmentId,  focusOffset);
@@ -182,7 +186,7 @@ ResolvedSelection? resolveSelection(
   final baseIdx   = baseIsAnchor ? anchorIdx : focusIdx;
   final extentIdx = baseIsAnchor ? focusIdx  : anchorIdx;
 
-  // Resolve the Fragments (HorizontalRule extends Fragment so it works directly)
+  // Resolve the Fragments (HorizontalRule extends Fragment so it works directly).
   final anchorFragResolved = findById(root, anchorFragmentId);
   final focusFragResolved  = findById(root, focusFragmentId);
   if (anchorFragResolved is! Fragment || focusFragResolved is! Fragment) return null;

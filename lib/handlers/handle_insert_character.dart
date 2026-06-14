@@ -139,7 +139,7 @@ void executeHandleInsertCharacter(String character, FluentDocument document) {
 
     // Notify comment system of the text mutation.
     final fragId = document.cursor.anchorId;
-    final frag = findById(document.content, fragId);
+    final frag = document.nodeById(fragId);
     final parent = frag != null ? findParent(document.content, frag) : null;
     if (parent is Paragraph) {
       final globalOffset = document.getGlobalOffsetInParagraph(

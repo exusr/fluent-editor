@@ -12,8 +12,9 @@ ParagraphStyle _$ParagraphStyleFromJson(Map<String, dynamic> json) =>
       displayName: json['displayName'] as String,
       fontFamily: json['fontFamily'] as String?,
       fontSize: (json['fontSize'] as num?)?.toDouble(),
-      styles:
-          (json['styles'] as List<dynamic>?)?.map((e) => e as String).toList(),
+      styles: (json['styles'] as List<dynamic>?)
+          ?.map((e) => e as String)
+          .toList(),
       color: json['color'] as String?,
       highlightColor: json['highlightColor'] as String?,
       textAlign: json['textAlign'] as String?,

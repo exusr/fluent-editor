@@ -14,7 +14,6 @@ import 'package:fluent_editor/handlers/handle_clipboard.dart';
 import 'package:fluent_editor/handlers/handle_select_all.dart';
 import 'package:fluent_editor/localization/fluent_editor_labels.dart';
 import 'package:fluent_editor/utils/fragment_operations.dart';
-import 'package:fluent_editor/utils/node_operations.dart';
 import 'package:fluent_editor/utils/resolve_selection.dart';
 import 'package:fluent_editor/widgets/dialogs/author_info_dialog.dart';
 import 'package:fluent_editor/widgets/editor/fluent_font_selector_widget.dart';
@@ -59,6 +58,7 @@ class _FluentToolbarState extends State<FluentToolbar> {
   void initState() {
     super.initState();
     widget.document.addListener(_onDocumentChanged);
+    widget.document.cursor.addListener(_onCursorChanged);
     DocumentLanguageController.instance.currentLanguage.addListener(_onLanguageControllerChanged);
     _updateFormats();
     _listenToComments();
@@ -80,6 +80,8 @@ class _FluentToolbarState extends State<FluentToolbar> {
     if (oldWidget.document != widget.document) {
       oldWidget.document.removeListener(_onDocumentChanged);
       widget.document.addListener(_onDocumentChanged);
+      oldWidget.document.cursor.removeListener(_onCursorChanged);
+      widget.document.cursor.addListener(_onCursorChanged);
       _updateFormats();
       _listenToComments();
     }
@@ -88,6 +90,7 @@ class _FluentToolbarState extends State<FluentToolbar> {
   @override
   void dispose() {
     widget.document.removeListener(_onDocumentChanged);
+    widget.document.cursor.removeListener(_onCursorChanged);
     DocumentLanguageController.instance.currentLanguage.removeListener(_onLanguageControllerChanged);
     _commentSub?.cancel();
     super.dispose();
@@ -97,7 +100,14 @@ class _FluentToolbarState extends State<FluentToolbar> {
     widget.document.documentLanguage = DocumentLanguageController.instance.current.code;
   }
 
-  void _onDocumentChanged() => _updateFormats();
+  void _onDocumentChanged() {
+    // Cursor-only changes are handled by _onCursorChanged; skip here
+    // to avoid duplicate _updateFormats calls.
+    if (widget.document.cursorOnlyChange) return;
+    _updateFormats();
+  }
+
+  void _onCursorChanged() => _updateFormats();
 
   void _updateFormats() {
     final newBold = _checkStyle('bold');
@@ -126,9 +136,10 @@ class _FluentToolbarState extends State<FluentToolbar> {
   }
 
   TextAlign _resolveTextAlign() {
-    final root = widget.document.content;
-    final cursor = widget.document.cursor;
-    final container = findLogicalContainer(root, cursor.anchorId);
+    final containerId = widget.document
+        .findLogicalContainerId(widget.document.cursor.anchorId);
+    if (containerId == null) return TextAlign.left;
+    final container = widget.document.nodeById(containerId);
     if (container is Paragraph) return _parseTextAlign(container.textAlign);
     if (container is FluentImage) return _parseTextAlign(container.textAlign);
     return TextAlign.left;
@@ -146,9 +157,8 @@ class _FluentToolbarState extends State<FluentToolbar> {
   bool _hasSelection() => !widget.document.cursor.isCollapsed;
 
   bool _isCursorOnImage() {
-    final root = widget.document.content;
     final cursor = widget.document.cursor;
-    final currentNode = findById(root, cursor.anchorId);
+    final currentNode = widget.document.nodeById(cursor.anchorId);
     if (currentNode is FluentImage) return true;
     if (currentNode is Paragraph) {
       final fragments = currentNode.fragments;
@@ -165,6 +175,8 @@ class _FluentToolbarState extends State<FluentToolbar> {
     if (!cursor.isCollapsed) {
       final selection = resolveSelection(
         root, cursor.anchorId, cursor.anchorOffset, cursor.focusId, cursor.focusOffset,
+        cachedStops: widget.document.caretStops,
+        cachedLines: widget.document.logicalLines,
       );
       if (selection != null) {
         for (final node in selection.nodes) {

@@ -71,6 +71,8 @@ void executeHandleReplaceSelection(String character, FluentDocument document) {
     document.cursor.anchorOffset,
     document.cursor.focusId,
     document.cursor.focusOffset,
+    cachedStops: document.caretStops,
+    cachedLines: document.logicalLines,
   );
 
   if (sel == null) return;

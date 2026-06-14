@@ -22,7 +22,6 @@ import 'package:fluent_editor/renderers/render_paragraph.dart';
 import 'package:fluent_editor/styles.dart';
 import 'package:fluent_editor/utils/cursor_utils.dart';
 import 'package:fluent_editor/utils/cursor_navigation.dart';
-import 'package:fluent_editor/utils/node_operations.dart';
 import 'package:fluent_editor/widgets/editor/fluent_link_dialog.dart';
 import 'package:fluent_editor/widgets/dialogs/image_insert_dialog.dart';
 import 'package:flutter/services.dart';
@@ -54,7 +53,9 @@ class EventHandler {
       // Collapse global selection
       document.selectionManager.collapse();
       document.syncPendingFontWithCursor();
-      document.updateContent();
+      // Tap does NOT mutate content: use cursor-only update to avoid
+      // invalidating caches and committing an empty undo delta.
+      document.cursorOnlyUpdate();
     }
   }
 
@@ -71,7 +72,8 @@ class EventHandler {
       // Collapse global selection
       document.selectionManager.collapse();
       document.syncPendingFontWithCursor();
-      document.updateContent();
+      // Tap does NOT mutate content: use cursor-only update.
+      document.cursorOnlyUpdate();
     }
   }
 
@@ -84,8 +86,7 @@ class EventHandler {
     final paragraph = renderBox as RenderFluentParagraph;
     final fragmentResult = paragraph.getFragmentAtPosition(localPosition);
     if (fragmentResult != null) {
-      final root = document.content;
-      final node = findById(root, fragmentResult.fragmentId);
+      final node = document.nodeById(fragmentResult.fragmentId);
       if (node is Fragment) {
         final text = node.text;
         final offset = fragmentResult.localOffset;
@@ -111,67 +112,41 @@ class EventHandler {
         // Sync SelectionManager to show visual selection
         _syncSelectionManager(document);
 
-        document.updateContent();
+        // Double-tap does NOT mutate content: cursor-only update.
+        document.cursorOnlyUpdate();
       }
     }
   }
 
   // Triple-tap to select the entire logical line.
-  // Finds the logical line containing the tapped fragment, then selects
-  // from the first stop to the last stop of that line.
+  // Uses RenderFluentParagraph.getLineBoundsAtOffset which performs
+  // an O(log n) TextPainter lookup instead of building all logical
+  // lines of the document (O(n_documento)).
   void onTripleTapWithPosition(
     Offset localPosition,
     RenderBox renderBox,
     Widget widget,
   ) {
     final paragraph = renderBox as RenderFluentParagraph;
-    final fragmentResult = paragraph.getFragmentAtPosition(localPosition);
-    if (fragmentResult == null) return;
+    final bounds = paragraph.getLineBoundsAtOffset(localPosition);
+    if (bounds == null) return;
 
-    final root = document.content;
-    final tappedFragmentId = fragmentResult.fragmentId;
-
-    // Find the logical line by searching for any stop belonging to the tapped fragment.
-    // We cannot rely on exact stop matching since tap offsets may not align exactly.
-    final lines = buildAllLogicalLines(root);
-    LogicalLine? targetLine;
-    for (final line in lines) {
-      if (line.stops.any((s) => s.fragmentId == tappedFragmentId)) {
-        targetLine = line;
-        break;
-      }
-    }
-
-    // If still not found, fall back to the logical container of the tapped fragment
-    if (targetLine == null) {
-      final container = findLogicalContainer(root, tappedFragmentId);
-      if (container != null) {
-        for (final line in lines) {
-          if (line.node == container) {
-            targetLine = line;
-            break;
-          }
-        }
-      }
-    }
-
-    if (targetLine == null || targetLine.stops.isEmpty) return;
-
-    final firstStop = targetLine.stops.first;
-    final lastStop = targetLine.stops.last;
-
-    // Move anchor to line start, focus to line end
-    document.cursor.moveTo(firstStop.fragmentId, firstStop.offset);
-    document.cursor.focusTo(lastStop.fragmentId, lastStop.offset);
+    document.cursor.moveTo(bounds.startFrag, bounds.startOff);
+    document.cursor.focusTo(bounds.endFrag, bounds.endOff);
 
     _syncSelectionManager(document);
     document.syncPendingFontWithCursor();
-    document.updateContent();
+    // Triple-tap does NOT mutate content: cursor-only update.
+    document.cursorOnlyUpdate();
   }
 
+  /// Pre-compiled RegExp for word-character detection.
+  /// Creating a new RegExp for every character in the double-tap loop
+  /// was a severe bottleneck (1000+ allocations per long paragraph).
+  static final _wordCharRe = RegExp(r'[\w]');
+
   bool _isWordChar(String char) {
-    // Word characters: letters, numbers, underscore, and some common punctuation
-    return RegExp(r'[\w]').hasMatch(char);
+    return _wordCharRe.hasMatch(char);
   }
 
   /// Synchronizes SelectionManager with the current cursor state.
@@ -326,8 +301,11 @@ class EventHandler {
     if (event.logicalKey == LogicalKeyboardKey.home) {
       final cursor = document.cursor;
       final current = CaretStop(cursor.anchorId, cursor.anchorOffset);
-      final result = moveToLineStart(document.content, current);
-      
+      final result = moveToLineStart(
+        document.content, current,
+        lines: document.logicalLines,
+      );
+
       if (result.position != null) {
         if (isShiftPressed) {
           cursor.focusTo(result.position!.fragmentId, result.position!.offset);
@@ -337,7 +315,8 @@ class EventHandler {
           document.selectionManager.collapse();
         }
         document.syncPendingFontWithCursor();
-        document.updateContent();
+        // Home/End do NOT mutate content: cursor-only update.
+        document.cursorOnlyUpdate();
       }
       return true;
     }
@@ -348,8 +327,11 @@ class EventHandler {
     if (event.logicalKey == LogicalKeyboardKey.end) {
       final cursor = document.cursor;
       final current = CaretStop(cursor.anchorId, cursor.anchorOffset);
-      final result = moveToLineEnd(document.content, current);
-      
+      final result = moveToLineEnd(
+        document.content, current,
+        lines: document.logicalLines,
+      );
+
       if (result.position != null) {
         if (isShiftPressed) {
           cursor.focusTo(result.position!.fragmentId, result.position!.offset);
@@ -359,7 +341,7 @@ class EventHandler {
           document.selectionManager.collapse();
         }
         document.syncPendingFontWithCursor();
-        document.updateContent();
+        document.cursorOnlyUpdate();
       }
       return true;
     }
@@ -371,15 +353,16 @@ class EventHandler {
       final cursor = document.cursor;
       final current = CaretStop(cursor.anchorId, cursor.anchorOffset);
       final registry = document.paragraphRegistry;
-      
+
       final result = movePageUp(
         document.content,
         current,
         cursor.preferredX,
         (stop) => registry.resolveCaretX(stop),
         (stop) => registry.resolveCaretY(stop),
+        lines: document.logicalLines,
       );
-      
+
       if (result.position != null) {
         if (isShiftPressed) {
           cursor.focusTo(result.position!.fragmentId, result.position!.offset);
@@ -390,7 +373,7 @@ class EventHandler {
         }
         cursor.preferredX = result.preferredX;
         document.syncPendingFontWithCursor();
-        document.updateContent();
+        document.cursorOnlyUpdate();
       }
       return true;
     }
@@ -402,15 +385,16 @@ class EventHandler {
       final cursor = document.cursor;
       final current = CaretStop(cursor.anchorId, cursor.anchorOffset);
       final registry = document.paragraphRegistry;
-      
+
       final result = movePageDown(
         document.content,
         current,
         cursor.preferredX,
         (stop) => registry.resolveCaretX(stop),
         (stop) => registry.resolveCaretY(stop),
+        lines: document.logicalLines,
       );
-      
+
       if (result.position != null) {
         if (isShiftPressed) {
           cursor.focusTo(result.position!.fragmentId, result.position!.offset);
@@ -421,7 +405,7 @@ class EventHandler {
         }
         cursor.preferredX = result.preferredX;
         document.syncPendingFontWithCursor();
-        document.updateContent();
+        document.cursorOnlyUpdate();
       }
       return true;
     }

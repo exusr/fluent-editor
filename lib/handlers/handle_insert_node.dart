@@ -29,6 +29,8 @@ void handleInsertNodeExceution(
       cursor.anchorOffset,
       cursor.focusId,
       cursor.focusOffset,
+      cachedStops: document.caretStops,
+      cachedLines: document.logicalLines,
     );
     if (sel != null && sel.nodes.isNotEmpty) {
       final items = <ListItem>[];
@@ -160,7 +162,10 @@ void _insertImage(
   if (container is Paragraph) {
     final containerParent = findParent(root, container);
     if (containerParent is Root) {
-      final atEnd = _isCursorAtEndOfContainer(root, cursor, container);
+      final atEnd = _isCursorAtEndOfContainer(
+        root, cursor, container,
+        cachedStops: document.caretStops,
+      );
       final atStart = cursor.anchorOffset == 0 &&
           container.getChildren().isNotEmpty &&
           container.getChildren().first.id == cursor.anchorId;
@@ -186,7 +191,7 @@ void _insertImage(
   }
 
   // Inline: find the current fragment and split
-  final currentFrag = findById(root, cursor.anchorId) as Fragment?;
+  final currentFrag = document.nodeById(cursor.anchorId) as Fragment?;
   if (currentFrag == null) return;
   final parent = findParent(root, currentFrag);
   if (parent == null) return;
@@ -291,7 +296,10 @@ void _insertBlockNode(
   // at the beginning or end, insert directly in Root without splitting.
   final containerParent = findParent(root, container);
   if (container is Paragraph && containerParent is Root) {
-    final atEnd = _isCursorAtEndOfContainer(root, cursor, container);
+    final atEnd = _isCursorAtEndOfContainer(
+      root, cursor, container,
+      cachedStops: document.caretStops,
+    );
     final atStart = cursor.anchorOffset == 0 &&
         container.getChildren().isNotEmpty &&
         container.getChildren().first.id == cursor.anchorId;
@@ -359,12 +367,15 @@ ListItem? _findEnclosingListItem(Root root, FNode node) {
 }
 
 /// Verifies if the cursor is at the last stop of [container].
+/// If [cachedStops] is provided (e.g. document.caretStops), it is used
+/// directly instead of rebuilding the entire stop rail with buildAllStops.
 bool _isCursorAtEndOfContainer(
   Root root,
   Cursor cursor,
-  InlineContainerNode container,
-) {
-  final stops = buildAllStops(root);
+  InlineContainerNode container, {
+  List<CaretStop>? cachedStops,
+}) {
+  final stops = cachedStops ?? buildAllStops(root);
   final containerId = (container as FNode).id;
   final containerStops = stops.where((s) {
     final c = findLogicalContainer(root, s.fragmentId);
@@ -386,7 +397,7 @@ void _splitParagraphAtCursor(
   FNode newNode,
   FluentDocument document,
 ) {
-  final fragNode = findById(root, cursor.anchorId);
+  final fragNode = document.nodeById(cursor.anchorId);
   final frag = fragNode is Fragment ? fragNode : null;
   if (frag == null) return;
 

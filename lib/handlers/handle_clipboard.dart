@@ -55,6 +55,8 @@ Future<void> executeHandleCopy(FluentDocument document) async {
     cursor.anchorOffset,
     cursor.focusId,
     cursor.focusOffset,
+    cachedStops: document.caretStops,
+    cachedLines: document.logicalLines,
   );
 
   if (sel == null) return;

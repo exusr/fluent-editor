@@ -199,7 +199,7 @@ bool _handleListOutdent(FluentDocument document, ListItem currentItem) {
     mergeConsecutiveLists(root);
 
     // Restore the cursor position (the original fragment survives)
-    final originalFrag = findById(root, savedFragId);
+    final originalFrag = document.nodeById(savedFragId);
     if (originalFrag is Fragment) {
       cursor.moveTo(savedFragId, savedOffset.clamp(0, originalFrag.text.length));
     } else {
@@ -223,7 +223,7 @@ bool _handleListOutdent(FluentDocument document, ListItem currentItem) {
 
   // Restore the cursor position: try the original fragment first
   // (it might still exist in the newParagraph), otherwise go to the end.
-  final originalFrag = findById(root, savedFragId);
+  final originalFrag = document.nodeById(savedFragId);
   if (originalFrag != null) {
     cursor.moveTo(savedFragId, savedOffset.clamp(0, (originalFrag as Fragment).text.length));
   } else if (newParagraph.fragments.isNotEmpty) {

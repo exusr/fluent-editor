@@ -2,8 +2,6 @@
 import 'package:fluent_editor/core/constants.dart';
 import 'package:fluent_editor/factories.dart';
 import 'package:fluent_editor/fluent_document.dart';
-import 'package:fluent_editor/utils/cursor_utils.dart';
-
 class FNodeRange {
   final FNode node;
   final FNode? parent;
@@ -34,7 +32,7 @@ class CursorOffset {
   //convert local cursor coords to global position managing boundaries chars
   void _foundForward(FluentDocument document) {
     for (final topLevelNode in document.content.nodes) {
-      final flat = flattenFragmentsSimple(topLevelNode);
+      final flat = document.flattenContainer(topLevelNode);
       var skipped = false;
       for (final (fragment, startOffset, _) in flat) {
         if (skipped && fragment.text.contains(Whitespaces.zws)) {
@@ -60,7 +58,7 @@ class CursorOffset {
   //convert local cursor coords to global position managing boundaries chars
   void _foundBackward(FluentDocument document) {
     for (final topLevelNode in document.content.nodes) {
-      final flat = flattenFragmentsSimple(topLevelNode);
+      final flat = document.flattenContainer(topLevelNode);
       (Fragment, int)? lastStep;
       for (final (fragment, startOffset, _) in flat) {
         if (fragment.id == id) {

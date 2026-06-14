@@ -24,7 +24,9 @@ class _FluentEditorState extends State<FluentEditor> {
   }
 
   void _onDocumentChanged() {
-    // Force widget rebuild when document content changes
+    // Skip full rebuild on cursor-only changes — paragraph widgets
+    // already listen to the cursor and repaint the caret independently.
+    if (_document.cursorOnlyChange) return;
     setState(() {});
   }
 

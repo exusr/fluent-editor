@@ -5,7 +5,6 @@ import 'package:fluent_editor/handlers/event_handler.dart';
 import 'package:fluent_editor/renderers/render_fluent_node.dart';
 import 'package:fluent_editor/renderers/render_fragment.dart';
 import 'package:fluent_editor/renderers/render_paragraph.dart';
-import 'package:fluent_editor/utils/editor_utils.dart';
 import 'package:fluent_editor/utils/tree_utils.dart';
 import 'package:fluent_editor/widgets/nodes/fluent_paragraph_widget.dart';
 import 'package:flutter/gestures.dart';
@@ -167,12 +166,13 @@ Fragment? getLastFragmentRecursive(InlineContainerNode node) {
 FragmentRange? getFragmentAtCursor(EventHandler eventHandler) {
   final cursor = eventHandler.document.cursor;
   final targetId = cursor.anchorId;
-  final node = findRecursive(eventHandler.document.content, (node) => node.id == targetId);
+  final node = eventHandler.document.nodeById(targetId);
   if (node == null) {
     return null;
   }
-  // Flatten all fragments in the container with their global offsets
-  final flat = flattenFragmentsSimple(node);
+  // Flatten all fragments in the container with their global offsets.
+  // Use the document cache to avoid rebuilding on repeated calls.
+  final flat = eventHandler.document.flattenContainer(node);
   for (int i = 0; i < flat.length; i++) {
     final (fragment, startOffset, endOffset) = flat[i];
     // Check if the cursor offset falls within this fragment
@@ -191,19 +191,6 @@ FragmentRange? getFragmentAtCursor(EventHandler eventHandler) {
   return null;
 }
 
-List<FragmentRange> getFragmentsInRange(EventHandler eventHandler) {
-  final results = <FragmentRange>[];
-  for (final node in eventHandler.document.content.nodes) {
-    walkForFragments(
-      eventHandler,
-      node,
-      results,
-      parent: node,
-    );
-  }
-  return results;
-}
-
 int findCurrentFragmentIndex(InlineContainerNode parent, Cursor cursor) {
   final flat = flattenFragmentsSimple(parent as FNode);
   var currentIndex = -1;
@@ -220,6 +207,6 @@ int findCurrentFragmentIndex(InlineContainerNode parent, Cursor cursor) {
 //region cursor finds
 FNode? getNodeAtCursor(EventHandler eventHandler) {
   final targetId = eventHandler.document.cursor.anchorId;
-  return findRecursive(eventHandler.document.content, (node) => node.id == targetId);
+  return eventHandler.document.nodeById(targetId);
 }
 

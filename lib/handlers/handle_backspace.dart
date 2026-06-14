@@ -26,6 +26,8 @@ bool executeHandleBackspace(FluentDocument document, {bool ctrl = false}) {
     cursor.anchorOffset,
     cursor.focusId,
     cursor.focusOffset,
+    cachedStops: document.caretStops,
+    cachedLines: document.logicalLines,
   );
 
   if (selection != null) {
@@ -41,9 +43,13 @@ bool executeHandleBackspace(FluentDocument document, {bool ctrl = false}) {
 
   // Find the fragment and the current container
   // Case 2a: If cursor is on a HorizontalRule, remove it.
-  final currentNode = findById(root, cursor.anchorId);
+  final currentNode = document.nodeById(cursor.anchorId);
   if (currentNode is HorizontalRule) {
-    final targetStop = _findPreviousStop(root, cursor.anchorId, 0);
+    final targetStop = _findPreviousStop(
+      root, cursor.anchorId, 0,
+      cachedStops: document.caretStops,
+      cachedLines: document.logicalLines,
+    );
     removeNode(root, currentNode);
     if (targetStop != null) {
       cursor.moveTo(targetStop.fragmentId, targetStop.offset);
@@ -81,7 +87,11 @@ bool executeHandleBackspace(FluentDocument document, {bool ctrl = false}) {
   // Special case: cursor is inside an empty paragraph.
   // Remove the paragraph and move the cursor to the end of the previous one.
   if (container is Paragraph && container.text.isEmpty) {
-    final prevStop = _findPreviousStop(root, cursor.anchorId, 0);
+    final prevStop = _findPreviousStop(
+      root, cursor.anchorId, 0,
+      cachedStops: document.caretStops,
+      cachedLines: document.logicalLines,
+    );
     if (prevStop != null) {
       removeNode(root, container as FNode);
       cursor.moveTo(prevStop.fragmentId, prevStop.offset);
@@ -96,7 +106,11 @@ bool executeHandleBackspace(FluentDocument document, {bool ctrl = false}) {
   // The cursor should be positioned on the stop that precedes the image
   // (offset 0 of the image → moveLeft gives the true previous).
   if (currentFrag is FluentImage) {
-    final targetStop = _findPreviousStop(root, cursor.anchorId, 0);
+    final targetStop = _findPreviousStop(
+      root, cursor.anchorId, 0,
+      cachedStops: document.caretStops,
+      cachedLines: document.logicalLines,
+    );
     removeNode(root, currentFrag);
     if (targetStop != null) {
       cursor.moveTo(targetStop.fragmentId, targetStop.offset);
@@ -144,17 +158,19 @@ bool _handleBackspaceAtStart(
   final cursor = document.cursor;
 
   // Find the previous node in the document
-  final prevStop = moveLeft(root, CaretStop(
-    cursor.anchorId,
-    cursor.anchorOffset,
-  ));
+  final prevStop = moveLeft(
+    root,
+    CaretStop(cursor.anchorId, cursor.anchorOffset),
+    stops: document.caretStops,
+    cachedLines: document.logicalLines,
+  );
 
   if (prevStop.position == null) {
     // We're at the start of the document, nothing to do
     return false;
   }
 
-  final prevFrag = findById(root, prevStop.position!.fragmentId) as Fragment?;
+  final prevFrag = document.nodeById(prevStop.position!.fragmentId) as Fragment?;
   if (prevFrag == null) return false;
 
   final prevContainer = findLogicalContainer(root, prevStop.position!.fragmentId);
@@ -516,8 +532,19 @@ bool _mergeContainers(
 }
 
 /// Finds the previous stop in the document.
-CaretStop? _findPreviousStop(Root root, String fragmentId, int offset) {
-  final result = moveLeft(root, CaretStop(fragmentId, offset));
+CaretStop? _findPreviousStop(
+  Root root,
+  String fragmentId,
+  int offset, {
+  List<CaretStop>? cachedStops,
+  List<LogicalLine>? cachedLines,
+}) {
+  final result = moveLeft(
+    root,
+    CaretStop(fragmentId, offset),
+    stops: cachedStops,
+    cachedLines: cachedLines,
+  );
   return result.position;
 }
 
@@ -528,7 +555,11 @@ bool _handleDeleteWord(FluentDocument document) {
   final cursor = document.cursor;
 
   final current = CaretStop(cursor.anchorId, cursor.anchorOffset);
-  final wordLeftResult = moveWordLeft(root, current);
+  final wordLeftResult = moveWordLeft(
+    root, current,
+    stops: document.caretStops,
+    cachedLines: document.logicalLines,
+  );
 
   if (wordLeftResult.position == null) {
     // At the start of the document, nothing to delete
@@ -536,7 +567,7 @@ bool _handleDeleteWord(FluentDocument document) {
   }
 
   final targetStop = wordLeftResult.position!;
-  final currentFrag = findById(root, cursor.anchorId) as Fragment?;
+  final currentFrag = document.nodeById(cursor.anchorId) as Fragment?;
   if (currentFrag == null) return false;
 
   // Temporarily set the cursor focus to the target position to create a selection

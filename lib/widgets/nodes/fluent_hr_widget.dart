@@ -18,12 +18,20 @@ class FluentHrWidget extends StatefulWidget {
 }
 
 class _FluentHrWidgetState extends State<FluentHrWidget> {
+  RenderBox? _renderBox;
+
   @override
   void initState() {
     super.initState();
     widget.document.cursor.addListener(_rebuild);
     widget.document.selectionManager.addListener(_rebuild);
     widget.document.addListener(_rebuild);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _renderBox = context.findRenderObject() as RenderBox?;
+      if (_renderBox != null) {
+        widget.document.paragraphRegistry.registerHR(widget.node.id, _renderBox!);
+      }
+    });
   }
 
   @override
@@ -45,13 +53,20 @@ class _FluentHrWidgetState extends State<FluentHrWidget> {
 
   @override
   void dispose() {
+    if (_renderBox != null) {
+      widget.document.paragraphRegistry.unregisterHR(widget.node.id, _renderBox!);
+    }
     widget.document.cursor.removeListener(_rebuild);
     widget.document.selectionManager.removeListener(_rebuild);
     widget.document.removeListener(_rebuild);
     super.dispose();
   }
 
-  void _rebuild() => setState(() {});
+  void _rebuild() {
+    // Skip rebuild if this node was not touched by the last document change.
+    if (!widget.document.isNodeDirty(widget.node.id)) return;
+    setState(() {});
+  }
 
   void _onTapDown(TapDownDetails details) {
     final box = context.findRenderObject() as RenderBox?;
@@ -76,7 +91,7 @@ class _FluentHrWidgetState extends State<FluentHrWidget> {
 
     bool isSelected = false;
     if (!cursor.isCollapsed) {
-      final stops = buildAllStops(widget.document.content);
+      final stops = widget.document.caretStops;
       final anchorIdx = findStopIndex(stops, cursor.anchorId, cursor.anchorOffset);
       final focusIdx  = findStopIndex(stops, cursor.focusId,  cursor.focusOffset);
       final hr0Idx    = findStopIndex(stops, node.id, 0);

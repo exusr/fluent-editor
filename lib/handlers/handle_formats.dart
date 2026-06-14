@@ -39,6 +39,8 @@ bool _executeHandleStyle(FluentDocument document, String styleName) {
     cursor.anchorOffset,
     cursor.focusId,
     cursor.focusOffset,
+    cachedStops: document.caretStops,
+    cachedLines: document.logicalLines,
   );
 
   if (selection != null) {
@@ -72,6 +74,8 @@ bool _executeHandleExclusiveStyle(FluentDocument document, String styleName, Str
     cursor.anchorOffset,
     cursor.focusId,
     cursor.focusOffset,
+    cachedStops: document.caretStops,
+    cachedLines: document.logicalLines,
   );
 
   if (selection != null) {

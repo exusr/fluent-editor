@@ -52,8 +52,12 @@ FNode? findNode(FNode root, bool Function(FNode) test) {
 }
 
 /// Finds a node by ID in the entire tree.
-FNode? findById(FNode root, String id) =>
-    findNode(root, (n) => n.id == id);
+/// If [nodeIndex] is provided (e.g. document.nodeIndex), it is used
+/// directly for an O(1) lookup instead of a full DFS traversal.
+FNode? findById(FNode root, String id, {Map<String, FNode>? nodeIndex}) {
+  if (nodeIndex != null) return nodeIndex[id];
+  return findNode(root, (n) => n.id == id);
+}
 
 /// Finds the direct parent of [target] in the tree with root [root].
 /// Returns null if [target] is the root or not found.
@@ -69,7 +73,18 @@ FNode? findParent(FNode root, FNode target) {
 /// Finds the first InlineContainerNode (Paragraph/ListItem/FluentCell)
 /// that contains [fragmentId] as a direct text descendant.
 /// Link is transparent: its fragments belong to the parent container.
-InlineContainerNode? findLogicalContainer(FNode root, String fragmentId) {
+///
+/// If [logicalContainerCache] is provided (e.g. document's internal cache),
+/// it is used for an O(1) lookup instead of a full DFS traversal.
+InlineContainerNode? findLogicalContainer(
+  FNode root,
+  String fragmentId, {
+  Map<String, InlineContainerNode?>? logicalContainerCache,
+}) {
+  if (logicalContainerCache != null) {
+    return logicalContainerCache[fragmentId];
+  }
+
   InlineContainerNode? search(FNode node, InlineContainerNode? currentContainer) {
     // FluentImage atomic:
     //  - INLINE (inside Paragraph/Link, currentContainer is Paragraph):

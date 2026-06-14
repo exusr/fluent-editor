@@ -1,5 +1,4 @@
 import 'package:fluent_editor/fluent_document.dart';
-import 'package:fluent_editor/utils/cursor_navigation.dart';
 
 bool handleSelectAll(FluentDocument document) {
   final root = document.content;
@@ -7,21 +6,22 @@ bool handleSelectAll(FluentDocument document) {
   
   if (root.nodes.isEmpty) return false;
   
-  // Build all stops in the document (the "rail" for cursor navigation)
-  final stops = buildAllStops(root);
+  // Use the document-cached stop rail instead of rebuilding O(n).
+  final stops = document.caretStops;
   if (stops.isEmpty) return false;
-  
+
   // Select from first to last stop
   final firstStop = stops.first;
   final lastStop = stops.last;
-  
+
   cursor.moveTo(firstStop.fragmentId, firstStop.offset);
   cursor.focusTo(lastStop.fragmentId, lastStop.offset);
-  
+
   // Sync SelectionManager to show visual selection
   _syncSelectionManager(document);
-  
-  document.updateContent();
+
+  // Select-all does NOT mutate content: cursor-only update.
+  document.cursorOnlyUpdate();
   return true;
 }
 

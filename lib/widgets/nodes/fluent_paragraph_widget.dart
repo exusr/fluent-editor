@@ -49,6 +49,24 @@ class FluentParagraphWidgetState<T extends FluentParagraphWidget> extends State<
   bool _isSecondaryTap = false;
   ({String startFrag, int startOff, String endFrag, int endOff})? _savedSelection;
 
+  /// Tracks the document content version so [_triggerSpellCheck] is only
+  /// called when the text actually changed, not on cursor-only movements.
+  int _lastContentVersion = -1;
+
+  /// Previous cursor/selection state for this paragraph. Used to skip
+  /// setState when this paragraph is not actually affected by the change.
+  bool _lastHadCursor = false;
+  bool _lastHadSelection = false;
+  int? _lastCursorOffset;
+  String? _lastCursorFragmentId;
+  ({String startFrag, int startOff, String endFrag, int endOff})? _lastSelectionRange;
+
+  /// Cached inline images for this paragraph. Recomputed only when the
+  /// document content version changes, avoiding a full tree walk on every
+  /// cursor blink or selection update.
+  List<FluentImage>? _cachedInlineImages;
+  int? _cachedInlineImagesVersion;
+
   SpellCheckProvider? get _spell => widget.document.spellCheckProvider;
   CommentProvider? get _comment => widget.document.commentProvider;
 
@@ -96,11 +114,71 @@ class FluentParagraphWidgetState<T extends FluentParagraphWidget> extends State<
     }
   }
 
-  void _onStateChange() => setState(() {});
+  void _onStateChange() {
+    final nodeId = widget.node.id;
+    final doc = widget.document;
+    final cursor = doc.cursor;
+
+    // O(1) cached lookups — pre-computed once in cursorOnlyUpdate()
+    // instead of every visible widget running O(n) walks independently.
+    final hasCursor = doc.cachedCursorContainerId == nodeId;
+    final hasSelection = doc.isNodeSelectedCached(nodeId);
+
+    // Track exact cursor position when inside this paragraph so that
+    // left/right arrow (same paragraph) and up/down within the same
+    // paragraph trigger a rebuild of the caret.
+    final cursorOffset = hasCursor ? cursor.focusOffset : null;
+    final cursorFragmentId = hasCursor ? cursor.focusId : null;
+
+    // Track selection range so shift+arrow within the same paragraph
+    // (where hasSelection stays true) still triggers a rebuild.
+    final selRange = hasSelection ? doc.getSelectionRangeCached(nodeId) : null;
+
+    // Only rebuild if this paragraph's involvement, cursor position, or
+    // selection range changed. This reduces setState from ~60/sec
+    // (3 × 20 visible paragraphs on key-hold) down to 1-2 setState per
+    // movement, while correctly updating the selection highlight.
+    if (hasCursor != _lastHadCursor ||
+        hasSelection != _lastHadSelection ||
+        cursorOffset != _lastCursorOffset ||
+        cursorFragmentId != _lastCursorFragmentId ||
+        !_sameRange(selRange, _lastSelectionRange)) {
+      _lastHadCursor = hasCursor;
+      _lastHadSelection = hasSelection;
+      _lastCursorOffset = cursorOffset;
+      _lastCursorFragmentId = cursorFragmentId;
+      _lastSelectionRange = selRange;
+      print('[PARA_SETSTATE] nodeId=$nodeId hasCursor=$hasCursor '
+          'hasSelection=$hasSelection cursorOff=$cursorOffset cursorFrag=$cursorFragmentId');
+      setState(() {});
+    }
+  }
+
+  bool _sameRange(
+    ({String startFrag, int startOff, String endFrag, int endOff})? a,
+    ({String startFrag, int startOff, String endFrag, int endOff})? b,
+  ) {
+    if (a == null && b == null) return true;
+    if (a == null || b == null) return false;
+    return a.startFrag == b.startFrag &&
+        a.startOff == b.startOff &&
+        a.endFrag == b.endFrag &&
+        a.endOff == b.endOff;
+  }
 
   void _onDocumentChange() {
-    _onStateChange();
-    _triggerSpellCheck();
+    // Skip rebuild if this node was not touched by the last document change.
+    if (!widget.document.isNodeDirty(widget.node.id)) return;
+
+    // Content changes (typing, formatting) always require rebuild.
+    final currentVersion = widget.document.contentVersion;
+    if (currentVersion != _lastContentVersion) {
+      _lastContentVersion = currentVersion;
+      setState(() {});
+      _triggerSpellCheck();
+    }
+    // Cursor-only changes are handled by the cursor/selection listeners
+    // above which already guard setState.
   }
 
   void _triggerSpellCheck() {
@@ -154,8 +232,13 @@ class FluentParagraphWidgetState<T extends FluentParagraphWidget> extends State<
     // Build a widget for each inline FluentImage (e.g. inside Link).
     // The order must match that of `collectInlineImages` used in the
     // RenderObject to align WidgetSpan placeholders.
-    final inlineImages = collectInlineImages(container);
-    final imageWidgets = inlineImages.map((img) {
+    final currentVersion = widget.document.contentVersion;
+    if (_cachedInlineImages == null ||
+        _cachedInlineImagesVersion != currentVersion) {
+      _cachedInlineImages = collectInlineImages(container);
+      _cachedInlineImagesVersion = currentVersion;
+    }
+    final imageWidgets = _cachedInlineImages!.map((img) {
       // Use InlineImageWidget for inline images to maintain inline behavior
       return InlineImageWidget(node: img, document: widget.document);
     }).toList();
@@ -168,13 +251,14 @@ class FluentParagraphWidgetState<T extends FluentParagraphWidget> extends State<
     final indentLevel = (widget.node as Paragraph).indent;
     final indentPadding = indentLevel * 24.0;
 
-    return Padding(
-      padding: EdgeInsets.only(
-        left: indentPadding,
-        top: spacingBefore,
-        bottom: spacingAfter,
-      ),
-      child: Listener(
+    return RepaintBoundary(
+      child: Padding(
+        padding: EdgeInsets.only(
+          left: indentPadding,
+          top: spacingBefore,
+          bottom: spacingAfter,
+        ),
+        child: Listener(
         onPointerDown: (event) {
           if (event.buttons == 2) { // kSecondaryMouseButton
             _isSecondaryTap = true;
@@ -282,7 +366,8 @@ class FluentParagraphWidgetState<T extends FluentParagraphWidget> extends State<
         ),
       ),
     ),
-  );
+  ),
+);
   }
 
   void _onSecondaryTap(TapUpDetails details) {
@@ -305,14 +390,16 @@ class FluentParagraphWidgetState<T extends FluentParagraphWidget> extends State<
     final fragmentResult = renderObject.getFragmentAtPosition(localPosition);
     if (fragmentResult == null) return;
 
-    final root = widget.document.content;
-    final fragment = findById(root, fragmentResult.fragmentId);
+    final fragment = widget.document.nodeById(fragmentResult.fragmentId);
     if (fragment == null) return;
 
-    final parent = findParent(root, fragment);
-    if (parent is Link) {
-      _showLinkContextMenu(globalPosition, parent);
-      return;
+    final parentId = widget.document.findParentCached(fragment.id);
+    if (parentId != null) {
+      final parent = widget.document.nodeById(parentId);
+      if (parent is Link) {
+        _showLinkContextMenu(globalPosition, parent);
+        return;
+      }
     }
 
     _showSpellContextMenu(globalPosition, fragmentResult, savedSelection: savedSelection);

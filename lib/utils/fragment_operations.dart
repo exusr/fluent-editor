@@ -41,20 +41,38 @@ class FragmentOperations {
 
   /// Inserts [text] in [fragment] at [offset].
   /// Returns false if offset is out of range.
+  /// Optimised edge cases (prepend / append) avoid temp substring allocations.
   static bool insertTextInFragment(Fragment fragment, int offset, String text) {
     if (offset < 0 || offset > fragment.text.length) return false;
-    fragment.text = fragment.text.substring(0, offset) +
-        text +
-        fragment.text.substring(offset);
+    if (text.isEmpty) return true;
+    if (offset == 0) {
+      fragment.text = text + fragment.text;
+    } else if (offset == fragment.text.length) {
+      fragment.text = fragment.text + text;
+    } else {
+      fragment.text = fragment.text.substring(0, offset) +
+          text +
+          fragment.text.substring(offset);
+    }
     return true;
   }
 
   /// Deletes [count] characters from [fragment] starting from [offset].
   /// Returns false if the range is invalid.
+  /// Optimised edge cases avoid temp substring allocations.
   static bool deleteTextInFragment(Fragment fragment, int offset, {int count = 1}) {
     if (offset < 0 || offset + count > fragment.text.length) return false;
-    fragment.text =
-        fragment.text.substring(0, offset) + fragment.text.substring(offset + count);
+    if (count <= 0) return true;
+    if (count == fragment.text.length) {
+      fragment.text = '';
+    } else if (offset == 0) {
+      fragment.text = fragment.text.substring(count);
+    } else if (offset + count == fragment.text.length) {
+      fragment.text = fragment.text.substring(0, offset);
+    } else {
+      fragment.text =
+          fragment.text.substring(0, offset) + fragment.text.substring(offset + count);
+    }
     return true;
   }
 

@@ -1,7 +1,6 @@
 import 'package:fluent_editor/factories.dart';
 import 'package:fluent_editor/fluent_document.dart';
 import 'package:fluent_editor/utils/fragment_operations.dart';
-import 'package:fluent_editor/utils/node_operations.dart';
 import 'package:fluent_editor/utils/resolve_selection.dart';
 import 'package:flutter/material.dart';
 
@@ -65,6 +64,8 @@ class _FluentFontSizeSelectorWidgetState extends State<FluentFontSizeSelectorWid
         cursor.anchorOffset,
         cursor.focusId,
         cursor.focusOffset,
+        cachedStops: document.caretStops,
+        cachedLines: document.logicalLines,
       );
       if (selection != null) {
         final sizes = <double?>{};
@@ -87,7 +88,7 @@ class _FluentFontSizeSelectorWidgetState extends State<FluentFontSizeSelectorWid
       }
     }
 
-    final frag = findById(root, cursor.anchorId);
+    final frag = document.nodeById(cursor.anchorId);
     if (frag is Fragment) {
       return frag.fontSize.round();
     }

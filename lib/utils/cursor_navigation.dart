@@ -24,6 +24,9 @@
 
 import 'package:fluent_editor/factories.dart';
 
+int _buildAllStopsCallCount = 0;
+int _buildAllLogicalLinesCallCount = 0;
+
 // ─── Coordinate resolver type ─────────────────────────────────
 
 /// Callback injected by the rendering layer.
@@ -93,6 +96,8 @@ class NavigationResult {
 /// Generates the flat list of ALL CaretStop in the document, in reading
 /// order. This is the "rail" on which Left/Right move.
 List<CaretStop> buildAllStops(Root root) {
+  _buildAllStopsCallCount++;
+  print('[NAV_DEBUG] buildAllStops call #$_buildAllStopsCallCount');
   final out = <CaretStop>[];
   for (final node in root.nodes) {
     _collectStopsRecursive(node, out);
@@ -143,6 +148,8 @@ void _collectStopsRecursive(FNode node, List<CaretStop> out) {
 
 /// Returns all LogicalLines of the document, in reading order.
 List<LogicalLine> buildAllLogicalLines(Root root) {
+  _buildAllLogicalLinesCallCount++;
+  print('[NAV_DEBUG] buildAllLogicalLines call #$_buildAllLogicalLinesCallCount');
   final out = <LogicalLine>[];
   for (final node in root.nodes) {
     _collectLogicalLines(node, out);
@@ -292,11 +299,29 @@ void _collectStopsInLine(FNode node, List<CaretStop> out) {
 
 // ─── Lookup helpers ──────────────────────────────────────────────────
 
+// Memoized exact-match index for the caret-stop rail. Keyed by the identity
+// of the [stops] list: the document caches and reuses the same list instance
+// until the content changes, so consecutive arrow presses get O(1) lookups
+// instead of an O(n) linear scan of the whole rail.
+List<CaretStop>? _stopsRefForIndex;
+Map<String, int>? _stopExactIndex;
+
 int findStopIndex(List<CaretStop> stops, String fragmentId, int offset) {
-  for (int i = 0; i < stops.length; i++) {
-    final s = stops[i];
-    if (s.fragmentId == fragmentId && s.offset == offset) return i;
+  if (!identical(stops, _stopsRefForIndex)) {
+    _stopsRefForIndex = stops;
+    final m = <String, int>{};
+    for (int i = 0; i < stops.length; i++) {
+      // A (fragmentId, offset) pair is unique in the rail, so the map is 1:1.
+      m['${stops[i].fragmentId}\u0000${stops[i].offset}'] = i;
+    }
+    _stopExactIndex = m;
   }
+
+  final exact = _stopExactIndex!['$fragmentId\u0000$offset'];
+  if (exact != null) return exact;
+
+  // Fallback (rare): nearest offset within the same fragment when the exact
+  // caret position is not itself a stop (e.g. stale offset after an edit).
   int bestIdx = -1;
   int bestDist = 1 << 30;
   for (int i = 0; i < stops.length; i++) {
@@ -340,12 +365,15 @@ int _findStopIndexInLines(
 // ─── Horizontal navigation ─────────────────────────────────────────
 // Left/Right don't use the resolver: the caller always resets preferredX to -1.0.
 
-NavigationResult moveLeft(Root root, CaretStop current, {List<CaretStop>? stops}) {
+NavigationResult moveLeft(Root root, CaretStop current, {
+  List<CaretStop>? stops,
+  List<LogicalLine>? cachedLines,
+}) {
   final stops_ = stops ?? buildAllStops(root);
   int idx = findStopIndex(stops_, current.fragmentId, current.offset);
 
   if (idx < 0) {
-    final lines = buildAllLogicalLines(root);
+    final lines = cachedLines ?? buildAllLogicalLines(root);
     idx = _findStopIndexInLines(lines, current.fragmentId, current.offset);
     if (idx <= 0) return NavigationResult.none;
     final stopsFromLines = lines.expand((l) => l.stops).toList();
@@ -358,12 +386,15 @@ NavigationResult moveLeft(Root root, CaretStop current, {List<CaretStop>? stops}
   return NavigationResult(position: newStop, preferredX: 0.0);
 }
 
-NavigationResult moveRight(Root root, CaretStop current, {List<CaretStop>? stops}) {
+NavigationResult moveRight(Root root, CaretStop current, {
+  List<CaretStop>? stops,
+  List<LogicalLine>? cachedLines,
+}) {
   final stops_ = stops ?? buildAllStops(root);
   int idx = findStopIndex(stops_, current.fragmentId, current.offset);
 
   if (idx < 0) {
-    final lines = buildAllLogicalLines(root);
+    final lines = cachedLines ?? buildAllLogicalLines(root);
     idx = _findStopIndexInLines(lines, current.fragmentId, current.offset);
     if (idx < 0) return NavigationResult.none;
     final stopsFromLines = lines.expand((l) => l.stops).toList();
@@ -389,37 +420,52 @@ NavigationResult moveUp(
   CaretStop current,
   double preferredX,
   CaretXResolver resolveX,
-  CaretYResolver resolveY, { // ← new
+  CaretYResolver resolveY, {
   List<CaretStop>? stops,
 }) {
   final stops_ = stops ?? buildAllStops(root);
   if (stops_.isEmpty) return NavigationResult.none;
 
-  final x = preferredX >= 0.0 ? preferredX : resolveX(current);
-  final currentY = resolveY(current);
+  // resolveY/resolveX are expensive (O(visible) each). Cache their
+  // results for the duration of this call to avoid redundant lookups.
+  final yCache = <CaretStop, double>{};
+  double cachedY(CaretStop s) => yCache[s] ??= resolveY(s);
+  final xCache = <CaretStop, double>{};
+  double cachedX(CaretStop s) => xCache[s] ??= resolveX(s);
+
+  final x = preferredX >= 0.0 ? preferredX : cachedX(current);
+  final currentY = cachedY(current);
+
+  print('[MOVE_UP] current=${current.fragmentId}:${current.offset} x=$x currentY=$currentY');
 
   // Find the highest y that is strictly above the current line
   double? targetY;
   for (final stop in stops_) {
-    final y = resolveY(stop);
+    final y = cachedY(stop);
     if (y < currentY - _kLineYTolerance) {
       if (targetY == null || y > targetY) targetY = y;
     }
   }
 
+  print('[MOVE_UP] targetY=$targetY');
+
   // No line above: go to the first stop of the document
   if (targetY == null) {
     final first = stops_.first;
     if (first == current) return NavigationResult.none;
+    print('[MOVE_UP] no line above → first=${first.fragmentId}:${first.offset}');
     return NavigationResult(position: first, preferredX: x);
   }
 
   // Among the stops on the target line, take the one with closest x
   final lineStops = stops_
-      .where((s) => (resolveY(s) - targetY!).abs() <= _kLineYTolerance)
+      .where((s) => (cachedY(s) - targetY!).abs() <= _kLineYTolerance)
       .toList();
 
-  final best = _stopNearestX(lineStops, x, resolveX);
+  print('[MOVE_UP] lineStops=${lineStops.map((s) => '${s.fragmentId}:${s.offset}').join(', ')}');
+
+  final best = _stopNearestX(lineStops, x, cachedX);
+  print('[MOVE_UP] best=${best.fragmentId}:${best.offset}');
   return NavigationResult(position: best, preferredX: x);
 }
 
@@ -429,36 +475,49 @@ NavigationResult moveDown(
   CaretStop current,
   double preferredX,
   CaretXResolver resolveX,
-  CaretYResolver resolveY, { // ← new
+  CaretYResolver resolveY, {
   List<CaretStop>? stops,
 }) {
   final stops_ = stops ?? buildAllStops(root);
   if (stops_.isEmpty) return NavigationResult.none;
 
-  final x = preferredX >= 0.0 ? preferredX : resolveX(current);
-  final currentY = resolveY(current);
+  final yCache = <CaretStop, double>{};
+  double cachedY(CaretStop s) => yCache[s] ??= resolveY(s);
+  final xCache = <CaretStop, double>{};
+  double cachedX(CaretStop s) => xCache[s] ??= resolveX(s);
+
+  final x = preferredX >= 0.0 ? preferredX : cachedX(current);
+  final currentY = cachedY(current);
+
+  print('[MOVE_DOWN] current=${current.fragmentId}:${current.offset} x=$x currentY=$currentY');
 
   // Find the lowest y that is strictly below the current line
   double? targetY;
   for (final stop in stops_) {
-    final y = resolveY(stop);
+    final y = cachedY(stop);
     if (y > currentY + _kLineYTolerance) {
       if (targetY == null || y < targetY) targetY = y;
     }
   }
 
+  print('[MOVE_DOWN] targetY=$targetY');
+
   // No line below: go to the last stop of the document
   if (targetY == null) {
     final last = stops_.last;
     if (last == current) return NavigationResult.none;
+    print('[MOVE_DOWN] no line below → last=${last.fragmentId}:${last.offset}');
     return NavigationResult(position: last, preferredX: x);
   }
 
   final lineStops = stops_
-      .where((s) => (resolveY(s) - targetY!).abs() <= _kLineYTolerance)
+      .where((s) => (cachedY(s) - targetY!).abs() <= _kLineYTolerance)
       .toList();
 
-  final best = _stopNearestX(lineStops, x, resolveX);
+  print('[MOVE_DOWN] lineStops=${lineStops.map((s) => '${s.fragmentId}:${s.offset}').join(', ')}');
+
+  final best = _stopNearestX(lineStops, x, cachedX);
+  print('[MOVE_DOWN] best=${best.fragmentId}:${best.offset}');
   return NavigationResult(position: best, preferredX: x);
 }
 
@@ -517,8 +576,13 @@ Map<String, Fragment> _buildFragmentCache(Root root) {
   return cache;
 }
 
-bool _isWordChar(String ch) =>
-    RegExp(r'[a-zA-Z0-9_\u00C0-\u024F]').hasMatch(ch);
+/// Pre-compiled RegExp for word-character detection.
+/// Avoids creating a new RegExp object on every character check
+/// during word navigation (CTRL+arrow), which could be 1000+
+/// allocations per long word.
+final _wordCharRe = RegExp(r'[a-zA-Z0-9_\u00C0-\u024F]');
+
+bool _isWordChar(String ch) => _wordCharRe.hasMatch(ch);
 
 bool _isSpaceChar(String ch) => ch == ' ' || ch == '\t' || ch == '\n';
 
@@ -539,13 +603,40 @@ List<int> _buildStopLineIndex(
   return result;
 }
 
-NavigationResult moveWordRight(Root root, CaretStop current, {List<CaretStop>? stops}) {
+// Memoized fragment cache + stop→line index for word navigation, keyed by
+// the identity of the caret-stop list. The document reuses the same cached
+// list until the content changes, so consecutive ctrl+arrow presses reuse
+// these O(n)-to-build structures instead of rebuilding them every press.
+List<CaretStop>? _wordCacheStopsRef;
+Map<String, Fragment>? _wordFragCache;
+List<int>? _wordLineIdx;
+
+void _ensureWordCaches(
+  Root root,
+  List<CaretStop> stops, {
+  List<LogicalLine>? cachedLines,
+}) {
+  if (identical(stops, _wordCacheStopsRef) &&
+      _wordFragCache != null &&
+      _wordLineIdx != null) {
+    return;
+  }
+  _wordCacheStopsRef = stops;
+  _wordFragCache = _buildFragmentCache(root);
+  _wordLineIdx = _buildStopLineIndex(stops, cachedLines ?? buildAllLogicalLines(root));
+}
+
+NavigationResult moveWordRight(Root root, CaretStop current, {
+  List<CaretStop>? stops,
+  List<LogicalLine>? cachedLines,
+}) {
   final stops_ = stops ?? buildAllStops(root);
   int idx = findStopIndex(stops_, current.fragmentId, current.offset);
   if (idx < 0 || idx >= stops_.length - 1) return NavigationResult.none;
 
-  final cache = _buildFragmentCache(root);
-  final lineIdx = _buildStopLineIndex(stops_, buildAllLogicalLines(root));
+  _ensureWordCaches(root, stops_, cachedLines: cachedLines);
+  final cache = _wordFragCache!;
+  final lineIdx = _wordLineIdx!;
   String? ch(int i) => _charRight(stops_, i, cache, lineIdx);
 
   final startChar = ch(idx);
@@ -581,13 +672,17 @@ NavigationResult moveWordRight(Root root, CaretStop current, {List<CaretStop>? s
   return NavigationResult(position: stops_[idx], preferredX: 0.0);
 }
 
-NavigationResult moveWordLeft(Root root, CaretStop current, {List<CaretStop>? stops}) {
+NavigationResult moveWordLeft(Root root, CaretStop current, {
+  List<CaretStop>? stops,
+  List<LogicalLine>? cachedLines,
+}) {
   final stops_ = stops ?? buildAllStops(root);
   int idx = findStopIndex(stops_, current.fragmentId, current.offset);
   if (idx < 0 || idx <= 0) return NavigationResult.none;
 
-  final cache = _buildFragmentCache(root);
-  final lineIdx = _buildStopLineIndex(stops_, buildAllLogicalLines(root));
+  _ensureWordCaches(root, stops_, cachedLines: cachedLines);
+  final cache = _wordFragCache!;
+  final lineIdx = _wordLineIdx!;
   String? ch(int i) => _charLeft(stops_, i, cache, lineIdx);
 
   final startChar = ch(idx);
@@ -667,15 +762,18 @@ String? _charLeft(
 // ─── Line navigation (Home/End) ─────────────────────────────────────
 
 /// Moves the cursor to the start of the current logical line.
+/// If [lines] is provided (e.g. from a document cache), it is used directly
+/// instead of rebuilding the entire tree with buildAllLogicalLines(root).
 NavigationResult moveToLineStart(
   Root root,
-  CaretStop current,
-) {
-  final lines = buildAllLogicalLines(root);
-  final lineInfo = findLineForStop(lines, current);
+  CaretStop current, {
+  List<LogicalLine>? lines,
+}) {
+  final lines_ = lines ?? buildAllLogicalLines(root);
+  final lineInfo = findLineForStop(lines_, current);
   if (lineInfo == null) return NavigationResult.none;
 
-  final line = lines[lineInfo.lineIndex];
+  final line = lines_[lineInfo.lineIndex];
   if (line.stops.isEmpty) return NavigationResult.none;
 
   final firstStop = line.stops.first;
@@ -687,13 +785,14 @@ NavigationResult moveToLineStart(
 /// Moves the cursor to the end of the current logical line.
 NavigationResult moveToLineEnd(
   Root root,
-  CaretStop current,
-) {
-  final lines = buildAllLogicalLines(root);
-  final lineInfo = findLineForStop(lines, current);
+  CaretStop current, {
+  List<LogicalLine>? lines,
+}) {
+  final lines_ = lines ?? buildAllLogicalLines(root);
+  final lineInfo = findLineForStop(lines_, current);
   if (lineInfo == null) return NavigationResult.none;
 
-  final line = lines[lineInfo.lineIndex];
+  final line = lines_[lineInfo.lineIndex];
   if (line.stops.isEmpty) return NavigationResult.none;
 
   final lastStop = line.stops.last;
@@ -710,14 +809,15 @@ NavigationResult movePageUp(
   CaretStop current,
   double preferredX,
   CaretXResolver resolveX,
-  CaretYResolver resolveY,
-) {
-  final lines = buildAllLogicalLines(root);
-  final lineInfo = findLineForStop(lines, current);
+  CaretYResolver resolveY, {
+  List<LogicalLine>? lines,
+}) {
+  final lines_ = lines ?? buildAllLogicalLines(root);
+  final lineInfo = findLineForStop(lines_, current);
   if (lineInfo == null) return NavigationResult.none;
 
   final currentLineIndex = lineInfo.lineIndex;
-  final targetLineIndex = (currentLineIndex - 10).clamp(0, lines.length - 1);
+  final targetLineIndex = (currentLineIndex - 10).clamp(0, lines_.length - 1);
 
   if (targetLineIndex == currentLineIndex) {
     // Already at or near the top, go to document start
@@ -728,7 +828,7 @@ NavigationResult movePageUp(
     return NavigationResult(position: firstStop, preferredX: preferredX);
   }
 
-  final targetLine = lines[targetLineIndex];
+  final targetLine = lines_[targetLineIndex];
   if (targetLine.stops.isEmpty) return NavigationResult.none;
 
   final x = preferredX >= 0.0 ? preferredX : resolveX(current);
@@ -743,14 +843,15 @@ NavigationResult movePageDown(
   CaretStop current,
   double preferredX,
   CaretXResolver resolveX,
-  CaretYResolver resolveY,
-) {
-  final lines = buildAllLogicalLines(root);
-  final lineInfo = findLineForStop(lines, current);
+  CaretYResolver resolveY, {
+  List<LogicalLine>? lines,
+}) {
+  final lines_ = lines ?? buildAllLogicalLines(root);
+  final lineInfo = findLineForStop(lines_, current);
   if (lineInfo == null) return NavigationResult.none;
 
   final currentLineIndex = lineInfo.lineIndex;
-  final targetLineIndex = (currentLineIndex + 10).clamp(0, lines.length - 1);
+  final targetLineIndex = (currentLineIndex + 10).clamp(0, lines_.length - 1);
 
   if (targetLineIndex == currentLineIndex) {
     // Already at or near the bottom, go to document end
@@ -761,7 +862,7 @@ NavigationResult movePageDown(
     return NavigationResult(position: lastStop, preferredX: preferredX);
   }
 
-  final targetLine = lines[targetLineIndex];
+  final targetLine = lines_[targetLineIndex];
   if (targetLine.stops.isEmpty) return NavigationResult.none;
 
   final x = preferredX >= 0.0 ? preferredX : resolveX(current);

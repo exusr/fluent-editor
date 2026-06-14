@@ -24,6 +24,7 @@ import 'dart:async';
 import 'dart:io' show Platform;
 
 import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 
 typedef ArrowKeyHandler = void Function(KeyEvent event);
@@ -40,11 +41,11 @@ class ArrowKeyRepeater {
   bool get isActive => _active;
 
   Timer? _timer;
+  Ticker? _ticker;
   KeyEvent? _lastEvent;
+  bool _running = false;
 
   static const Duration _initialDelay = Duration(milliseconds: 250);
-  static const Duration _interval = Duration(milliseconds: 30);
-  static const Duration _intervalFast = Duration(milliseconds: 15);
 
   bool isArrowKey(LogicalKeyboardKey key) {
     return key == LogicalKeyboardKey.arrowLeft ||
@@ -53,26 +54,39 @@ class ArrowKeyRepeater {
         key == LogicalKeyboardKey.arrowDown;
   }
 
-  /// Starts manual repetition for [event]. [fast] selects a shorter
-  /// interval (e.g. for selection extension with shift held).
+  /// Starts manual repetition for [event].
+  /// Uses a frame-aligned ticker so repetition never exceeds the display
+  /// refresh rate and cannot starve the compositor thread.
   void start(KeyEvent event, {bool fast = false}) {
     if (!_active) return;
     stop();
     _lastEvent = event;
-    final interval = fast ? _intervalFast : _interval;
+    _running = true;
+
+    // Initial delay (same as native key repeat).
     _timer = Timer(_initialDelay, () {
-      _timer = Timer.periodic(interval, (_) {
+      if (!_running) return;
+      _timer = null;
+
+      // Drive repeats with a Ticker that fires once per frame.
+      // This guarantees the event rate never exceeds what Flutter can
+      // actually render, preventing the 66 Hz timer from flooding the
+      // main thread with work faster than it can be painted.
+      _ticker = Ticker((_) {
+        if (!_running) return;
         final last = _lastEvent;
-        if (last != null) {
-          _onRepeat(last);
-        }
+        if (last != null) _onRepeat(last);
       });
+      _ticker!.start();
     });
   }
 
   void stop() {
+    _running = false;
     _timer?.cancel();
     _timer = null;
+    _ticker?.dispose();
+    _ticker = null;
     _lastEvent = null;
   }
 }

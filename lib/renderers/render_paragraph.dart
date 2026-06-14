@@ -2,6 +2,8 @@
 // Single TextPainter for the entire paragraph
 // with tracking of fragment positions for ID ↔ offset conversion
 
+import 'dart:ui' show Picture, PictureRecorder;
+
 import 'package:fluent_editor/core/paragraph_registry.dart';
 import 'package:fluent_editor/factories.dart';
 import 'package:fluent_editor/renderers/render_fluent_node.dart';
@@ -209,6 +211,7 @@ class RenderFluentParagraph extends RenderFluentNode
   set spellAnnotations(List<SpellAnnotation> value) {
     if (!listEquals(_spellAnnotations, value)) {
       _spellAnnotations = value;
+      _cachedSpellBoxes = null;
       markNeedsPaint();
     }
   }
@@ -218,6 +221,7 @@ class RenderFluentParagraph extends RenderFluentNode
   set commentAnnotations(List<Map<String, dynamic>> value) {
     if (!listEquals(_commentAnnotations, value)) {
       _commentAnnotations = value;
+      _cachedCommentBoxes = null;
       markNeedsPaint();
     }
   }
@@ -239,6 +243,24 @@ class RenderFluentParagraph extends RenderFluentNode
       markNeedsLayout();
     }
   }
+
+  // ─── Paint caches ───────────────────────────────────────────────
+  // Cached structures to avoid recomputing expensive TextPainter
+  // queries on every paint (e.g. cursor blink, selection highlight).
+
+  List<LineMetrics>? _cachedLineMetrics;
+  bool _lineMetricsDirty = true;
+
+  ({String? aFrag, int? aOff, String? fFrag, int? fOff})? _lastSelectionKey;
+  List<TextBox>? _cachedSelectionBoxes;
+
+  List<List<TextBox>>? _cachedSpellBoxes;
+
+  List<List<TextBox>>? _cachedCommentBoxes;
+
+  /// Cached Picture of the pure text layer. Invalidated on layout changes;
+  /// the overlay layer (selection, caret, spell) is painted on top every frame.
+  Picture? _cachedTextPicture;
 
   RenderFluentParagraph({
     required InlineContainerNode container,
@@ -392,7 +414,11 @@ class RenderFluentParagraph extends RenderFluentNode
       // visual line, regardless of font size. Find it with
       // computeLineMetrics looking for the line whose baseline falls within
       // the vertical range of the character box.
-      final lineMetrics = _painter.computeLineMetrics();
+      if (_lineMetricsDirty || _cachedLineMetrics == null) {
+        _cachedLineMetrics = _painter.computeLineMetrics();
+        _lineMetricsDirty = false;
+      }
+      final lineMetrics = _cachedLineMetrics!;
       for (final lm in lineMetrics) {
         if (lm.baseline >= charBox.top && lm.baseline <= charBox.bottom) {
           return localToGlobal(Offset(0, lm.baseline)).dy;
@@ -465,6 +491,14 @@ class RenderFluentParagraph extends RenderFluentNode
     }
     _painter.layout(maxWidth: constraints.maxWidth);
     _layoutMaxWidth = constraints.maxWidth;
+
+    // Any layout change invalidates line-metrics and box caches.
+    _lineMetricsDirty = true;
+    _cachedSelectionBoxes = null;
+    _cachedSpellBoxes = null;
+    _cachedCommentBoxes = null;
+    _cachedTextPicture?.dispose();
+    _cachedTextPicture = null;
 
     // 3. Position children at offsets calculated by TextPainter.
     final placeholderBoxes = _painter.inlinePlaceholderBoxes ?? const [];
@@ -785,7 +819,23 @@ class RenderFluentParagraph extends RenderFluentNode
     // of the render object to TextPainter coordinates.
     final adjustedPosition = position - Offset(_alignmentXOffset, 0);
 
-    final lineMetrics = _painter.computeLineMetrics();
+    // FAST PATH: TextPainter.getPositionForOffset does a binary search
+    // internally (O(log n)) and returns the closest text position. This
+    // replaces the O(n) character-by-character loop that called
+    // getBoxesForSelection once per character — a major bottleneck during
+    // drag selection on long paragraphs (1000+ characters).
+    final textPosition = _painter.getPositionForOffset(adjustedPosition);
+    final result = _globalToLocal(textPosition.offset);
+    if (result != null) return result;
+
+    // FALLBACK: if getPositionForOffset returns an offset that does not
+    // map to any fragment (should be rare), use line metrics to find the
+    // nearest character on the target line.
+    if (_lineMetricsDirty || _cachedLineMetrics == null) {
+      _cachedLineMetrics = _painter.computeLineMetrics();
+      _lineMetricsDirty = false;
+    }
+    final lineMetrics = _cachedLineMetrics!;
     if (lineMetrics.isEmpty) return null;
 
     int targetLine = lineMetrics.length - 1;
@@ -812,8 +862,6 @@ class RenderFluentParagraph extends RenderFluentNode
     int bestLocalOffset = 0;
     double bestXDistance = double.infinity;
 
-    // For each character, decide if the click is to its LEFT or RIGHT.
-    // Loop only on real characters (0 <= offset < textLength).
     for (final fragment in _fragmentPositions) {
       for (int offset = 0; offset < fragment.textLength; offset++) {
         final globalOffset = fragment.start + offset;
@@ -832,8 +880,6 @@ class RenderFluentParagraph extends RenderFluentNode
           continue;
         }
 
-        // If the point is inside the box, decide left/right based on the
-        // middle of the character
         if (box.contains(adjustedPosition)) {
           final isRightHalf = adjustedPosition.dx > (box.left + box.right) / 2;
           return (
@@ -842,8 +888,6 @@ class RenderFluentParagraph extends RenderFluentNode
           );
         }
 
-        // Otherwise, track the nearest caret between the left border
-        // (offset N) and the right border (offset N+1) of this char
         final leftDistance = (adjustedPosition.dx - box.left).abs();
         final rightDistance = (adjustedPosition.dx - box.right).abs();
 
@@ -864,8 +908,30 @@ class RenderFluentParagraph extends RenderFluentNode
       return (fragmentId: bestFragmentId, localOffset: bestLocalOffset);
     }
 
-    final textPosition = _painter.getPositionForOffset(adjustedPosition);
-    return _globalToLocal(textPosition.offset);
+    return null;
+  }
+
+  /// Returns the fragment-local start/end bounds of the text line that
+  /// contains [offset] (in paragraph-local coordinates).
+  /// Used by triple-tap to select an entire logical line in O(log n)
+  /// without rebuilding the whole document tree.
+  ({String startFrag, int startOff, String endFrag, int endOff})?
+      getLineBoundsAtOffset(Offset offset) {
+    final adjustedOffset = offset - Offset(_alignmentXOffset, 0);
+    final textPosition = _painter.getPositionForOffset(adjustedOffset);
+    final lineBoundary = _painter.getLineBoundary(textPosition);
+
+    final startLocal = _globalToLocal(lineBoundary.start);
+    if (startLocal == null) return null;
+    final endLocal = _globalToLocal(lineBoundary.end);
+    if (endLocal == null) return null;
+
+    return (
+      startFrag: startLocal.fragmentId,
+      startOff: startLocal.localOffset,
+      endFrag: endLocal.fragmentId,
+      endOff: endLocal.localOffset,
+    );
   }
 
   // ─── Cursor / Selection setters ───────────────────────────────────
@@ -889,10 +955,20 @@ class RenderFluentParagraph extends RenderFluentNode
     String? focusFragmentId,
     int? focusLocalOffset,
   ) {
+    // Skip repaint when the range is identical — crucial during key-hold
+    // where _syncSelectionManager touches every visible paragraph but
+    // only a few actually changed.
+    if (_selAnchorFragmentId == anchorFragmentId &&
+        _selAnchorLocalOffset == anchorLocalOffset &&
+        _selFocusFragmentId == focusFragmentId &&
+        _selFocusLocalOffset == focusLocalOffset) {
+      return;
+    }
     _selAnchorFragmentId = anchorFragmentId;
     _selAnchorLocalOffset = anchorLocalOffset;
     _selFocusFragmentId = focusFragmentId;
     _selFocusLocalOffset = focusLocalOffset;
+    _cachedSelectionBoxes = null; // invalidate paint cache
     markNeedsPaint();
   }
 
@@ -900,9 +976,6 @@ class RenderFluentParagraph extends RenderFluentNode
 
   @override
   void paint(PaintingContext context, Offset offset) {
-    // Calculate the X offset for text alignment in the paragraph.
-    // When shrinkWrap is true, alignment is managed by the parent widget
-    // (e.g. Row with mainAxisAlignment), so we don't apply offset here.
     final xOffset = _shrinkWrap
         ? 0.0
         : switch (_textAlign) {
@@ -912,14 +985,15 @@ class RenderFluentParagraph extends RenderFluentNode
           };
     final alignedOffset = offset + Offset(xOffset, 0);
 
+    // Build the static text Picture on first paint after layout.
+    _cachedTextPicture ??= _buildTextPicture(alignedOffset);
+
     // 1. Selection "under" the text (classic look)
     _paintSelection(context.canvas, alignedOffset);
     // 1.5 Comment highlights (under the text)
     _paintCommentHighlights(context.canvas, alignedOffset);
-    // 2. Text
-    _painter.paint(context.canvas, alignedOffset);
-    // 2b. Superscript/Subscript with vertical offset
-    _paintScriptSpans(context.canvas, alignedOffset);
+    // 2. Text (cached Picture — avoids re-executing Skia text rasterisation)
+    context.canvas.drawPicture(_cachedTextPicture!);
     // 3. Inline images (RenderBox children) above placeholders
     var child = firstChild;
     while (child != null) {
@@ -927,14 +1001,22 @@ class RenderFluentParagraph extends RenderFluentNode
       context.paintChild(child, alignedOffset + parentData.offset);
       child = parentData.nextSibling;
     }
-    // 4. Selection overlay above images (images would cover the
-    //    blue box of step 1, so we regenerate the highlight in semi-transparency
-    //    only on selected placeholder areas).
+    // 4. Selection overlay above images
     _paintSelectionOverlayOnImages(context.canvas, alignedOffset);
     // 5. Spell check wavy underline
     _paintSpellErrors(context.canvas, alignedOffset);
     // 6. Cursor on top of everything
     _paintCursor(context.canvas, alignedOffset);
+  }
+
+  /// Records the pure text + script spans into a [Picture] so they are
+  /// rasterised once per layout instead of on every paint frame.
+  Picture _buildTextPicture(Offset offset) {
+    final recorder = PictureRecorder();
+    final canvas = Canvas(recorder);
+    _painter.paint(canvas, offset);
+    _paintScriptSpans(canvas, offset);
+    return recorder.endRecording();
   }
 
   /// Paints red wavy underlines for each spell annotation.
@@ -947,10 +1029,14 @@ class RenderFluentParagraph extends RenderFluentNode
       ..strokeWidth = 1.2
       ..style = PaintingStyle.stroke;
 
-    for (final ann in _spellAnnotations) {
-      final boxes = _painter.getBoxesForSelection(
+    _cachedSpellBoxes ??= _spellAnnotations.map((ann) {
+      return _painter.getBoxesForSelection(
         TextSelection(baseOffset: ann.startOffset, extentOffset: ann.endOffset),
       );
+    }).toList();
+
+    for (int i = 0; i < _spellAnnotations.length; i++) {
+      final boxes = _cachedSpellBoxes![i];
       for (final box in boxes) {
         final rect = box.toRect().translate(offset.dx, offset.dy);
         final baselineY = rect.bottom + 1.5;
@@ -973,11 +1059,20 @@ class RenderFluentParagraph extends RenderFluentNode
   void _paintCommentHighlights(Canvas canvas, Offset offset) {
     if (_commentAnnotations.isEmpty) return;
 
-    for (final c in _commentAnnotations) {
-      if (c['resolved'] == true) continue;
+    _cachedCommentBoxes ??= _commentAnnotations.map((c) {
       final start = c['startOffset'] as int? ?? 0;
       final end = c['endOffset'] as int? ?? 0;
-      if (start >= end) continue;
+      if (start >= end) return const <TextBox>[];
+      return _painter.getBoxesForSelection(
+        TextSelection(baseOffset: start, extentOffset: end),
+      );
+    }).toList();
+
+    for (int i = 0; i < _commentAnnotations.length; i++) {
+      final c = _commentAnnotations[i];
+      if (c['resolved'] == true) continue;
+      final boxes = _cachedCommentBoxes![i];
+      if (boxes.isEmpty) continue;
 
       final isSelected = _selectedCommentId != null && c['id'] == _selectedCommentId;
       final baseColor = isSelected ? Colors.orange : Colors.yellow;
@@ -985,9 +1080,6 @@ class RenderFluentParagraph extends RenderFluentNode
         ..color = baseColor.withAlpha((0.35 * 255).round())
         ..style = PaintingStyle.fill;
 
-      final boxes = _painter.getBoxesForSelection(
-        TextSelection(baseOffset: start, extentOffset: end),
-      );
       for (final box in boxes) {
         final rect = box.toRect().translate(offset.dx, offset.dy);
         canvas.drawRect(rect.inflate(1), paint);
@@ -1042,11 +1134,30 @@ class RenderFluentParagraph extends RenderFluentNode
     return null;
   }
 
+  // ─── Profiling counters for selection paint ───────────────────────
+  static int _paintSelCalls = 0;
+  static int _paintSelCacheHits = 0;
+  static int _paintSelCacheMisses = 0;
+  static int _paintSelTotalUs = 0;
+
+  static void reportSelectionPaintProfile() {
+    if (_paintSelCalls == 0) return;
+    print('[RENDER_PROFILE] _paintSelection calls=$_paintSelCalls '
+        'hits=$_paintSelCacheHits misses=$_paintSelCacheMisses '
+        'avg=${_paintSelTotalUs ~/ _paintSelCalls}μs');
+    _paintSelCalls = _paintSelCacheHits = _paintSelCacheMisses = _paintSelTotalUs = 0;
+  }
+
   void _paintSelection(Canvas canvas, Offset offset) {
+    _paintSelCalls++;
+    final sw = Stopwatch()..start();
+
     if (_selAnchorFragmentId == null ||
         _selAnchorLocalOffset == null ||
         _selFocusFragmentId == null ||
         _selFocusLocalOffset == null) {
+      sw.stop();
+      _paintSelTotalUs += sw.elapsedMicroseconds;
       return;
     }
 
@@ -1062,17 +1173,29 @@ class RenderFluentParagraph extends RenderFluentNode
         ? _getTotalTextLength()
         : _fragmentOffsetToGlobal(_selFocusFragmentId!, _selFocusLocalOffset!);
 
-    if (baseGlobal == null || extentGlobal == null) return;
+    if (baseGlobal == null || extentGlobal == null) {
+      sw.stop();
+      _paintSelTotalUs += sw.elapsedMicroseconds;
+      return;
+    }
 
     final start = baseGlobal < extentGlobal ? baseGlobal : extentGlobal;
     final end = baseGlobal < extentGlobal ? extentGlobal : baseGlobal;
 
-    final boxes = _painter.getBoxesForSelection(
-      TextSelection(baseOffset: start, extentOffset: end),
-    );
+    final key = (aFrag: _selAnchorFragmentId, aOff: _selAnchorLocalOffset,
+                 fFrag: _selFocusFragmentId, fOff: _selFocusLocalOffset);
+    if (_cachedSelectionBoxes == null || _lastSelectionKey != key) {
+      _paintSelCacheMisses++;
+      _lastSelectionKey = key;
+      _cachedSelectionBoxes = _painter.getBoxesForSelection(
+        TextSelection(baseOffset: start, extentOffset: end),
+      );
+    } else {
+      _paintSelCacheHits++;
+    }
 
     final selectionPaint = Paint()..color = selectionColor;
-    for (final box in boxes) {
+    for (final box in _cachedSelectionBoxes!) {
       canvas.drawRect(
         box.toRect().translate(offset.dx, offset.dy),
         selectionPaint,
@@ -1151,10 +1274,9 @@ class RenderFluentParagraph extends RenderFluentNode
 
     if (focusGlobal == null || focusGlobal < 0) return;
 
-    // Blink the cursor: visible for 500ms, hidden for 500ms
-    final now = DateTime.now().millisecondsSinceEpoch;
-    final blinkPhase = (now % 1000) < 500;
-    if (!blinkPhase) return;
+    // Blink: the editor's periodic timer toggles registry.caretVisible and
+    // resets it to true on movement. Skip painting while in the hidden phase.
+    if (!registry.caretVisible) return;
 
     // If the cursor is on an inline image, draw vertical lines at the borders
     // of the placeholder instead of the thin text line.

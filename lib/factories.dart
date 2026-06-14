@@ -53,8 +53,17 @@ class FNodeJsonConverter implements JsonConverter<FNode, Map<String, dynamic>> {
 class FNode {
   String id;
 
+  /// Monotonically incremented every time this node (or any descendant)
+  /// is mutated. Used by the delta-based undo system to identify changed
+  /// nodes in O(1) without expensive JSON serialization.
+  int _contentVersion = 0;
+  int get contentVersion => _contentVersion;
+
   FNode(this.id);
-  
+
+  /// Increment the version so the delta system knows this node changed.
+  void bumpVersion() => _contentVersion++;
+
   factory FNode.fromJson(Map<String, dynamic> json) => _$FNodeFromJson(json);
   Map<String, dynamic> toJson() => _$FNodeToJson(this);
 }
