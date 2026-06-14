@@ -207,24 +207,30 @@ void _pasteNodes(List<Map<String, dynamic>> nodesJson, FluentDocument document) 
       newNode = wrapper;
     }
 
-    // Special case: first Paragraph node inside a Paragraph (Link and FluentList
-    // extend Paragraph but are structurally different, explicitly excluded)
+    // When pasting a single Paragraph into a ListItem's paragraph, merge the
+    // fragments inline instead of inserting a new top-level node.
+    // This covers both the normal case (cursor in a root Paragraph) and the
+    // ListItem case (curContainer is the Paragraph child of a ListItem,
+    // curTopLevel is the FluentList).
+    final curContainerIsMergeTarget = curContainer is Paragraph &&
+        curContainer is! Link &&
+        curContainer is! FluentList;
+
     final canMerge = i == 0 &&
         newNode is Paragraph &&
         newNode is! Link &&
         newNode is! FluentList &&
-        curContainer is Paragraph &&
-        curContainer is! Link &&
-        curContainer is! FluentList;
+        curContainerIsMergeTarget;
 
     if (canMerge) {
-      developer.log('[PASTE] merging into current paragraph', name: 'clipboard');
+      developer.log('[PASTE] merging into current paragraph (container=\${curContainer.runtimeType})', name: 'clipboard');
       lastFragment = _mergeFragmentsIntoParagraph(
-        newNode,
-        curContainer,
+        newNode as Paragraph,
+        curContainer as Paragraph,
         cursor,
       );
-      // lastInserted remains = curTopLevel
+      // lastInserted stays = curTopLevel so subsequent nodes (if any) are
+      // inserted after the top-level container (FluentList or Paragraph).
     } else {
       final inserted = insertAfter(root, lastInserted, newNode);
       developer.log('[PASTE] insertAfter(root, ${lastInserted.runtimeType} id=${lastInserted.id}, ${newNode.runtimeType}) => $inserted', name: 'clipboard');
@@ -617,7 +623,7 @@ List<FNode> _cloneInlineChildren(
   return result;
 }
 
-FluentList? _cloneList(
+FNode? _cloneList(
   FluentList src,
   List<SelectedNode> selectedNodes,
   ResolvedSelection sel,
@@ -629,8 +635,14 @@ FluentList? _cloneList(
   for (final item in src.items) {
     final clonedItem = _cloneListItem(item, selectedNodes, sel, plainText, !first);
     if (clonedItem != null) {
-      clone.items.add(clonedItem);
-      first = false;
+      if (clonedItem is ListItem) {
+        clone.items.add(clonedItem);
+        first = false;
+      } else if (clonedItem is Paragraph) {
+        // Partial text selection detected - return the paragraph directly
+        // instead of wrapping it in list structure
+        return clonedItem;
+      }
     }
   }
 
@@ -638,7 +650,9 @@ FluentList? _cloneList(
 }
 
 /// Recursively clones a ListItem including sublists if selected.
-ListItem? _cloneListItem(
+/// Returns either a ListItem (for full list structure) or a Paragraph
+/// (for partial text selection within a single ListItem).
+FNode? _cloneListItem(
   ListItem item,
   List<SelectedNode> selectedNodes,
   ResolvedSelection sel,
@@ -649,6 +663,9 @@ ListItem? _cloneListItem(
   final clonedChildren = <FNode>[];
   bool hasContent = false;
   bool addedNewline = false;
+  bool hasSublist = false;
+  Paragraph? singleClonedParagraph;
+  bool isPartialSelection = false;
 
   for (final child in item.children) {
     // Sublist: clone recursively if it contains selection
@@ -657,36 +674,65 @@ ListItem? _cloneListItem(
       if (clonedSub != null) {
         clonedChildren.add(clonedSub);
         hasContent = true;
+        hasSublist = true;
       }
       continue;
     }
 
     // Direct Paragraph of the ListItem
     if (child is Paragraph && child is! Link) {
-      // Check if it's selected
-      final matchingSn = selectedNodes.firstWhere(
-        (sn) => (sn.container as FNode).id == child.id,
-        orElse: () => SelectedNode(
-          container: child,
-          startFragment: _flattenFragmentsOf(child).firstOrNull ?? Fragment(''),
-          startOffset: 0,
-          endFragment: Fragment(''),
-          endOffset: 0,
-          isFullySelected: false,
-        ),
-      );
+      // findLogicalContainer returns the ListItem (not the inner Paragraph)
+      // for fragments inside a ListItem's paragraph. So we match either by
+      // the Paragraph's own id OR by checking if any selected fragment
+      // belongs to this Paragraph's fragments.
+      bool paragraphMatchesSn(SelectedNode sn, Paragraph par) {
+        final containerId = (sn.container as FNode).id;
+        if (containerId == par.id) return true;
+        final parFragIds = _flattenFragmentsOf(par).map((f) => f.id).toSet();
+        return parFragIds.contains(sn.startFragment.id) ||
+               parFragIds.contains(sn.endFragment.id);
+      }
 
       // Skip if not actually selected
-      final isSelected = selectedNodes
-          .any((sn) => (sn.container as FNode).id == child.id);
+      final isSelected = selectedNodes.any((sn) => paragraphMatchesSn(sn, child));
       if (!isSelected) continue;
+
+      final rawSn = selectedNodes.firstWhere((sn) => paragraphMatchesSn(sn, child));
+
+      // Check if this is a partial selection (not fully selected)
+      isPartialSelection = !rawSn.isFullySelected;
+
+      // When container is the ListItem (not the Paragraph), startFragment and
+      // endFragment are correct but the container reference is wrong for
+      // _cloneParagraph. Rebuild a clean SelectedNode with the Paragraph as
+      // container so that _cloneInlineChildren applies offsets correctly.
+      final parFragIds = _flattenFragmentsOf(child).map((f) => f.id).toSet();
+      final effectiveSn = (rawSn.container as FNode).id == child.id
+          ? rawSn
+          : SelectedNode(
+              container: child,
+              startFragment: parFragIds.contains(rawSn.startFragment.id)
+                  ? rawSn.startFragment
+                  : _flattenFragmentsOf(child).first,
+              startOffset: parFragIds.contains(rawSn.startFragment.id)
+                  ? rawSn.startOffset
+                  : 0,
+              endFragment: parFragIds.contains(rawSn.endFragment.id)
+                  ? rawSn.endFragment
+                  : _flattenFragmentsOf(child).last,
+              endOffset: parFragIds.contains(rawSn.endFragment.id)
+                  ? rawSn.endOffset
+                  : (_flattenFragmentsOf(child).lastOrNull?.text.length ?? 0),
+              isFullySelected: rawSn.isFullySelected,
+            );
 
       if (prefixNewline && !addedNewline) {
         plainText.write('\n');
         addedNewline = true;
       }
-      final clonedPar = _cloneParagraph(child, matchingSn, plainText);
+      final clonedPar = _cloneParagraph(child, effectiveSn, plainText);
       clonedChildren.add(clonedPar);
+      singleClonedParagraph = clonedPar;
       hasContent = true;
       continue;
     }
@@ -696,6 +742,13 @@ ListItem? _cloneListItem(
   }
 
   if (!hasContent) return null;
+
+  // If this is a partial text selection within a single ListItem without sublists,
+  // return just the Paragraph instead of wrapping it in a ListItem structure.
+  // This ensures that pasting partial text from a list item pastes only the text.
+  if (isPartialSelection && !hasSublist && clonedChildren.length == 1 && singleClonedParagraph != null) {
+    return singleClonedParagraph;
+  }
 
   return ListItem(
     bulletType: item.bulletType,
