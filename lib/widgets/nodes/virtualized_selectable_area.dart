@@ -30,18 +30,27 @@ class _VirtualizedSelectableAreaState extends State<VirtualizedSelectableArea> {
   bool _isSelecting = false;
   Offset? _pointerDownPosition;
   final ScrollController _scrollController = ScrollController();
-  
+
+  // ─── Mobile-web tap-vs-drag detection ─────────────────────────
+  /// Set to true when the pointer moves more than [_kDragThreshold]
+  /// pixels; cancels the pending tap timer so the keyboard is NOT
+  /// opened on drag selection.
+  bool _isDragging = false;
+  Timer? _tapTimer;
+  static const _kDragThreshold = 10.0;
+  static const _kTapTimeout = Duration(milliseconds: 250);
+
   // Performance optimizations for large documents
   final Map<int, double> _itemHeights = {};
   double _averageItemHeight = 40.0;
   // Running sum of measured heights, kept in sync incrementally so the
   // average is computed in O(1) instead of O(n) on every measurement.
   double _heightSum = 0.0;
-  
+
   // Cumulative height cache for O(log n) lookups
   final List<double> _cumulativeHeights = [];
   bool _cumulativeHeightsDirty = true;
-  
+
   // Selection optimization: throttle updates and cache results
   _FragmentHitResult? _lastSelectionResult;
   Offset? _lastSelectionPosition;
@@ -50,13 +59,9 @@ class _VirtualizedSelectableAreaState extends State<VirtualizedSelectableArea> {
   @override
   void dispose() {
     _selectionUpdateTimer?.cancel();
+    _tapTimer?.cancel();
     _scrollController.dispose();
     super.dispose();
-  }
-
-  /// Captures the exact position of the PointerDownEvent
-  void _onPointerDown(PointerDownEvent event) {
-    _pointerDownPosition = event.position;
   }
 
   /// Returns true on native mobile (Android/iOS) or on web.
@@ -65,15 +70,94 @@ class _VirtualizedSelectableAreaState extends State<VirtualizedSelectableArea> {
     return Platform.isAndroid || Platform.isIOS;
   }
 
-  void onPanStart(DragStartDetails details) {
-    if (_isMobilePlatform()) {
-      widget.document.requestMobileKeyboardFocus();
+  // ─── Raw pointer handlers (work on mobile-web where GestureDetector
+  //     is starved by the browser's native scroll). ─────────────────
+
+  void _onPointerDown(PointerDownEvent event) {
+    _pointerDownPosition = event.position;
+    _isDragging = false;
+    _isSelecting = false;
+
+    // Start a tap timer. If the finger lifts before it fires, we treat
+    // the gesture as a tap (place cursor + open keyboard).  If the
+    // finger moves past the drag threshold we cancel the timer and
+    // switch to drag-selection instead.
+    _tapTimer?.cancel();
+    _tapTimer = Timer(_kTapTimeout, () {
+      // Timer expired while finger is still down → long-press, not tap.
+      // Do nothing here; selection will start on pointer-move if needed.
+    });
+  }
+
+  void _onPointerMove(PointerMoveEvent event) {
+    final downPos = _pointerDownPosition;
+    if (downPos == null) return;
+
+    final distance = (event.position - downPos).distance;
+
+    if (!_isDragging && distance > _kDragThreshold) {
+      // Finger moved enough → this is a drag, not a tap.
+      _isDragging = true;
+      _tapTimer?.cancel();
+
+      // Block native/ListView scroll so the finger controls selection only.
+      setState(() {});
+
+      // Start selection exactly where the pointer went down.
+      _startSelectionAt(downPos);
     }
+
+    if (_isDragging && _isSelecting) {
+      _scheduleSelectionUpdate(event.position);
+    }
+  }
+
+  void _onPointerUp(PointerUpEvent event) {
+    _tapTimer?.cancel();
+
+    if (!_isDragging) {
+      // It was a tap (finger never moved past the threshold).
+      _handleTapAt(event.position);
+    }
+
+    // Re-enable scroll if it was blocked during a drag.
+    final wasDragging = _isDragging;
+
+    // Clean-up shared state.
+    _isDragging = false;
+    _isSelecting = false;
+    _pointerDownPosition = null;
+    _selectionUpdateTimer?.cancel();
+    _lastSelectionResult = null;
+    _lastSelectionPosition = null;
+
+    if (wasDragging) {
+      setState(() {});
+      // Open keyboard after any drag on mobile.
+      if (_isMobilePlatform()) {
+        widget.document.requestMobileKeyboardFocus();
+      }
+    }
+  }
+
+  // ─── Selection helpers (used by both raw-pointer and gesture paths) ─
+
+  void _handleTapAt(Offset position) {
     widget.document.requestEditorFocus();
+    final result = _findFragmentAtPosition(position);
+    if (result != null) {
+      widget.document.selectionManager.clear();
+      widget.document.cursor.moveTo(result.fragmentId, result.localOffset);
+      widget.document.cursorOnlyUpdate();
+      if (_isMobilePlatform()) {
+        widget.document.requestMobileKeyboardFocus();
+      }
+    }
+  }
 
-    final startPosition = _pointerDownPosition ?? details.globalPosition;
-    final result = _findFragmentAtPosition(startPosition);
-
+  void _startSelectionAt(Offset position) {
+    widget.document.requestEditorFocus();
+    final result = _findFragmentAtPosition(position);
     if (result != null) {
       _isSelecting = true;
       widget.document.selectionManager.startSelection(
@@ -85,24 +169,14 @@ class _VirtualizedSelectableAreaState extends State<VirtualizedSelectableArea> {
     }
   }
 
-  void onPanUpdate(DragUpdateDetails details) {
-    if (!_isSelecting) return;
-
-    // Throttle selection updates to improve performance
-    _scheduleSelectionUpdate(details.globalPosition);
-  }
-
   void _scheduleSelectionUpdate(Offset position) {
-    // Cancel previous timer if exists
     _selectionUpdateTimer?.cancel();
-    
-    // Check if position is close to last position (avoid unnecessary updates)
+
     if (_lastSelectionPosition != null) {
       final distance = (position - _lastSelectionPosition!).distance;
-      if (distance < 5.0) return; // Skip small movements
+      if (distance < 5.0) return;
     }
-    
-    // Schedule update with a small delay
+
     _selectionUpdateTimer = Timer(const Duration(milliseconds: 16), () {
       _performSelectionUpdate(position);
     });
@@ -111,15 +185,13 @@ class _VirtualizedSelectableAreaState extends State<VirtualizedSelectableArea> {
   void _performSelectionUpdate(Offset position) {
     final result = _findFragmentAtPosition(position);
     if (result != null) {
-      // Only update if result actually changed
-      if (_lastSelectionResult == null || 
+      if (_lastSelectionResult == null ||
           _lastSelectionResult!.nodeId != result.nodeId ||
           _lastSelectionResult!.fragmentId != result.fragmentId ||
           _lastSelectionResult!.localOffset != result.localOffset) {
-        
         _lastSelectionResult = result;
         _lastSelectionPosition = position;
-        
+
         widget.document.selectionManager.updateFocus(
           result.nodeId,
           result.fragmentId,
@@ -128,25 +200,6 @@ class _VirtualizedSelectableAreaState extends State<VirtualizedSelectableArea> {
         widget.document.cursor.focusTo(result.fragmentId, result.localOffset);
       }
     }
-  }
-
-  void onPanEnd(DragEndDetails details) {
-    _isSelecting = false;
-    _pointerDownPosition = null;
-    _selectionUpdateTimer?.cancel(); // Clean up timer
-    _lastSelectionResult = null; // Clear cache
-    _lastSelectionPosition = null;
-    if (_isMobilePlatform()) {
-      widget.document.requestMobileKeyboardFocus();
-    }
-  }
-
-  void onPanCancel() {
-    _isSelecting = false;
-    _pointerDownPosition = null;
-    _selectionUpdateTimer?.cancel(); // Clean up timer
-    _lastSelectionResult = null; // Clear cache
-    _lastSelectionPosition = null;
   }
 
   /// Finds the fragment at a position using optimized coordinates
@@ -327,28 +380,26 @@ class _VirtualizedSelectableAreaState extends State<VirtualizedSelectableArea> {
     return MouseRegion(
       cursor: SystemMouseCursors.text,
       child: Listener(
+        behavior: HitTestBehavior.translucent,
         onPointerDown: _onPointerDown,
-        child: GestureDetector(
-          onPanStart: onPanStart,
-          onPanUpdate: onPanUpdate,
-          onPanEnd: onPanEnd,
-          onPanCancel: onPanCancel,
-          child: ListView.builder(
-            controller: _scrollController,
-            itemCount: widget.itemCount,
-            itemBuilder: (context, index) {
-              // Wrap each item to measure its actual height (only fires when
-              // the size actually changes, see MeasureSize).
-              return _VisibilityTracker(
-                document: widget.document,
-                index: index,
-                child: MeasureSize(
-                  onChange: (size) => _updateItemHeight(index, size.height),
-                  child: widget.itemBuilder(context, index),
-                ),
-              );
-            },
-          ),
+        onPointerMove: _onPointerMove,
+        onPointerUp: _onPointerUp,
+        child: ListView.builder(
+          controller: _scrollController,
+          physics: _isDragging ? const NeverScrollableScrollPhysics() : null,
+          itemCount: widget.itemCount,
+          itemBuilder: (context, index) {
+            // Wrap each item to measure its actual height (only fires when
+            // the size actually changes, see MeasureSize).
+            return _VisibilityTracker(
+              document: widget.document,
+              index: index,
+              child: MeasureSize(
+                onChange: (size) => _updateItemHeight(index, size.height),
+                child: widget.itemBuilder(context, index),
+              ),
+            );
+          },
         ),
       ),
     );
