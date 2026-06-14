@@ -59,7 +59,6 @@ Future<void> executeHandleCopy(FluentDocument document) async {
 
   if (sel == null) return;
 
-  developer.log('[COPY] selection resolved: ${sel.nodes.length} nodes', name: 'clipboard');
 
   final clonedNodes = <Map<String, dynamic>>[];
   final plainTextBuffer = StringBuffer();
@@ -68,18 +67,12 @@ Future<void> executeHandleCopy(FluentDocument document) async {
   // SelectedNodes refer to Paragraph/ListItem/FluentCell:
   // we need to reconstruct the ancestor structure (List, Table, Row)
   final topLevelNodes = _groupByTopLevel(document.content, sel);
-  developer.log('[COPY] sel.nodes=${sel.nodes.length} topLevel=${topLevelNodes.length}', name: 'clipboard');
-  for (final tl in topLevelNodes) {
-    developer.log('[COPY] topLevel=${tl.topLevel.runtimeType} id=${tl.topLevel.id} selectedNodes=${tl.selectedNodes.length}', name: 'clipboard');
-  }
 
   for (final tlEntry in topLevelNodes) {
     final clone = _cloneTopLevel(tlEntry, sel, plainTextBuffer);
     if (clone != null) {
-      developer.log('[COPY] cloned ${clone.runtimeType}', name: 'clipboard');
       clonedNodes.add(clone.toJson());
     } else {
-      developer.log('[COPY] clone returned null for ${tlEntry.topLevel.runtimeType}', name: 'clipboard');
     }
     plainTextBuffer.write('\n');
   }
@@ -116,19 +109,16 @@ Future<void> executeHandleCut(FluentDocument document) async {
 
 Future<void> executeHandlePaste(FluentDocument document) async {
   final internalPayload = document.clipboardPayload;
-  developer.log('[PASTE] internalPayload=${internalPayload != null ? "present (${internalPayload.length} chars)" : "null"}', name: 'clipboard');
   if (internalPayload != null) {
     try {
       final payload = _ClipboardPayload.fromJson(
         jsonDecode(internalPayload) as Map<String, dynamic>,
       );
-      developer.log('[PASTE] payload.nodes=${payload.nodes.length}', name: 'clipboard');
       if (payload.nodes.isNotEmpty) {
         _pasteNodes(payload.nodes, document);
         return;
       }
-    } catch (e, st) {
-      developer.log('[PASTE] error parsing payload: $e\n$st', name: 'clipboard');
+    } catch (e) {
     }
   }
 
@@ -162,23 +152,18 @@ Future<void> executeHandlePastePlain(FluentDocument document) async {
 // ─── Structured paste ────────────────────────────────────────────────
 
 void _pasteNodes(List<Map<String, dynamic>> nodesJson, FluentDocument document) {
-  developer.log('[PASTE] _pasteNodes start, cursor.isCollapsed=${document.cursor.isCollapsed}', name: 'clipboard');
   if (!document.cursor.isCollapsed) {
-    developer.log('[PASTE] replacing existing selection', name: 'clipboard');
     executeHandleReplaceSelection('', document);
   }
 
   final root = document.content;
   final cursor = document.cursor;
 
-  developer.log('[PASTE] cursor.anchorId=${cursor.anchorId} anchorOffset=${cursor.anchorOffset}', name: 'clipboard');
 
   // Find the current container and the top-level node
   final curContainer = findLogicalContainer(root, cursor.anchorId);
   final curTopLevel = _findTopLevelParent(root, cursor.anchorId);
-  developer.log('[PASTE] curContainer=${curContainer?.runtimeType} curTopLevel=${curTopLevel?.runtimeType} id=${curTopLevel?.id}', name: 'clipboard');
   if (curTopLevel == null) {
-    developer.log('[PASTE] ABORT: curTopLevel is null', name: 'clipboard');
     return;
   }
 
@@ -192,9 +177,7 @@ void _pasteNodes(List<Map<String, dynamic>> nodesJson, FluentDocument document) 
     try {
       newNode = converter.fromJson(nodeJson);
       _reassignIds(newNode);
-      developer.log('[PASTE] parsed node $i: ${newNode.runtimeType}', name: 'clipboard');
-    } catch (e, st) {
-      developer.log('[PASTE] error parsing node $i: $e\n$st\nJSON: ${jsonEncode(nodeJson)}', name: 'clipboard');
+    } catch (e) {
       continue;
     }
 
@@ -223,7 +206,6 @@ void _pasteNodes(List<Map<String, dynamic>> nodesJson, FluentDocument document) 
         curContainerIsMergeTarget;
 
     if (canMerge) {
-      developer.log('[PASTE] merging into current paragraph (container=\${curContainer.runtimeType})', name: 'clipboard');
       lastFragment = _mergeFragmentsIntoParagraph(
         newNode as Paragraph,
         curContainer as Paragraph,
@@ -232,14 +214,11 @@ void _pasteNodes(List<Map<String, dynamic>> nodesJson, FluentDocument document) 
       // lastInserted stays = curTopLevel so subsequent nodes (if any) are
       // inserted after the top-level container (FluentList or Paragraph).
     } else {
-      final inserted = insertAfter(root, lastInserted, newNode);
-      developer.log('[PASTE] insertAfter(root, ${lastInserted.runtimeType} id=${lastInserted.id}, ${newNode.runtimeType}) => $inserted', name: 'clipboard');
+      insertAfter(root, lastInserted, newNode);
       lastInserted = newNode;
       lastFragment = _collectAllFragments(newNode).lastOrNull;
-      developer.log('[PASTE] lastFragment=${lastFragment?.id} text="${lastFragment?.text}"', name: 'clipboard');
     }
   }
-  developer.log('[PASTE] root.nodes now has ${root.nodes.length} children', name: 'clipboard');
 
   // Position the cursor at the end of the last inserted fragment
   if (lastFragment != null) {
@@ -395,7 +374,6 @@ List<_TopLevelEntry> _groupByTopLevel(Root root, ResolvedSelection sel) {
     final containerNode = selectedNode.container as FNode;
     final containerId = containerNode.id;
     final topLevel = _findTopLevelParent(root, containerId);
-    developer.log('[COPY] selectedNode container=${containerNode.runtimeType} id=$containerId topLevel=${topLevel?.runtimeType} id=${topLevel?.id}', name: 'clipboard');
     if (topLevel == null) continue;
     final tlId = topLevel.id;
 
@@ -780,7 +758,6 @@ FluentTable? _cloneTable(
     for (final cell in row.cells) {
       // The cell is selected if its ID is among the selected containers
       final cellSelected = selectedCellIds.contains(cell.id);
-      developer.log('[COPY] cell id=${cell.id} selected=$cellSelected', name: 'clipboard');
       if (!cellSelected) continue;
 
       rowHasSelection = true;
