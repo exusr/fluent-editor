@@ -619,7 +619,7 @@ class FluentParagraphWidgetState<T extends FluentParagraphWidget> extends State<
             final uri = Uri.tryParse(link.url);
             if (uri != null) {
               // On Linux, url_launcher may have channel errors, so copy to clipboard directly
-              if (Platform.isLinux) {
+              if (!kIsWeb && Platform.isLinux) {
                 await Clipboard.setData(ClipboardData(text: link.url));
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
@@ -629,9 +629,12 @@ class FluentParagraphWidgetState<T extends FluentParagraphWidget> extends State<
                 );
                 return;
               }
-              
+
               try {
-                final launched = await launchUrl(uri);
+                final launched = await launchUrl(
+                  uri,
+                  webOnlyWindowName: kIsWeb ? '_blank' : null,
+                );
                 if (!launched) {
                   // If launch fails, copy URL to clipboard as fallback
                   await Clipboard.setData(ClipboardData(text: link.url));
