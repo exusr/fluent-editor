@@ -119,12 +119,45 @@ bool executeHandleArrowKey(
       final currentContainerId = document.findLogicalContainerId(current.fragmentId);
       final containerOrder = document.containerOrder;
       final containerIdx = containerOrder.indexOf(currentContainerId ?? '');
-      final candidateIds = <String>[];
+      final candidateIds = <String>{};
       if (containerIdx >= 0) {
         candidateIds.add(containerOrder[containerIdx]);
         if (containerIdx > 0) candidateIds.add(containerOrder[containerIdx - 1]);
         if (containerIdx < containerOrder.length - 1) {
           candidateIds.add(containerOrder[containerIdx + 1]);
+        }
+
+        // If inside a table or list, expand to include all containers in that
+        // structure (including nested sub-structures) so Up/Down can cross
+        // rows/items and exit the structure correctly.
+        String? _nearestStructure(String? id) {
+          if (id == null) return null;
+          String? pid = id;
+          while (pid != null) {
+            final node = document.nodeById(pid);
+            if (node is FluentTable || node is FluentList) return pid;
+            pid = document.findParentCached(pid);
+          }
+          return null;
+        }
+
+        bool _isInsideStructure(String? containerId, String structureId) {
+          if (containerId == null) return false;
+          String? pid = containerId;
+          while (pid != null) {
+            if (pid == structureId) return true;
+            pid = document.findParentCached(pid);
+          }
+          return false;
+        }
+
+        final currentEnclosing = _nearestStructure(currentContainerId);
+        if (currentEnclosing != null) {
+          for (final id in containerOrder) {
+            if (_isInsideStructure(id, currentEnclosing)) {
+              candidateIds.add(id);
+            }
+          }
         }
       }
       final candidateStops = candidateIds.isNotEmpty

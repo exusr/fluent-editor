@@ -138,4 +138,55 @@ void main() {
       expect(id, isNull);
     });
   });
+
+  group('FluentDocument containerOrder', () {
+    test('includes paragraph ids inside table cells, not cell ids', () {
+      final cell = FluentCell(children: [Paragraph(text: 'cell')]);
+      final table = FluentTable(rows: [FluentRow(cells: [cell])]);
+      final below = Paragraph(text: 'below');
+      final doc = FluentDocument(content: Root(nodes: [table, below]));
+
+      final order = doc.containerOrder;
+      final cellParagraph = cell.children.first as Paragraph;
+
+      // containerOrder should contain the paragraph inside the cell,
+      // not the cell id, so that it aligns with findLogicalContainerId.
+      expect(order, contains(cellParagraph.id));
+      expect(order, isNot(contains(cell.id)));
+
+      // The paragraph below the table should also be present.
+      expect(order, contains(below.id));
+    });
+
+    test('includes paragraph ids inside list items, not item ids', () {
+      final item = ListItem(
+        bulletType: 'bullet',
+        indexList: [1],
+        children: [Paragraph(text: 'item')],
+      );
+      final list = FluentList(listType: 'bullet')..items.add(item);
+      final below = Paragraph(text: 'below');
+      final doc = FluentDocument(content: Root(nodes: [list, below]));
+
+      final order = doc.containerOrder;
+      final itemParagraph = item.children.first as Paragraph;
+
+      expect(order, contains(itemParagraph.id));
+      expect(order, isNot(contains(item.id)));
+      expect(order, contains(below.id));
+    });
+
+    test('aligns with findLogicalContainerId for table content', () {
+      final cell = FluentCell(children: [Paragraph(text: 'cell')]);
+      final table = FluentTable(rows: [FluentRow(cells: [cell])]);
+      final doc = FluentDocument(content: Root(nodes: [table]));
+
+      final cellParagraph = cell.children.first as Paragraph;
+      final frag = cellParagraph.fragments.first as Fragment;
+
+      // findLogicalContainerId and containerOrder must agree.
+      expect(doc.findLogicalContainerId(frag.id), cellParagraph.id);
+      expect(doc.containerOrder, contains(cellParagraph.id));
+    });
+  });
 }

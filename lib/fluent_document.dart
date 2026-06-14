@@ -237,21 +237,73 @@ class FluentDocument extends ChangeNotifier {
     if (_cachedContainerOrder != null) return _cachedContainerOrder!;
     final ids = <String>[];
     for (final node in _content.nodes) {
-      if (node is InlineContainerNode) {
+      if (node is InlineContainerNode &&
+          node is! FluentCell &&
+          node is! ListItem &&
+          node is! FluentTable &&
+          node is! FluentList) {
         ids.add(node.id);
       } else if (node is FluentList) {
         for (final item in node.items) {
-          ids.add(item.id);
+          _collectContainerOrderIds(item, ids);
         }
       } else if (node is FluentTable) {
         for (final row in node.rows) {
           for (final cell in row.cells) {
-            ids.add(cell.id);
+            _collectContainerOrderIds(cell, ids);
           }
         }
       }
     }
     return _cachedContainerOrder = ids;
+  }
+
+  /// Recursively collects ids of the actual logical containers inside
+  /// [node] (Paragraphs, HRs, images) so that [containerOrder] aligns with
+  /// what [findLogicalContainerId] returns.
+  void _collectContainerOrderIds(FNode node, List<String> ids) {
+    // FluentList and FluentTable MUST be checked before Paragraph because
+    // FluentList extends Paragraph. If checked after, sublists are treated as
+    // leaf nodes and their paragraph children are skipped.
+    if (node is FluentList) {
+      for (final item in node.items) {
+        _collectContainerOrderIds(item, ids);
+      }
+      return;
+    }
+    if (node is FluentTable) {
+      for (final row in node.rows) {
+        for (final cell in row.cells) {
+          _collectContainerOrderIds(cell, ids);
+        }
+      }
+      return;
+    }
+    if (node is FluentCell || node is ListItem) {
+      for (final child in childrenOf(node)) {
+        _collectContainerOrderIds(child, ids);
+      }
+      return;
+    }
+    if (node is Paragraph || node is HorizontalRule) {
+      ids.add(node.id);
+      return;
+    }
+    if (node is FluentImage) {
+      ids.add(node.id);
+      return;
+    }
+    if (node is Link) {
+      for (final child in childrenOf(node)) {
+        _collectContainerOrderIds(child, ids);
+      }
+      return;
+    }
+    if (node is InlineContainerNode) {
+      for (final child in childrenOf(node)) {
+        _collectContainerOrderIds(child, ids);
+      }
+    }
   }
 
   FluentDocument({Root? content}) {
