@@ -1154,11 +1154,7 @@ class RenderFluentParagraph extends RenderFluentNode
     // Blink the cursor: visible for 500ms, hidden for 500ms
     final now = DateTime.now().millisecondsSinceEpoch;
     final blinkPhase = (now % 1000) < 500;
-    if (!blinkPhase) {
-      // Schedule next frame to continue blinking
-      markNeedsPaint();
-      return;
-    }
+    if (!blinkPhase) return;
 
     // If the cursor is on an inline image, draw vertical lines at the borders
     // of the placeholder instead of the thin text line.

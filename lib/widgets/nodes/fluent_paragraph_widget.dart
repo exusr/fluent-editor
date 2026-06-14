@@ -529,6 +529,12 @@ class FluentParagraphWidgetState<T extends FluentParagraphWidget> extends State<
   }
 
   void _showLinkContextMenu(Offset globalPosition, Link link) {
+    // Extract the current link text from fragments
+    final currentText = link.fragments
+        .whereType<Fragment>()
+        .map((f) => f.text)
+        .join();
+
     showFluentContextMenu(
       context: context,
       globalPosition: globalPosition,
@@ -537,7 +543,12 @@ class FluentParagraphWidgetState<T extends FluentParagraphWidget> extends State<
           icon: Icons.link,
           label: widget.document.labels?.replaceLink ?? 'Replace link',
           onPressed: () async {
-            final result = await showFluentLinkDialog(context, labels: widget.document.labels);
+            final result = await showFluentLinkDialog(
+              context,
+              labels: widget.document.labels,
+              initialUrl: link.url,
+              initialText: currentText,
+            );
             if (result != null) {
               link.url = result['url']!;
               // Update the link text if provided

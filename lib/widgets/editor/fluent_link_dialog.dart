@@ -3,20 +3,34 @@ import 'package:fluent_editor/localization/fluent_editor_labels.dart';
 
 /// Dialog for inserting a link with URL and custom text.
 class FluentLinkDialog extends StatefulWidget {
-  const FluentLinkDialog({super.key, this.labels});
+  const FluentLinkDialog({
+    super.key,
+    this.labels,
+    this.initialUrl,
+    this.initialText,
+  });
 
   final FluentEditorLabels? labels;
+  final String? initialUrl;
+  final String? initialText;
 
   @override
   State<FluentLinkDialog> createState() => _FluentLinkDialogState();
 }
 
 class _FluentLinkDialogState extends State<FluentLinkDialog> {
-  final _urlController = TextEditingController();
-  final _textController = TextEditingController();
+  late final TextEditingController _urlController;
+  late final TextEditingController _textController;
   final _formKey = GlobalKey<FormState>();
 
   FluentEditorLabels get _labels => widget.labels ?? const FluentEditorLabels();
+
+  @override
+  void initState() {
+    super.initState();
+    _urlController = TextEditingController(text: widget.initialUrl ?? '');
+    _textController = TextEditingController(text: widget.initialText ?? '');
+  }
 
   @override
   void dispose() {
@@ -97,9 +111,15 @@ class _FluentLinkDialogState extends State<FluentLinkDialog> {
 Future<Map<String, String>?> showFluentLinkDialog(
   BuildContext context, {
   FluentEditorLabels? labels,
+  String? initialUrl,
+  String? initialText,
 }) {
   return showDialog<Map<String, String>>(
     context: context,
-    builder: (context) => FluentLinkDialog(labels: labels),
+    builder: (context) => FluentLinkDialog(
+      labels: labels,
+      initialUrl: initialUrl,
+      initialText: initialText,
+    ),
   );
 }
