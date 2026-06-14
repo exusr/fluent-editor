@@ -43,6 +43,7 @@ class FluentParagraphWidgetState<T extends FluentParagraphWidget> extends State<
   final GlobalKey _renderWidgetKey = GlobalKey();
   DateTime? _lastTapTime;
   Offset? _lastTapPosition;
+  int _tapCount = 0;
   StreamSubscription<String>? _spellSubscription;
   StreamSubscription<void>? _commentSubscription;
   bool _isSecondaryTap = false;
@@ -52,36 +53,8 @@ class FluentParagraphWidgetState<T extends FluentParagraphWidget> extends State<
   CommentProvider? get _comment => widget.document.commentProvider;
 
   void onTapDown(TapDownDetails details) {
-    final now = DateTime.now();
-    final isDoubleTap = _lastTapTime != null &&
-        now.difference(_lastTapTime!).inMilliseconds < 300 &&
-        _lastTapPosition != null &&
-        (details.globalPosition - _lastTapPosition!).distance < 30;
-
-    _lastTapTime = now;
-    _lastTapPosition = details.globalPosition;
-
-    // Get the RenderBox of the RenderFluentParagraph
-    final renderObject = _renderWidgetKey.currentContext?.findRenderObject();
-    if (renderObject is RenderBox) {
-      final localPosition = renderObject.globalToLocal(details.globalPosition);
-      
-      if (isDoubleTap) {
-        // Double tap: select the word
-        widget.document.eventHandler.onDoubleTapWithPosition(
-          localPosition,
-          renderObject,
-          widget,
-        );
-      } else {
-        // Single tap: move the cursor
-        widget.document.eventHandler.onTapDownWithPosition(
-          localPosition,
-          renderObject,
-          widget,
-        );
-      }
-    }
+    // This method is kept for subclass overrides.
+    // The actual tap logic is handled inline in the GestureDetector within build().
   }
 
   @override
@@ -217,11 +190,16 @@ class FluentParagraphWidgetState<T extends FluentParagraphWidget> extends State<
             widget.document.requestEditorFocus();
 
             final now = DateTime.now();
-            final isDoubleTap = _lastTapTime != null &&
+            final isConsecutiveTap = _lastTapTime != null &&
                 now.difference(_lastTapTime!).inMilliseconds < 300 &&
                 _lastTapPosition != null &&
                 (details.globalPosition - _lastTapPosition!).distance < 30;
 
+            if (isConsecutiveTap) {
+              _tapCount++;
+            } else {
+              _tapCount = 1;
+            }
             _lastTapTime = now;
             _lastTapPosition = details.globalPosition;
 
@@ -229,7 +207,13 @@ class FluentParagraphWidgetState<T extends FluentParagraphWidget> extends State<
             if (renderObject is RenderBox) {
               final localPosition = renderObject.globalToLocal(details.globalPosition);
 
-              if (isDoubleTap) {
+              if (_tapCount >= 3) {
+                // Triple tap: select the entire logical line
+                _tapCount = 0;
+                _savedSelection = null;
+                widget.document.eventHandler.onTripleTapWithPosition(
+                  localPosition, renderObject, widget);
+              } else if (_tapCount == 2) {
                 _savedSelection = null;
                 widget.document.eventHandler.onDoubleTapWithPosition(
                   localPosition, renderObject, widget);

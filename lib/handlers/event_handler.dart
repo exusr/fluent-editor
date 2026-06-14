@@ -116,6 +116,59 @@ class EventHandler {
     }
   }
 
+  // Triple-tap to select the entire logical line.
+  // Finds the logical line containing the tapped fragment, then selects
+  // from the first stop to the last stop of that line.
+  void onTripleTapWithPosition(
+    Offset localPosition,
+    RenderBox renderBox,
+    Widget widget,
+  ) {
+    final paragraph = renderBox as RenderFluentParagraph;
+    final fragmentResult = paragraph.getFragmentAtPosition(localPosition);
+    if (fragmentResult == null) return;
+
+    final root = document.content;
+    final tappedFragmentId = fragmentResult.fragmentId;
+
+    // Find the logical line by searching for any stop belonging to the tapped fragment.
+    // We cannot rely on exact stop matching since tap offsets may not align exactly.
+    final lines = buildAllLogicalLines(root);
+    LogicalLine? targetLine;
+    for (final line in lines) {
+      if (line.stops.any((s) => s.fragmentId == tappedFragmentId)) {
+        targetLine = line;
+        break;
+      }
+    }
+
+    // If still not found, fall back to the logical container of the tapped fragment
+    if (targetLine == null) {
+      final container = findLogicalContainer(root, tappedFragmentId);
+      if (container != null) {
+        for (final line in lines) {
+          if (line.node == container) {
+            targetLine = line;
+            break;
+          }
+        }
+      }
+    }
+
+    if (targetLine == null || targetLine.stops.isEmpty) return;
+
+    final firstStop = targetLine.stops.first;
+    final lastStop = targetLine.stops.last;
+
+    // Move anchor to line start, focus to line end
+    document.cursor.moveTo(firstStop.fragmentId, firstStop.offset);
+    document.cursor.focusTo(lastStop.fragmentId, lastStop.offset);
+
+    _syncSelectionManager(document);
+    document.syncPendingFontWithCursor();
+    document.updateContent();
+  }
+
   bool _isWordChar(String char) {
     // Word characters: letters, numbers, underscore, and some common punctuation
     return RegExp(r'[\w]').hasMatch(char);
