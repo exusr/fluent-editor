@@ -398,6 +398,10 @@ class _FluentToolbarState extends State<FluentToolbar> {
           final odtBytes = await exportService.exportToOdt();
           savedPath = await exportService.saveFileNative(odtBytes, 'document.odt', 'odt');
           break;
+        case 'html':
+          final htmlText = await exportService.exportToHtml();
+          savedPath = await exportService.saveTextFileNative(htmlText, 'document.html', 'html');
+          break;
         case 'md':
           final mdText = exportService.exportToMarkdown();
           savedPath = await exportService.saveTextFileNative(mdText, 'document.md', 'md');
@@ -473,6 +477,11 @@ class _FluentToolbarState extends State<FluentToolbar> {
                           leadingIcon: const Icon(Icons.picture_as_pdf),
                           onPressed: () => _exportDocument('pdf'),
                           child: Text(_labels.pdf),
+                        )),
+                        _withClickCursor(MenuItemButton(
+                          leadingIcon: const Icon(Icons.html),
+                          onPressed: () => _exportDocument('html'),
+                          child: Text(_labels.html),
                         )),
                         _withClickCursor(MenuItemButton(
                           leadingIcon: const Icon(Icons.code),
