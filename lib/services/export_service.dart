@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io' show File, HttpClient, Platform, Process;
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
@@ -919,6 +920,222 @@ class ExportService {
   Future<Uint8List> exportToOdt() async {
     await _prefetchImages();
     return await OdtExporter(document, imageCache: _imageCache).build();
+  }
+
+  // ─── Markdown ───────────────────────────────────────────────────────
+
+  String exportToMarkdown() {
+    final root = document.content;
+    final buffer = StringBuffer();
+    final nodes = root.nodes;
+    for (var i = 0; i < nodes.length; i++) {
+      final md = _nodeToMarkdown(nodes[i]);
+      if (md.isEmpty) continue;
+      buffer.write(md);
+      // Separate blocks with a blank line so Markdown renders them
+      // as distinct paragraphs / lists / tables.
+      if (i < nodes.length - 1) buffer.write('\n\n');
+    }
+    return buffer.toString().trim();
+  }
+
+  String _nodeToMarkdown(FNode node) {
+    if (node is FluentImage) {
+      return _imageToMarkdown(node);
+    } else if (node is HorizontalRule) {
+      return '---';
+    } else if (node is FluentList) {
+      return _listToMarkdown(node, 0);
+    } else if (node is FluentTable) {
+      return _tableToMarkdown(node);
+    } else if (node is Paragraph) {
+      return _paragraphToMarkdown(node);
+    }
+    return '';
+  }
+
+  String _paragraphToMarkdown(Paragraph paragraph) {
+    final pStyle = paragraph.getStyle();
+    final headingLevel = _headingLevel(pStyle.name);
+    final inline = _fragmentsToMarkdown(paragraph.fragments);
+
+    if (headingLevel > 0) {
+      return '${'#' * headingLevel} $inline';
+    }
+    if (pStyle.name == 'quote') {
+      return inline.split('\n').map((l) => '> $l').join('\n');
+    }
+    if (pStyle.name == 'code') {
+      return '```\n$inline\n```';
+    }
+    return inline;
+  }
+
+  String _fragmentsToMarkdown(List<FNode> fragments) {
+    final buffer = StringBuffer();
+    for (final frag in fragments) {
+      if (frag is Link) {
+        buffer.write(_linkToMarkdown(frag));
+      } else if (frag is FluentImage) {
+        buffer.write(_imageToMarkdown(frag));
+      } else if (frag is Fragment) {
+        buffer.write(_fragmentToMarkdown(frag));
+      }
+    }
+    return buffer.toString();
+  }
+
+  String _fragmentToMarkdown(Fragment fragment) {
+    var text = _escapeMarkdown(fragment.text);
+    final styles = fragment.styles ?? [];
+
+    // Empty fragments with styles would emit bare syntax (e.g. ****).
+    if (text.isEmpty) return '';
+
+    // Apply inline styles that Markdown natively supports.
+    // underline, superscript, subscript and smallcaps have no
+    // native Markdown equivalent, so they are kept as plain text.
+    if (styles.contains('bold')) text = '**$text**';
+    if (styles.contains('italic')) text = '*$text*';
+    if (styles.contains('strikethrough')) text = '~~$text~~';
+
+    return text;
+  }
+
+  String _linkToMarkdown(Link link) {
+    final text = _fragmentsToMarkdown(link.fragments);
+    if (text.isEmpty) {
+      // Empty link text — skip it entirely so it does not pollute
+      // the Markdown output with useless `[]()` syntax.
+      return '';
+    }
+    return '[$text](${link.url})';
+  }
+
+  String _listToMarkdown(FluentList list, int depth) {
+    final buffer = StringBuffer();
+    final indent = '    ' * depth;
+    final isOrdered = list.listType == 'ordered';
+    final isCheckbox = list.items.isNotEmpty &&
+        (list.items.first.bulletType.startsWith('checkbox'));
+
+    for (var i = 0; i < list.items.length; i++) {
+      final item = list.items[i];
+      final prefix = isCheckbox
+          ? _checkboxPrefix(item.bulletType)
+          : (isOrdered ? '${i + 1}.' : '-');
+      final children = item.children;
+
+      // Inline content (Paragraph / Image) goes on the same line as the bullet.
+      // Block content (sub-list) goes on a new line so Markdown parsers
+      // treat it as a nested list.
+      final inlineChildren = children.where((c) => c is Paragraph || c is FluentImage).toList();
+      final blockChildren = children.where((c) => c is FluentList).toList();
+
+      if (inlineChildren.isNotEmpty) {
+        // Write bullet + inline content on one line.
+        buffer.write('$indent$prefix ');
+        for (var j = 0; j < inlineChildren.length; j++) {
+          final child = inlineChildren[j];
+          if (child is Paragraph) {
+            buffer.write(_fragmentsToMarkdown(child.fragments));
+          } else if (child is FluentImage) {
+            buffer.write(_imageToMarkdown(child));
+          }
+          if (j < inlineChildren.length - 1) {
+            buffer.write(' ');
+          }
+        }
+      } else if (blockChildren.isNotEmpty) {
+        // No inline text — bullet on its own line.
+        buffer.write('$indent$prefix');
+      }
+
+      // Sub-lists (and any remaining block children) on new lines.
+      for (final child in blockChildren) {
+        if (child is FluentList) {
+          buffer.write('\n');
+          buffer.write(_listToMarkdown(child, depth + 1));
+        }
+      }
+
+      if (i < list.items.length - 1) buffer.write('\n');
+    }
+    return buffer.toString();
+  }
+
+  String _checkboxPrefix(String bulletType) {
+    return switch (bulletType) {
+      'checkbox-checked' => '- [x]',
+      'checkbox-crossed' => '- [~]',
+      _ => '- [ ]',
+    };
+  }
+
+  String _tableToMarkdown(FluentTable table) {
+    final rows = table.rows;
+    if (rows.isEmpty) return '';
+
+    // Compute the total number of visible columns from all rows,
+    // respecting colSpan so a single cell spanning 3 columns
+    // contributes 3 to the total.
+    int visualColumns(FluentRow row) =>
+        row.cells.map((c) => c.colSpan).fold<int>(0, (a, b) => a + b);
+
+    final colCount = rows.map(visualColumns).reduce(math.max);
+
+    final buffer = StringBuffer();
+    for (var r = 0; r < rows.length; r++) {
+      final row = rows[r];
+      buffer.write('| ');
+      var writtenCols = 0;
+      for (var c = 0; c < row.cells.length; c++) {
+        final cell = row.cells[c];
+        final text = cell.children
+            .whereType<Paragraph>()
+            .map((p) => _fragmentsToMarkdown(p.fragments))
+            .join(' ');
+        // _fragmentsToMarkdown already escapes raw text; do NOT
+        // call _escapeMarkdown again or it would break bold/link syntax.
+        buffer.write('$text | ');
+        writtenCols += cell.colSpan;
+        // Pad empty cells for colspan > 1 (Markdown has no colspan support).
+        for (var e = 1; e < cell.colSpan; e++) {
+          buffer.write('| ');
+        }
+      }
+      // Pad remaining columns if the row is shorter than colCount.
+      for (; writtenCols < colCount; writtenCols++) {
+        buffer.write('| ');
+      }
+      buffer.writeln();
+
+      // Separator after first row (header)
+      if (r == 0) {
+        buffer.write('|');
+        for (var c = 0; c < colCount; c++) {
+          buffer.write(' --- |');
+        }
+        buffer.writeln();
+      }
+    }
+    return buffer.toString().trim();
+  }
+
+  String _imageToMarkdown(FluentImage image) {
+    return '![${_escapeMarkdown(image.src)}](${image.src})';
+  }
+
+  String _escapeMarkdown(String text) {
+    // Escape characters that have special meaning in Markdown
+    return text
+        .replaceAll('\\', '\\\\')
+        .replaceAll('*', '\\*')
+        .replaceAll('_', '\\_')
+        .replaceAll('[', '\\[')
+        .replaceAll(']', '\\]')
+        .replaceAll('|', '\\|')
+        .replaceAll('`', '\\`');
   }
 
   // ─── HTML ───────────────────────────────────────────────────────────

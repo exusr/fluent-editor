@@ -507,7 +507,6 @@ class _MeasureSizeRenderObject extends RenderProxyBox {
   }
 }
 
-/// Same _FragmentHitResult class from fluent_selection.dart
 class _FragmentHitResult {
   final String nodeId;
   final String fragmentId;

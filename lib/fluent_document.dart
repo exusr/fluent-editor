@@ -14,7 +14,6 @@ import 'package:fluent_editor/utils/cursor_utils.dart';
 import 'package:fluent_editor/utils/node_operations.dart';
 import 'package:fluent_editor/utils/editor_utils.dart';
 import 'package:fluent_editor/widgets/editor/fluent_toolbar_widget.dart';
-// REMOVED: fluent_selection.dart - no longer needed with virtualization
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:fluent_editor/widgets/nodes/virtualized_selectable_area.dart';

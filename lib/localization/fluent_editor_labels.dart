@@ -24,6 +24,7 @@ class FluentEditorLabels {
   final String microsoftWord;
   final String libreOffice;
   final String pdf;
+  final String markdown;
   final String fileSaved;
   final String fileLoaded;
   final String fileLoadError;
@@ -152,6 +153,7 @@ class FluentEditorLabels {
     this.microsoftWord = 'Microsoft Word (.docx)',
     this.libreOffice = 'LibreOffice (.odt)',
     this.pdf = 'PDF (.pdf)',
+    this.markdown = 'Markdown (.md)',
     this.fileSaved = 'File saved',
     this.fileLoaded = 'File loaded successfully',
     this.fileLoadError = 'Error loading file',

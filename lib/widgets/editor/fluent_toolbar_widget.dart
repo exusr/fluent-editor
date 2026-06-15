@@ -398,6 +398,10 @@ class _FluentToolbarState extends State<FluentToolbar> {
           final odtBytes = await exportService.exportToOdt();
           savedPath = await exportService.saveFileNative(odtBytes, 'document.odt', 'odt');
           break;
+        case 'md':
+          final mdText = exportService.exportToMarkdown();
+          savedPath = await exportService.saveTextFileNative(mdText, 'document.md', 'md');
+          break;
       }
       if (!mounted) return;
       if (savedPath != null) {
@@ -469,6 +473,11 @@ class _FluentToolbarState extends State<FluentToolbar> {
                           leadingIcon: const Icon(Icons.picture_as_pdf),
                           onPressed: () => _exportDocument('pdf'),
                           child: Text(_labels.pdf),
+                        )),
+                        _withClickCursor(MenuItemButton(
+                          leadingIcon: const Icon(Icons.code),
+                          onPressed: () => _exportDocument('md'),
+                          child: Text(_labels.markdown),
                         )),
                       ],
                       child: Text(_labels.exportAs),
