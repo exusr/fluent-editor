@@ -26,6 +26,10 @@ class FluentEditorLabels {
   final String pdf;
   final String html;
   final String markdown;
+  final String importHtml;
+  final String importMarkdown;
+  final String importDocx;
+  final String importOdt;
   final String fileSaved;
   final String fileLoaded;
   final String fileLoadError;
@@ -156,6 +160,10 @@ class FluentEditorLabels {
     this.pdf = 'PDF (.pdf)',
     this.html = 'HTML (.html)',
     this.markdown = 'Markdown (.md)',
+    this.importHtml = 'Import HTML (.html)',
+    this.importMarkdown = 'Import Markdown (.md)',
+    this.importDocx = 'Import Word (.docx)',
+    this.importOdt = 'Import ODT (.odt)',
     this.fileSaved = 'File saved',
     this.fileLoaded = 'File loaded successfully',
     this.fileLoadError = 'Error loading file',

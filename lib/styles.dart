@@ -100,6 +100,39 @@ class ParagraphStyle {
     spacingAfter: 8.0,
   );
 
+  static final ParagraphStyle heading4 = ParagraphStyle(
+    name: 'heading4',
+    displayName: 'Heading 4',
+    fontFamily: 'DejaVu Sans',
+    fontSize: 16.0,
+    styles: ['bold'],
+    textAlign: 'left',
+    spacingBefore: 14.0,
+    spacingAfter: 6.0,
+  );
+
+  static final ParagraphStyle heading5 = ParagraphStyle(
+    name: 'heading5',
+    displayName: 'Heading 5',
+    fontFamily: 'DejaVu Sans',
+    fontSize: 14.0,
+    styles: ['bold'],
+    textAlign: 'left',
+    spacingBefore: 12.0,
+    spacingAfter: 4.0,
+  );
+
+  static final ParagraphStyle heading6 = ParagraphStyle(
+    name: 'heading6',
+    displayName: 'Heading 6',
+    fontFamily: 'DejaVu Sans',
+    fontSize: 13.0,
+    styles: ['bold'],
+    textAlign: 'left',
+    spacingBefore: 10.0,
+    spacingAfter: 2.0,
+  );
+
   static final ParagraphStyle quote = ParagraphStyle(
     name: 'quote',
     displayName: 'Quote',
@@ -129,6 +162,9 @@ class ParagraphStyle {
     heading1,
     heading2,
     heading3,
+    heading4,
+    heading5,
+    heading6,
     quote,
     code,
   ];

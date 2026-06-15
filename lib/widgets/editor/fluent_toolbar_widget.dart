@@ -7,6 +7,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:file_selector/file_selector.dart';
 import 'package:fluent_editor/factories.dart';
 import 'package:fluent_editor/services/export_service.dart';
+import 'package:fluent_editor/services/import_service.dart';
 import 'package:fluent_editor/styles.dart';
 import 'package:fluent_editor/fluent_document.dart';
 import 'package:fluent_editor/handlers/handle_backspace.dart';
@@ -381,6 +382,105 @@ class _FluentToolbarState extends State<FluentToolbar> {
     );
   }
 
+  Future<void> _importDocument(String format) async {
+    try {
+      String? content;
+      Uint8List? bytes;
+
+      if (kIsWeb) {
+        final result = await FilePicker.platform.pickFiles(
+          type: FileType.custom,
+          allowedExtensions: [format],
+          withData: true,
+        );
+        if (!mounted) return;
+        if (result != null && result.files.isNotEmpty) {
+          final file = result.files.first;
+          bytes = file.bytes;
+          if (bytes != null && format != 'docx' && format != 'odt') {
+            content = utf8.decode(bytes, allowMalformed: true);
+          }
+        }
+      } else if (Platform.isLinux) {
+        try {
+          final env = Map<String, String>.from(Platform.environment);
+          env['GTK_THEME'] = 'Adwaita';
+          final result = await Process.run('zenity', [
+            '--file-selection',
+            '--file-filter=${format.toUpperCase()} | *.$format',
+            '--title=Import file',
+          ], environment: env);
+          if (result.exitCode == 0) {
+            final path = (result.stdout as String).trim();
+            if (path.isNotEmpty) {
+              final file = File(path);
+              if (format == 'docx' || format == 'odt') {
+                bytes = await file.readAsBytes();
+              } else {
+                content = await file.readAsString();
+              }
+            }
+          }
+        } catch (_) {}
+      } else if (Platform.isMacOS || Platform.isWindows) {
+        final typeGroup = XTypeGroup(
+          label: format.toUpperCase(),
+          extensions: [format],
+        );
+        final file = await openFile(acceptedTypeGroups: [typeGroup]);
+        if (!mounted) return;
+        if (file != null) {
+          if (format == 'docx' || format == 'odt') {
+            bytes = Uint8List.fromList(await file.readAsBytes());
+          } else {
+            content = await file.readAsString();
+          }
+        }
+      } else {
+        final result = await FilePicker.platform.pickFiles(
+          type: FileType.any,
+          withData: true,
+        );
+        if (!mounted) return;
+        if (result != null && result.files.isNotEmpty) {
+          final file = result.files.first;
+          if (file.path != null && !file.path!.endsWith('.$format')) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('${_labels.fileLoadError}: Please select a .$format file')),
+            );
+            return;
+          }
+          bytes = file.bytes;
+          if (bytes != null && format != 'docx' && format != 'odt') {
+            content = utf8.decode(bytes, allowMalformed: true);
+          }
+        }
+      }
+
+      if (content == null && bytes == null) return;
+      if (!mounted) return;
+
+      final importService = ImportService();
+      final Root root = switch (format) {
+        'html' => importService.importFromHtml(content!),
+        'md' => importService.importFromMarkdown(content!),
+        'docx' => importService.importFromDocx(bytes!),
+        'odt' => importService.importFromOdt(bytes!),
+        _ => Root(nodes: [Paragraph(text: '')]),
+      };
+
+      widget.document.loadContent(root);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(_labels.fileLoaded)),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('${_labels.fileLoadError}: $e')),
+      );
+    }
+  }
+
   Future<void> _exportDocument(String format) async {
     final exportService = ExportService(widget.document);
     String? savedPath;
@@ -458,6 +558,33 @@ class _FluentToolbarState extends State<FluentToolbar> {
                       leadingIcon: const Icon(Icons.folder_open),
                       onPressed: _loadFluentFile,
                       child: Text(_labels.open),
+                    )),
+                    const Divider(height: 1),
+                    _withClickCursor(SubmenuButton(
+                      leadingIcon: const Icon(Icons.file_upload),
+                      menuChildren: [
+                        _withClickCursor(MenuItemButton(
+                          leadingIcon: const Icon(Icons.html),
+                          onPressed: () => _importDocument('html'),
+                          child: Text(_labels.importHtml),
+                        )),
+                        _withClickCursor(MenuItemButton(
+                          leadingIcon: const Icon(Icons.code),
+                          onPressed: () => _importDocument('md'),
+                          child: Text(_labels.importMarkdown),
+                        )),
+                        _withClickCursor(MenuItemButton(
+                          leadingIcon: const Icon(Icons.description),
+                          onPressed: () => _importDocument('docx'),
+                          child: Text(_labels.importDocx),
+                        )),
+                        _withClickCursor(MenuItemButton(
+                          leadingIcon: const Icon(Icons.article),
+                          onPressed: () => _importDocument('odt'),
+                          child: Text(_labels.importOdt),
+                        )),
+                      ],
+                      child: const Text('Import'),
                     )),
                     const Divider(height: 1),
                     _withClickCursor(SubmenuButton(

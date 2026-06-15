@@ -904,6 +904,9 @@ class ExportService {
       'heading1' => 1,
       'heading2' => 2,
       'heading3' => 3,
+      'heading4' => 4,
+      'heading5' => 5,
+      'heading6' => 6,
       _ => 0,
     };
   }
@@ -1154,6 +1157,9 @@ class ExportService {
     buffer.writeln('h1 { font-size: 28px; margin: 24px 0 12px; }');
     buffer.writeln('h2 { font-size: 22px; margin: 20px 0 10px; }');
     buffer.writeln('h3 { font-size: 18px; margin: 16px 0 8px; }');
+    buffer.writeln('h4 { font-size: 16px; margin: 14px 0 6px; }');
+    buffer.writeln('h5 { font-size: 14px; margin: 12px 0 4px; }');
+    buffer.writeln('h6 { font-size: 13px; margin: 10px 0 2px; }');
     buffer.writeln('blockquote { border-left: 3px solid #999; margin: 12px 0; padding: 8px 16px; font-style: italic; font-family: Georgia, serif; color: #555; }');
     buffer.writeln('pre { background: #f5f5f5; border: 1px solid #ddd; border-radius: 4px; padding: 12px; font-family: "Courier New", monospace; font-size: 13px; white-space: pre-wrap; margin: 8px 0; }');
     buffer.writeln('table { border-collapse: collapse; margin: 12px 0; }');

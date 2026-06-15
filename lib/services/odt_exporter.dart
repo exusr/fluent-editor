@@ -1111,6 +1111,9 @@ class OdtExporter {
       'heading1' => 1,
       'heading2' => 2,
       'heading3' => 3,
+      'heading4' => 4,
+      'heading5' => 5,
+      'heading6' => 6,
       _ => 0,
     };
   }
