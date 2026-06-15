@@ -5,10 +5,22 @@ import 'package:archive/archive.dart';
 import 'package:fluent_editor/factories.dart';
 import 'package:xml/xml.dart';
 
+/// Tracks one active nesting level while building a list tree.
+class _ListLevel {
+  final FluentList list;
+  final int ilvl;
+  ListItem? lastItem;
+  int itemCount = 0; // sequential counter for items added at this level
+  _ListLevel(this.list, this.ilvl);
+}
+
 /// Service for importing DOCX into FluentEditor nodes.
 class ImportDocxService {
   // Relationship map: rId → URL (populated from word/_rels/document.xml.rels)
   final Map<String, String> _relationships = {};
+
+  // Reference to the decoded ZIP archive (needed to read embedded images)
+  Archive? _archive;
 
   // Numbering map: numId → abstractNumId → listType ('ordered' | 'unordered')
   // Built from word/numbering.xml
@@ -16,6 +28,7 @@ class ImportDocxService {
 
   Root importFromDocx(List<int> bytes) {
     final archive = ZipDecoder().decodeBytes(bytes);
+    _archive = archive;
 
     // --- FIX Bug 1: parse relationships for hyperlink URL resolution ---
     final relsFile = archive.files
@@ -57,8 +70,7 @@ class ImportDocxService {
       for (final rel in doc.findAllElements('Relationship')) {
         final id = rel.getAttribute('Id');
         final target = rel.getAttribute('Target');
-        final type = rel.getAttribute('Type') ?? '';
-        if (id != null && target != null && type.contains('hyperlink')) {
+        if (id != null && target != null) {
           _relationships[id] = target;
         }
       }
@@ -114,21 +126,10 @@ class ImportDocxService {
 
     void flushBuffer() {
       if (paragraphBuffer.isEmpty) return;
-      // Check if first paragraph has numPr → treat all consecutive same-numId
-      // paragraphs as a list
-      final firstPPr = paragraphBuffer.first.getElement('w:pPr');
-      final firstNumPr = firstPPr?.getElement('w:numPr');
-      if (firstNumPr != null) {
-        result.addAll(_buildLists(paragraphBuffer));
-      } else {
-        for (final p in paragraphBuffer) {
-          // FIX Bug 7: skip empty sentinel paragraphs (no runs, no text)
-          final hasContent = p.children.any((c) =>
-              c is XmlElement && c.name.local == 'r' ||
-              c is XmlElement && c.name.local == 'hyperlink');
-          if (hasContent) result.add(_paragraph(p));
-        }
-      }
+      // Always route through _buildLists: it handles mixed list/non-list
+      // paragraphs correctly (groups consecutive same-numId runs into
+      // FluentList nodes and emits plain Paragraph for the rest).
+      result.addAll(_buildLists(paragraphBuffer));
       paragraphBuffer.clear();
     }
 
@@ -158,11 +159,21 @@ class ImportDocxService {
         (p.getElement('w:pPr')?.getElement('w:sectPr') != null);
   }
 
-  /// Groups consecutive list paragraphs by numId and builds FluentList nodes.
+  /// Groups consecutive list paragraphs by numId and builds a nested
+  /// FluentList tree, respecting ilvl depth via a stack.
   List<FNode> _buildLists(List<XmlElement> paragraphs) {
     final result = <FNode>[];
-    FluentList? currentList;
+    // Stack of active list levels; levelStack[0] is always the root list.
+    final levelStack = <_ListLevel>[];
     String? currentNumId;
+
+    void flushStack() {
+      if (levelStack.isNotEmpty) {
+        result.add(levelStack.first.list);
+        levelStack.clear();
+      }
+      currentNumId = null;
+    }
 
     for (final p in paragraphs) {
       final pPr = p.getElement('w:pPr');
@@ -173,35 +184,59 @@ class ImportDocxService {
           0;
 
       if (numId == null) {
-        // Not a list paragraph — flush and add as plain paragraph
-        if (currentList != null) {
-          result.add(currentList);
-          currentList = null;
-          currentNumId = null;
-        }
-        result.add(_paragraph(p));
+        flushStack();
+        final hasContent = p.children.any((c) =>
+            c is XmlElement && c.name.local == 'r' ||
+            c is XmlElement && c.name.local == 'hyperlink');
+        if (hasContent) result.add(_paragraph(p));
         continue;
+      }
+
+      // New distinct list (different numId) — flush current tree.
+      if (numId != currentNumId) {
+        flushStack();
+        currentNumId = numId;
       }
 
       final listType = _listTypeForNumId(numId);
 
-      if (numId != currentNumId) {
-        if (currentList != null) result.add(currentList);
-        currentList = FluentList(listType: listType);
-        currentNumId = numId;
+      // Pop levels that are deeper than the current ilvl.
+      while (levelStack.isNotEmpty && levelStack.last.ilvl > ilvl) {
+        levelStack.removeLast();
+      }
+
+      // If no level matches current ilvl, create a new nested list.
+      if (levelStack.isEmpty || levelStack.last.ilvl < ilvl) {
+        final newList = FluentList(listType: listType);
+        if (levelStack.isNotEmpty) {
+          // Attach to the last item of the parent level.
+          final parent = levelStack.last;
+          if (parent.lastItem == null) {
+            final placeholder = ListItem(
+              bulletType: parent.list.listType,
+              indexList: [1],
+              children: [Paragraph()],
+            );
+            parent.list.items.add(placeholder);
+            parent.lastItem = placeholder;
+          }
+          parent.lastItem!.children.add(newList);
+        }
+        levelStack.add(_ListLevel(newList, ilvl));
       }
 
       final childParagraph = _paragraphAsListChild(p);
-      final bulletType = listType;
-      final indexList = List.generate(ilvl + 1, (i) => i + 1);
-      currentList!.items.add(ListItem(
-        bulletType: bulletType,
-        indexList: indexList,
+      levelStack.last.itemCount++;
+      final item = ListItem(
+        bulletType: listType,
+        indexList: levelStack.map((l) => l.itemCount).toList(),
         children: [childParagraph],
-      ));
+      );
+      levelStack.last.list.items.add(item);
+      levelStack.last.lastItem = item;
     }
 
-    if (currentList != null) result.add(currentList);
+    flushStack();
     return result;
   }
 
@@ -268,9 +303,7 @@ class ImportDocxService {
           // FIX Bug 4: handle inline images
           case 'drawing':
             final image = _drawing(child);
-            // Images in DOCX are inline inside runs; we surface them here
-            // as a sentinel — callers that assemble Paragraph will need to
-            // hoist them out. For now, skip silently (handled in _runToFragments).
+            if (image != null) result.add(image);
             break;
         }
       }
@@ -282,9 +315,8 @@ class ImportDocxService {
     // FIX Bug 4: check for drawing inside the run first
     final drawing = el.getElement('w:drawing');
     if (drawing != null) {
-      // Images are block-level in FluentEditor; they cannot be Fragment.
-      // Return empty here — image nodes are handled at _elementsToNodes level
-      // via _extractInlineImages if needed.
+      final img = _drawing(drawing);
+      if (img != null && img.src.isNotEmpty) return [img];
       return [];
     }
 
@@ -402,13 +434,38 @@ class ImportDocxService {
 
       final blip = drawing.findAllElements('a:blip').firstOrNull;
       final rId = blip?.getAttribute('r:embed');
-      final src = (rId != null ? _relationships[rId] : null) ?? '';
+      final relPath = (rId != null ? _relationships[rId] : null) ?? '';
+      if (relPath.isEmpty) return null;
 
-      return FluentImage(
-        src: src,
-        width: width ?? 100,
-        height: height ?? 100,
-      );
+      String src = relPath;
+      if (!src.startsWith('http://') &&
+          !src.startsWith('https://') &&
+          !src.startsWith('data:')) {
+        // Resolve relative path inside the DOCX archive
+        final candidates = [src, 'word/$src'];
+        final file = _archive?.files
+            .where((f) => candidates.contains(f.name))
+            .firstOrNull;
+        if (file != null) {
+          final bytes = file.content as Uint8List;
+          final ext = src.split('.').last.toLowerCase();
+          final mime = switch (ext) {
+            'png' => 'image/png',
+            'jpg' || 'jpeg' => 'image/jpeg',
+            'gif' => 'image/gif',
+            'bmp' => 'image/bmp',
+            'webp' => 'image/webp',
+            'svg' => 'image/svg+xml',
+            _ => 'application/octet-stream',
+          };
+          src = 'data:$mime;base64,${base64Encode(bytes)}';
+        }
+      }
+
+      final img = FluentImage(src);
+      img.width = width ?? 100;
+      img.height = height ?? 100;
+      return img;
     } catch (_) {
       return null;
     }
@@ -457,10 +514,11 @@ class ImportDocxService {
         children.add(_paragraph(child));
       }
     }
-    return FluentCell(
+    final cell = FluentCell(
       children: children.isEmpty ? [Paragraph()] : children,
-      colSpan: colSpan,
-      rowSpan: rowSpan == 0 ? 1 : rowSpan,
     );
+    cell.colSpan = colSpan;
+    cell.rowSpan = rowSpan == 0 ? 1 : rowSpan;
+    return cell;
   }
 }

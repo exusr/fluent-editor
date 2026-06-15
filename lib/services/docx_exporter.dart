@@ -47,6 +47,12 @@ class DocxExporter {
   // Fonts used in the document (for embedding).
   final Set<String> _fonts = {};
 
+  // List numbering: FluentList.id -> numId assigned in numbering.xml
+  final Map<String, int> _listNumIds = {};
+  final List<_NumDef> _numDefs = [];
+  int _numIdCounter = 1;
+  int _abstractNumIdCounter = 0;
+
   // Native DOCX comment export state.
   final List<Map<String, dynamic>> _docxComments = [];
   int _commentIdCounter = 0;
@@ -85,6 +91,13 @@ class DocxExporter {
             'http://schemas.openxmlformats.org/officeDocument/2006/relationships/font',
             'fonts/$fileName');
       }
+    }
+
+    if (_numDefs.isNotEmpty) {
+      _add(archive, 'word/numbering.xml', _numberingXml());
+      _addRel(
+          'http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering',
+          'numbering.xml');
     }
 
     if (_docxComments.isNotEmpty) {
@@ -222,39 +235,44 @@ class DocxExporter {
     _body.write('<w:p><w:pPr><w14:paraId w14:val="$paraId"/>');
     if (extraIndent > 0) _body.write('<w:ind w:left="$extraIndent"/>');
     _body.write('<w:jc w:val="$jc"/></w:pPr>');
-    if (draw != null) _body.write(draw);
+    if (draw != null) _body.write('<w:r>$draw</w:r>');
     _body.write('</w:p>');
   }
 
-  void _writeList(FluentList list) {
+  void _writeList(FluentList list, {int depth = 0, int? numId}) {
+    final rootNumId = numId ?? _getOrCreateNumId(list);
     for (final item in list.items) {
-      final bullet = _resolveBullet(item, list.listType);
-      final depth = item.indexList.length;
-      final indent = 360 + depth * 360;
-      bool first = true;
       for (final child in item.children) {
         if (child is FluentList) {
-          _writeList(child);
+          _writeList(child, depth: depth + 1, numId: rootNumId);
         } else if (child is FluentImage) {
-          _writeBlockImage(child, extraIndent: indent);
+          _writeBlockImage(child);
         } else if (child is Paragraph) {
-          final pStyle = child.getStyle();
-          final paraId = _generateParaId();
-          _paragraphParaIds[child.id] = paraId;
-          final prefix = first
-              ? '<w:r><w:rPr><w:rFonts w:ascii="DejaVu Sans" w:hAnsi="DejaVu Sans"/><w:sz w:val="28"/></w:rPr>'
-                  '<w:t xml:space="preserve">${_esc(bullet)}\t</w:t></w:r>'
-              : null;
-          _body.write('<w:p><w:pPr><w14:paraId w14:val="$paraId"/><w:ind w:left="$indent"/></w:pPr>');
-          if (prefix != null) _body.write(prefix);
-          final comments = document.commentProvider?.exportComments() ?? [];
-          _writeInline(child.fragments, pStyle,
-              paragraphId: child.id, comments: comments);
-          _body.write('</w:p>');
-          first = false;
+          _writeListParagraph(child, rootNumId, depth);
         }
       }
     }
+  }
+
+  int _getOrCreateNumId(FluentList list) {
+    if (_listNumIds.containsKey(list.id)) return _listNumIds[list.id]!;
+    final abstractNumId = _abstractNumIdCounter++;
+    final numId = _numIdCounter++;
+    _numDefs.add(_NumDef(abstractNumId, numId, list.listType));
+    _listNumIds[list.id] = numId;
+    return numId;
+  }
+
+  void _writeListParagraph(Paragraph p, int numId, int depth) {
+    final pStyle = p.getStyle();
+    final paraId = _generateParaId();
+    _paragraphParaIds[p.id] = paraId;
+    _body.write('<w:p><w:pPr><w14:paraId w14:val="$paraId"/>');
+    _body.write('<w:numPr><w:ilvl w:val="$depth"/><w:numId w:val="$numId"/></w:numPr>');
+    _body.write('</w:pPr>');
+    final comments = document.commentProvider?.exportComments() ?? [];
+    _writeInline(p.fragments, pStyle, paragraphId: p.id, comments: comments);
+    _body.write('</w:p>');
   }
 
   void _writeTable(FluentTable table) {
@@ -667,6 +685,36 @@ class DocxExporter {
     return imageCache[src];
   }
 
+  String _numberingXml() {
+    const bulletChars = ['\u2022', '\u25E6', '\u25AA'];
+    final b = StringBuffer(
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+        '<w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">');
+    for (final def in _numDefs) {
+      b.write('<w:abstractNum w:abstractNumId="${def.abstractNumId}">');
+      b.write('<w:multiLevelType w:val="multilevel"/>');
+      for (int lvl = 0; lvl <= 8; lvl++) {
+        final left = (lvl + 1) * 720;
+        b.write('<w:lvl w:ilvl="$lvl"><w:start w:val="1"/>');
+        if (def.listType == 'ordered') {
+          b.write('<w:numFmt w:val="decimal"/><w:lvlText w:val="%${lvl + 1}."/>');
+        } else {
+          final ch = bulletChars[lvl % bulletChars.length];
+          b.write('<w:numFmt w:val="bullet"/><w:lvlText w:val="$ch"/>');
+        }
+        b.write('<w:lvlJc w:val="left"/>');
+        b.write('<w:pPr><w:ind w:left="$left" w:hanging="360"/></w:pPr>');
+        b.write('</w:lvl>');
+      }
+      b.write('</w:abstractNum>');
+    }
+    for (final def in _numDefs) {
+      b.write('<w:num w:numId="${def.numId}"><w:abstractNumId w:val="${def.abstractNumId}"/></w:num>');
+    }
+    b.write('</w:numbering>');
+    return b.toString();
+  }
+
   String _addRel(String type, String target, {bool external = false}) {
     final id = 'rId${_relCounter++}';
     _rels[id] = _Rel(type, target, external);
@@ -805,7 +853,8 @@ class DocxExporter {
         '<Default Extension="ttf" ContentType="application/x-fontdata"/>'
         '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'
         '<Override PartName="/word/comments.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml"/>'
-        '<Override PartName="/word/commentsExtended.xml" ContentType="application/vnd.openxmlformats.microsoftword.commentsExtended+xml"/>');
+        '<Override PartName="/word/commentsExtended.xml" ContentType="application/vnd.openxmlformats.microsoftword.commentsExtended+xml"/>'
+        '<Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/>');  
     b.write('</Types>');
     return b.toString();
   }
@@ -881,77 +930,13 @@ class DocxExporter {
     return null;
   }
 
-  String _resolveBullet(ListItem item, String listType) {
-    final t = item.bulletType;
-    final depth = item.indexList.length;
-    final index = item.indexList.isNotEmpty ? item.indexList.last : 1;
-    switch (t) {
-      case 'ordered':
-        return '$index.';
-      case 'ordered-parenthesis':
-        return '$index)';
-      case 'ordered-alpha':
-        return '${String.fromCharCode(96 + index)}.';
-      case 'ordered-alpha-parenthesis':
-        return '${String.fromCharCode(96 + index)})';
-      case 'ordered-alpha-upper':
-        return '${String.fromCharCode(64 + index)}.';
-      case 'ordered-alpha-upper-parenthesis':
-        return '${String.fromCharCode(64 + index)})';
-      case 'ordered-roman':
-        return '${_roman(index)}.';
-      case 'ordered-roman-parenthesis':
-        return '${_roman(index)})';
-      case 'ordered-roman-upper':
-        return '${_roman(index).toUpperCase()}.';
-      case 'ordered-roman-upper-parenthesis':
-        return '${_roman(index).toUpperCase()})';
-      case 'bullet-circle':
-        const c = ['\u25CB', '\u25E6', '\u25CF'];
-        return c[depth % c.length];
-      case 'bullet-square':
-        const s = ['\u25A1', '\u25AB', '\u25A0'];
-        return s[depth % s.length];
-      case 'checkbox':
-        return '\u2610';
-      case 'checkbox-checked':
-        return '\u2611';
-      case 'checkbox-crossed':
-        return '\u2612';
-      default:
-        const b = ['\u2022', '\u25E6', '\u25AA'];
-        return b[depth % b.length];
-    }
-  }
+}
 
-  String _roman(int n) {
-    if (n <= 0 || n > 3999) return n.toString();
-    final v = [1000, 900, 500, 400, 100, 90, 50, 40, 10, 9, 5, 4, 1];
-    final s = [
-      'm',
-      'cm',
-      'd',
-      'cd',
-      'c',
-      'xc',
-      'l',
-      'xl',
-      'x',
-      'ix',
-      'v',
-      'iv',
-      'i'
-    ];
-    var r = '';
-    var x = n;
-    for (var i = 0; i < v.length; i++) {
-      while (x >= v[i]) {
-        x -= v[i];
-        r += s[i];
-      }
-    }
-    return r;
-  }
+class _NumDef {
+  final int abstractNumId;
+  final int numId;
+  final String listType;
+  _NumDef(this.abstractNumId, this.numId, this.listType);
 }
 
 class _Rel {
