@@ -170,12 +170,12 @@ class ExportService {
         urls.add(node.src);
       } else if (node is Link) {
         _collectImageUrls(node.fragments, urls);
-      } else if (node is Paragraph) {
-        _collectImageUrls(node.fragments, urls);
       } else if (node is FluentList) {
         for (final item in node.items) {
           _collectImageUrls(item.children, urls);
         }
+      } else if (node is Paragraph) {
+        _collectImageUrls(node.fragments, urls);
       } else if (node is FluentTable) {
         for (final row in node.rows) {
           for (final cell in row.cells) {
@@ -201,13 +201,7 @@ class ExportService {
     }
 
     for (final node in nodes) {
-      if (node is Paragraph) {
-        final style = node.getStyle();
-        if (style.fontFamily != null && style.fontFamily!.isNotEmpty) {
-          families.add(style.fontFamily!);
-        }
-        scanFragments(node.fragments);
-      } else if (node is FluentList) {
+      if (node is FluentList) {
         for (final item in node.items) {
           families.addAll(_collectFontFamilies(item.children));
         }
@@ -217,6 +211,12 @@ class ExportService {
             families.addAll(_collectFontFamilies(cell.children));
           }
         }
+      } else if (node is Paragraph) {
+        final style = node.getStyle();
+        if (style.fontFamily != null && style.fontFamily!.isNotEmpty) {
+          families.add(style.fontFamily!);
+        }
+        scanFragments(node.fragments);
       } else if (node is Link) {
         scanFragments(node.fragments);
       }
@@ -1371,16 +1371,22 @@ class ExportService {
     }
 
     for (final item in list.items) {
-      if (isCheckbox) {
-        final checkMark = switch (item.bulletType) {
-          'checkbox-checked' => '&#9745; ', // ☑
-          'checkbox-crossed' => '&#9746; ', // ☒
-          _ => '&#9744; ', // ☐
-        };
-        buffer.write('<li>$checkMark');
-      } else {
-        buffer.write('<li>');
+      // Check if this item contains only a single FluentList (flatten nested structure)
+      final hasOnlyList = item.children.length == 1 && item.children.first is FluentList;
+
+      if (!hasOnlyList) {
+        if (isCheckbox) {
+          final checkMark = switch (item.bulletType) {
+            'checkbox-checked' => '&#9745; ', // ☑
+            'checkbox-crossed' => '&#9746; ', // ☒
+            _ => '&#9744; ', // ☐
+          };
+          buffer.write('<li>$checkMark');
+        } else {
+          buffer.write('<li>');
+        }
       }
+
       for (final child in item.children) {
         if (child is FluentImage) {
           buffer.write(_imageToHtml(child));
@@ -1390,7 +1396,10 @@ class ExportService {
           buffer.write(_fragmentsToHtml(child.fragments, child.getStyle()));
         }
       }
-      buffer.writeln('</li>');
+
+      if (!hasOnlyList) {
+        buffer.writeln('</li>');
+      }
     }
     buffer.writeln(isCheckbox ? '</ul>' : '</$tag>');
     return buffer.toString();
