@@ -1,5 +1,10 @@
+## 1.0.6
+
+* Fixed `Unsupported operation: Platform._operatingSystem` error on web 
+
 ## 1.0.5
 
+platform — `dart:io` `Platform` checks are now guarded with `kIsWeb`
 * Fixed HTML import losing spaces around links — whitespace is now preserved by buffering consecutive text nodes before collapsing
 * Fixed ODT import always assigning index 1 to ordered list items — now correctly increments item indices (1, 2, 3...)
 * Fixed HTML import creating phantom empty paragraphs inside list items caused by trailing whitespace after `</ul>`/`</ol>`

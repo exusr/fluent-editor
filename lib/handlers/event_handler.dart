@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:fluent_editor/fluent_document.dart';
 import 'package:fluent_editor/factories.dart';
 import 'package:fluent_editor/handlers/arrow_key_repeater.dart';
@@ -187,7 +188,7 @@ class EventHandler {
   void updateModifiers(KeyEvent event) {
     final keyboard = HardwareKeyboard.instance;
     isShiftPressed = keyboard.isShiftPressed;
-    if (Platform.isMacOS || Platform.isIOS) {
+    if (!kIsWeb && (Platform.isMacOS || Platform.isIOS)) {
       isMetaPressed = keyboard.isControlPressed;
       isCtrlPressed = keyboard.isMetaPressed;
     } else {
