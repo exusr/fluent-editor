@@ -1,7 +1,22 @@
+## 1.0.5
+
+* Fixed HTML import losing spaces around links — whitespace is now preserved by buffering consecutive text nodes before collapsing
+* Fixed ODT import always assigning index 1 to ordered list items — now correctly increments item indices (1, 2, 3...)
+* Fixed HTML import creating phantom empty paragraphs inside list items caused by trailing whitespace after `</ul>`/`</ol>`
+* Fixed HTML import parsing of `<img>` tags, inline styles (`fontSize`, `color`), list indentation, and `listType` for `<ul>` elements
+* Fixed ODT/DOCX import compilation errors related to `FluentCell` and `FluentImage` constructor usage
+* Fixed type-checking order in export services — `Link` nodes are now correctly handled before `Paragraph`/`Fragment` checks
+* Fixed HTML import `<a>` tag reconstruction preserving URL and inner text
+* Fixed HTML import ordered list type detection from actual XML structure instead of style name string matching
+* Various other bugfixes and stability improvements across import/export services
+* Performance optimization
+
 ## 1.0.4
+
 * Fixed keyboard not appearing after text selection on mobile web - now shows keyboard when drag selection ends
 
 ## 1.0.3
+
 * Improved mobile web keyboard support - enabled hidden TextField for web browsers on mobile devices
 
 ## 1.0.2
