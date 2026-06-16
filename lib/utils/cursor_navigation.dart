@@ -415,6 +415,7 @@ const double _kLineYTolerance = 2.0;
 /// Moves the cursor up by one LogicalLine.
 /// [preferredX] is the x coordinate in pixels to maintain.
 /// If it's -1.0, it's calculated from the current position via [resolveX].
+/// [allStops] is the full document stop list used for cross-node fallback.
 NavigationResult moveUp(
   Root root,
   CaretStop current,
@@ -422,6 +423,7 @@ NavigationResult moveUp(
   CaretXResolver resolveX,
   CaretYResolver resolveY, {
   List<CaretStop>? stops,
+  List<CaretStop>? allStops,
 }) {
   final stops_ = stops ?? buildAllStops(root);
   if (stops_.isEmpty) return NavigationResult.none;
@@ -449,11 +451,32 @@ NavigationResult moveUp(
 
   print('[MOVE_UP] targetY=$targetY');
 
-  // No line above: go to the first stop of the document
   if (targetY == null) {
-    final first = stops_.first;
+    // Use full document stop list for cross-node fallback so we are not
+    // limited to the candidate subset passed by the caller.
+    final docStops = allStops ?? stops_;
+    if (_isInFirstNode(root, current.fragmentId)) {
+      final first = docStops.first;
+      if (first == current) return NavigationResult.none;
+      return NavigationResult(position: first, preferredX: x);
+    }
+    // No line above in this node → jump to the last stop of the previous
+    // top-level node that has caret stops (skip block nodes like HR).
+    final currentNodeId = _findTopLevelNodeId(root, current.fragmentId);
+    if (currentNodeId != null) {
+      final currentNodeIdx = root.nodes.indexWhere((n) => n.id == currentNodeId);
+      for (int i = currentNodeIdx - 1; i >= 0; i--) {
+        final prevNode = root.nodes[i];
+        for (int j = docStops.length - 1; j >= 0; j--) {
+          if (_nodeContainsFragment(prevNode, docStops[j].fragmentId)) {
+            return NavigationResult(position: docStops[j], preferredX: x);
+          }
+        }
+      }
+    }
+    // Nothing above → go to the start of the document
+    final first = docStops.first;
     if (first == current) return NavigationResult.none;
-    print('[MOVE_UP] no line above → first=${first.fragmentId}:${first.offset}');
     return NavigationResult(position: first, preferredX: x);
   }
 
@@ -470,6 +493,7 @@ NavigationResult moveUp(
 }
 
 /// Moves the cursor down by one LogicalLine.
+/// [allStops] is the full document stop list used for cross-node fallback.
 NavigationResult moveDown(
   Root root,
   CaretStop current,
@@ -477,6 +501,7 @@ NavigationResult moveDown(
   CaretXResolver resolveX,
   CaretYResolver resolveY, {
   List<CaretStop>? stops,
+  List<CaretStop>? allStops,
 }) {
   final stops_ = stops ?? buildAllStops(root);
   if (stops_.isEmpty) return NavigationResult.none;
@@ -502,11 +527,32 @@ NavigationResult moveDown(
 
   print('[MOVE_DOWN] targetY=$targetY');
 
-  // No line below: go to the last stop of the document
   if (targetY == null) {
-    final last = stops_.last;
+    // Use full document stop list for cross-node fallback so we are not
+    // limited to the candidate subset passed by the caller.
+    final docStops = allStops ?? stops_;
+    if (_isInLastNode(root, current.fragmentId)) {
+      final last = docStops.last;
+      if (last == current) return NavigationResult.none;
+      return NavigationResult(position: last, preferredX: x);
+    }
+    // No line below in this node → jump to the first stop of the next
+    // top-level node that has caret stops (skip block nodes like HR).
+    final currentNodeId = _findTopLevelNodeId(root, current.fragmentId);
+    if (currentNodeId != null) {
+      final currentNodeIdx = root.nodes.indexWhere((n) => n.id == currentNodeId);
+      for (int i = currentNodeIdx + 1; i < root.nodes.length; i++) {
+        final nextNode = root.nodes[i];
+        for (final stop in docStops) {
+          if (_nodeContainsFragment(nextNode, stop.fragmentId)) {
+            return NavigationResult(position: stop, preferredX: x);
+          }
+        }
+      }
+    }
+    // Nothing below → go to the end of the document
+    final last = docStops.last;
     if (last == current) return NavigationResult.none;
-    print('[MOVE_DOWN] no line below → last=${last.fragmentId}:${last.offset}');
     return NavigationResult(position: last, preferredX: x);
   }
 
@@ -574,6 +620,51 @@ Map<String, Fragment> _buildFragmentCache(Root root) {
     visit(node);
   }
   return cache;
+}
+
+/// Returns true if [fragmentId] is inside [node] (recursively).
+bool _nodeContainsFragment(FNode node, String fragmentId) {
+  if (node is Fragment && node.id == fragmentId) return true;
+  if (node is FluentTable) {
+    for (final row in node.getChildren()) {
+      for (final cell in row.getChildren()) {
+        if (_nodeContainsFragment(cell, fragmentId)) return true;
+      }
+    }
+    return false;
+  }
+  if (node is FluentList) {
+    for (final child in node.getChildren()) {
+      if (_nodeContainsFragment(child, fragmentId)) return true;
+    }
+    return false;
+  }
+  if (node is InlineContainerNode) {
+    for (final child in (node as InlineContainerNode).getChildren()) {
+      if (_nodeContainsFragment(child, fragmentId)) return true;
+    }
+  }
+  return false;
+}
+
+/// True when the fragment belongs to the first top-level node of [root].
+bool _isInFirstNode(Root root, String fragmentId) {
+  if (root.nodes.isEmpty) return false;
+  return _nodeContainsFragment(root.nodes.first, fragmentId);
+}
+
+/// True when the fragment belongs to the last top-level node of [root].
+bool _isInLastNode(Root root, String fragmentId) {
+  if (root.nodes.isEmpty) return false;
+  return _nodeContainsFragment(root.nodes.last, fragmentId);
+}
+
+/// Returns the id of the top-level node in [root] that contains [fragmentId].
+String? _findTopLevelNodeId(Root root, String fragmentId) {
+  for (final node in root.nodes) {
+    if (_nodeContainsFragment(node, fragmentId)) return node.id;
+  }
+  return null;
 }
 
 /// Pre-compiled RegExp for word-character detection.

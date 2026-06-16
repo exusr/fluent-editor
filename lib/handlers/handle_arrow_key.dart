@@ -291,10 +291,12 @@ bool executeHandleArrowKey(
       final pref = _adjustPreferredXForBlockImage(document, current, cursor.preferredX);
       if (key == LogicalKeyboardKey.arrowUp) {
         result = moveUp(root, current, pref,
-            document.resolveCaretX, document.resolveCaretY, stops: candidateStops);
+            document.resolveCaretX, document.resolveCaretY,
+            stops: candidateStops, allStops: stops);
       } else {
         result = moveDown(root, current, pref,
-            document.resolveCaretX, document.resolveCaretY, stops: candidateStops);
+            document.resolveCaretX, document.resolveCaretY,
+            stops: candidateStops, allStops: stops);
       }
       swMove.stop();
       swVert.stop();
