@@ -135,6 +135,52 @@ bool executeHandleBackspace(FluentDocument document, {bool ctrl = false, bool li
   final newOffset = cursor.anchorOffset - 1;
   FragmentOperations.deleteTextInFragment(currentFrag, newOffset, count: 1);
 
+  // If the fragment became empty, remove it (and any empty parent Links)
+  // so it doesn't block future backspace navigation.
+  if (currentFrag.text.isEmpty) {
+    // Use the logical container (e.g. Paragraph) to decide whether we
+    // can safely remove the empty fragment.  A fragment that is the only
+    // child of a style wrapper must still be removed when other fragments
+    // exist elsewhere in the paragraph.
+    final flat = _flattenInlineChildren(container);
+    if (flat.length > 1) {
+      int fragIdx = -1;
+      for (int i = 0; i < flat.length; i++) {
+        if (flat[i].id == currentFrag.id) {
+          fragIdx = i;
+          break;
+        }
+      }
+
+      final parent = findParent(root, currentFrag);
+      removeNode(root, currentFrag);
+      // Clean up empty Links / style wrappers that might have contained
+      // this fragment.
+      _cleanupEmptyInlineParents(root, parent);
+
+      if (fragIdx > 0) {
+        // Move cursor to the end of the nearest non-empty predecessor.
+        for (int i = fragIdx - 1; i >= 0; i--) {
+          final prev = flat[i];
+          if (prev is Fragment && prev is! InlineContainerNode && prev.text.isNotEmpty) {
+            cursor.moveTo(prev.id, prev.text.length);
+            break;
+          }
+        }
+      } else if (fragIdx == 0 && flat.length > 1) {
+        // First fragment removed: move cursor to the start of what is now
+        // the first fragment (offset 0 triggers container-boundary logic
+        // on the next backspace if the user keeps deleting).
+        final next = flat[1];
+        if (next is Fragment && next is! InlineContainerNode) {
+          cursor.moveTo(next.id, 0);
+        }
+      }
+      document.updateContent();
+      return true;
+    }
+  }
+
   // Update the cursor
   cursor.moveTo(currentFrag.id, newOffset);
 
@@ -163,6 +209,45 @@ bool _handleBackspaceAtStart(
   final root = document.content;
   final cursor = document.cursor;
 
+
+  // Guard: if the cursor is already on an empty fragment, remove it and
+  // reposition before calling moveLeft (empty fragments have no caret stops).
+  if (currentFrag.text.isEmpty) {
+    final flat = _flattenInlineChildren(container);
+    if (flat.length > 1) {
+      int fragIdx = -1;
+      for (int i = 0; i < flat.length; i++) {
+        if (flat[i].id == currentFrag.id) {
+          fragIdx = i;
+          break;
+        }
+      }
+      final parent = findParent(root, currentFrag);
+      removeNode(root, currentFrag);
+      _cleanupEmptyInlineParents(root, parent);
+      if (fragIdx > 0) {
+        for (int i = fragIdx - 1; i >= 0; i--) {
+          final prev = flat[i];
+          if (prev is Fragment && prev is! InlineContainerNode && prev.text.isNotEmpty) {
+            cursor.moveTo(prev.id, prev.text.length);
+            document.updateContent();
+            return true;
+          }
+        }
+      }
+      if (fragIdx >= 0 && fragIdx < flat.length - 1) {
+        final next = flat[fragIdx + 1];
+        if (next is Fragment && next is! InlineContainerNode) {
+          cursor.moveTo(next.id, 0);
+          document.updateContent();
+          return true;
+        }
+      }
+      document.updateContent();
+      return true;
+    }
+  }
+
   // Find the previous node in the document
   final prevStop = moveLeft(
     root,
@@ -170,6 +255,7 @@ bool _handleBackspaceAtStart(
     stops: document.caretStops,
     cachedLines: document.logicalLines,
   );
+
 
   if (prevStop.position == null) {
     // We're at the start of the document, nothing to do
@@ -197,19 +283,63 @@ bool _handleBackspaceAtStart(
   // at the start of a fragment after a Link). We must not merge containers:
   // just delete the last character of the previous fragment.
   if ((prevContainer as FNode).id == (container as FNode).id) {
-    final prevOffset = prevStop.position!.offset;
-    if (prevOffset > 0) {
-      final deletePos = (prevFrag is! InlineContainerNode && prevFrag.text.isNotEmpty)
-          ? prevFrag.text.length - 1
-          : prevOffset - 1;
-      FragmentOperations.deleteTextInFragment(prevFrag, deletePos, count: 1);
-      cursor.moveTo(prevFrag.id, deletePos);
-    } else {
-      // prevFrag is empty: remove it if it's not the only child
-      final siblings = container.getChildren();
-      if (siblings.length > 1) {
-        removeNode(root, prevFrag);
-        cursor.moveTo(currentFrag.id, 0);
+    // Use the flat child order to find the immediate predecessor of
+    // currentFrag.  moveLeft skips empty fragments, so we walk the
+    // raw children ourselves to clean up any invisible empties.
+    final flat = _flattenInlineChildren(container);
+    int currentIdx = -1;
+    for (int i = 0; i < flat.length; i++) {
+      if (flat[i].id == currentFrag.id) {
+        currentIdx = i;
+        break;
+      }
+    }
+    if (currentIdx > 0) {
+      int targetIdx = currentIdx - 1;
+      while (targetIdx >= 0) {
+        final candidate = flat[targetIdx];
+        if (candidate is Fragment && candidate is! InlineContainerNode) {
+          if (candidate.text.isEmpty) {
+            final parent = findParent(root, candidate);
+            removeNode(root, candidate);
+            _cleanupEmptyInlineParents(root, parent);
+            targetIdx--;
+            continue;
+          }
+          // Delete the last character of the first non-empty predecessor.
+          final deletePos = candidate.text.length - 1;
+          FragmentOperations.deleteTextInFragment(candidate, deletePos, count: 1);
+
+          if (candidate.text.isEmpty) {
+            // Find where to place the cursor AFTER removing the empty
+            // candidate, so we never point to a stale fragment id.
+            String? newCursorFragId;
+            int newCursorOffset = 0;
+            for (int j = targetIdx - 1; j >= 0; j--) {
+              final pred = flat[j];
+              if (pred is Fragment &&
+                  pred is! InlineContainerNode &&
+                  pred.text.isNotEmpty) {
+                newCursorFragId = pred.id;
+                newCursorOffset = pred.text.length;
+                break;
+              }
+            }
+            final parent = findParent(root, candidate);
+            removeNode(root, candidate);
+            _cleanupEmptyInlineParents(root, parent);
+            if (newCursorFragId != null) {
+              cursor.moveTo(newCursorFragId, newCursorOffset);
+            }
+            // If no predecessor exists, cursor stays at its current
+            // position (offset 0 of currentFrag).
+          } else {
+            cursor.moveTo(candidate.id, deletePos);
+          }
+          document.updateContent();
+          return true;
+        }
+        break; // Non-fragment child blocks further traversal
       }
     }
     document.updateContent();
@@ -535,6 +665,33 @@ bool _mergeContainers(
 
   document.updateContent();
   return true;
+}
+
+/// Returns the "flat" list of children of [container] in reading order,
+/// expanding Links (transparent) into their fragments.
+List<FNode> _flattenInlineChildren(InlineContainerNode container) {
+  final out = <FNode>[];
+  for (final child in container.getChildren()) {
+    if (child is Link) {
+      for (final inner in child.getChildren()) {
+        out.add(inner);
+      }
+    } else {
+      out.add(child);
+    }
+  }
+  return out;
+}
+
+/// Removes empty Links and other inline wrappers that no longer contain
+/// any text fragments after a deletion.
+void _cleanupEmptyInlineParents(Root root, FNode? node) {
+  if (node == null) return;
+  if (node is Link && node.getChildren().isEmpty) {
+    final parent = findParent(root, node);
+    removeNode(root, node);
+    if (parent != null) _cleanupEmptyInlineParents(root, parent);
+  }
 }
 
 /// Finds the previous stop in the document.
