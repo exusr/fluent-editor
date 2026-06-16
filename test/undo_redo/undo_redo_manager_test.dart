@@ -4,6 +4,8 @@ import 'package:fluent_editor/factories.dart';
 import 'package:fluent_editor/undo_redo/undo_redo_manager.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   late FluentDocument document;
   late UndoRedoManager manager;
 
@@ -24,38 +26,66 @@ void main() {
 
   group('saveState', () {
     test('adds state to undo stack', () {
-      manager.saveState(document, description: 'Initial');
+      manager.beginSaveState(document, description: 'Initial');
+      document.content.nodes.add(Paragraph(text: 'Initial'));
+      manager.commitSaveState(document);
       expect(manager.canUndo, isTrue);
       expect(manager.undoCount, 1);
       expect(manager.lastUndoDescription, 'Initial');
     });
 
     test('clears redo stack on new state', () {
-      manager.saveState(document, description: 'A');
-      manager.saveState(document, description: 'B', forceNewAction: true);
+      manager.beginSaveState(document, description: 'A');
+      document.content.nodes.add(Paragraph(text: 'A'));
+      manager.commitSaveState(document);
+
+      manager.beginSaveState(document, description: 'B', forceNewAction: true);
+      document.content.nodes[0] = Paragraph(text: 'B');
+      manager.commitSaveState(document);
+
       manager.undo(document);
       expect(manager.canRedo, isTrue);
-      manager.saveState(document, description: 'C', forceNewAction: true);
+
+      manager.beginSaveState(document, description: 'C', forceNewAction: true);
+      document.content.nodes[0] = Paragraph(text: 'C');
+      manager.commitSaveState(document);
       expect(manager.canRedo, isFalse);
       expect(manager.redoCount, 0);
     });
 
     test('groups states within timeout', () async {
-      manager.saveState(document, description: 'Typing');
-      manager.saveState(document, description: 'Typing');
+      manager.beginSaveState(document, description: 'Typing');
+      document.content.nodes.add(Paragraph(text: 'A'));
+      manager.commitSaveState(document);
+
+      manager.beginSaveState(document, description: 'Typing');
+      document.content.nodes[0] = Paragraph(text: 'B');
+      manager.commitSaveState(document);
+
       expect(manager.undoCount, 1);
     });
 
     test('forceNewAction breaks grouping', () {
-      manager.saveState(document, description: 'Typing');
-      manager.saveState(document, description: 'Typing', forceNewAction: true);
+      manager.beginSaveState(document, description: 'Typing');
+      document.content.nodes.add(Paragraph(text: 'A'));
+      manager.commitSaveState(document);
+
+      manager.beginSaveState(document, description: 'Typing', forceNewAction: true);
+      document.content.nodes[0] = Paragraph(text: 'B');
+      manager.commitSaveState(document);
+
       expect(manager.undoCount, 2);
     });
 
     test('does not save during restore', () {
-      manager.saveState(document, description: 'A');
-      document.content.nodes.add(Paragraph(text: 'change'));
-      manager.saveState(document, description: 'B', forceNewAction: true);
+      manager.beginSaveState(document, description: 'A');
+      document.content.nodes.add(Paragraph(text: 'A'));
+      manager.commitSaveState(document);
+
+      manager.beginSaveState(document, description: 'B', forceNewAction: true);
+      document.content.nodes[0] = Paragraph(text: 'change');
+      manager.commitSaveState(document);
+
       manager.undo(document);
       // After undo, A is still in undo stack
       expect(manager.canUndo, isTrue);
@@ -63,39 +93,48 @@ void main() {
   });
 
   group('undo', () {
-    // Test removed - cursor initialization changed
-
     test('returns false when nothing to undo', () {
       expect(manager.undo(document), isFalse);
     });
 
     test('adds current state to redo stack', () {
-      manager.saveState(document, description: 'Before');
+      manager.beginSaveState(document, description: 'Before');
+      document.content.nodes.add(Paragraph(text: 'Before'));
+      manager.commitSaveState(document);
+
+      manager.beginSaveState(document, description: 'After', forceNewAction: true);
       document.load([Paragraph(text: 'modified')]);
-      manager.saveState(document, description: 'After', forceNewAction: true);
+      manager.commitSaveState(document);
+
       manager.undo(document);
       expect(manager.canRedo, isTrue);
       expect(manager.redoCount, 1);
     });
 
     test('returns false after undoing all states', () {
-      manager.saveState(document, description: 'A');
+      manager.beginSaveState(document, description: 'A');
+      document.content.nodes.add(Paragraph(text: 'A'));
+      manager.commitSaveState(document);
+
       manager.undo(document);
       expect(manager.undo(document), isFalse);
     });
   });
 
   group('redo', () {
-    // Test removed - cursor initialization changed
-
     test('returns false when nothing to redo', () {
       expect(manager.redo(document), isFalse);
     });
 
     test('adds current state to undo stack', () {
-      manager.saveState(document, description: 'Before');
+      manager.beginSaveState(document, description: 'Before');
+      document.content.nodes.add(Paragraph(text: 'Before'));
+      manager.commitSaveState(document);
+
+      manager.beginSaveState(document, description: 'After', forceNewAction: true);
       document.load([Paragraph(text: 'modified')]);
-      manager.saveState(document, description: 'After', forceNewAction: true);
+      manager.commitSaveState(document);
+
       manager.undo(document);
       manager.redo(document);
       expect(manager.canUndo, isTrue);
@@ -105,8 +144,9 @@ void main() {
   group('memory limit', () {
     test('enforces max 100 states', () {
       for (var i = 0; i < 110; i++) {
+        manager.beginSaveState(document, description: 'State $i', forceNewAction: true);
         document.load([Paragraph(text: 'v$i')]);
-        manager.saveState(document, description: 'State $i', forceNewAction: true);
+        manager.commitSaveState(document);
       }
       expect(manager.undoCount, lessThanOrEqualTo(100));
     });
@@ -114,8 +154,14 @@ void main() {
 
   group('clear', () {
     test('removes all states', () {
-      manager.saveState(document, description: 'A');
-      manager.saveState(document, description: 'B', forceNewAction: true);
+      manager.beginSaveState(document, description: 'A');
+      document.content.nodes.add(Paragraph(text: 'A'));
+      manager.commitSaveState(document);
+
+      manager.beginSaveState(document, description: 'B', forceNewAction: true);
+      document.content.nodes.add(Paragraph(text: 'B'));
+      manager.commitSaveState(document);
+
       manager.clear();
       expect(manager.canUndo, isFalse);
       expect(manager.canRedo, isFalse);
@@ -128,7 +174,10 @@ void main() {
 
   group('dispose', () {
     test('clears and cancels timer', () {
-      manager.saveState(document, description: 'A');
+      manager.beginSaveState(document, description: 'A');
+      document.content.nodes.add(Paragraph(text: 'A'));
+      manager.commitSaveState(document);
+
       manager.dispose();
       expect(manager.canUndo, isFalse);
     });

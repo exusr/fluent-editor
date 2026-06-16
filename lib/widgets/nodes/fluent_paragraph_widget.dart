@@ -61,6 +61,10 @@ class FluentParagraphWidgetState<T extends FluentParagraphWidget> extends State<
   String? _lastCursorFragmentId;
   ({String startFrag, int startOff, String endFrag, int endOff})? _lastSelectionRange;
 
+  /// Previous IME preedit state for this paragraph.
+  String _lastImePreeditText = '';
+  String _lastImePreeditFragmentId = '';
+
   /// Cached inline images for this paragraph. Recomputed only when the
   /// document content version changes, avoiding a full tree walk on every
   /// cursor blink or selection update.
@@ -134,20 +138,27 @@ class FluentParagraphWidgetState<T extends FluentParagraphWidget> extends State<
     // (where hasSelection stays true) still triggers a rebuild.
     final selRange = hasSelection ? doc.getSelectionRangeCached(nodeId) : null;
 
-    // Only rebuild if this paragraph's involvement, cursor position, or
-    // selection range changed. This reduces setState from ~60/sec
-    // (3 × 20 visible paragraphs on key-hold) down to 1-2 setState per
-    // movement, while correctly updating the selection highlight.
+    // Track IME preedit state so preedit underline updates trigger rebuild.
+    final hasPreedit = doc.imeHandler.isPreeditInContainer(nodeId);
+    final preeditText = hasPreedit ? doc.imeHandler.preeditText : '';
+    final preeditFragId = hasPreedit ? doc.imeHandler.preeditFragmentId : '';
+
+    // Only rebuild if this paragraph's involvement, cursor position,
+    // selection range, or preedit state changed.
     if (hasCursor != _lastHadCursor ||
         hasSelection != _lastHadSelection ||
         cursorOffset != _lastCursorOffset ||
         cursorFragmentId != _lastCursorFragmentId ||
-        !_sameRange(selRange, _lastSelectionRange)) {
+        !_sameRange(selRange, _lastSelectionRange) ||
+        preeditText != _lastImePreeditText ||
+        preeditFragId != _lastImePreeditFragmentId) {
       _lastHadCursor = hasCursor;
       _lastHadSelection = hasSelection;
       _lastCursorOffset = cursorOffset;
       _lastCursorFragmentId = cursorFragmentId;
       _lastSelectionRange = selRange;
+      _lastImePreeditText = preeditText;
+      _lastImePreeditFragmentId = preeditFragId;
       print('[PARA_SETSTATE] nodeId=$nodeId hasCursor=$hasCursor '
           'hasSelection=$hasSelection cursorOff=$cursorOffset cursorFrag=$cursorFragmentId');
       setState(() {});
@@ -362,6 +373,16 @@ class FluentParagraphWidgetState<T extends FluentParagraphWidget> extends State<
           spellAnnotations: spellAnnotations,
           commentAnnotations: commentAnnotations,
           selectedCommentId: selectedCommentId,
+          // IME preedit: only pass if this paragraph hosts the active preedit
+          imePreeditText: widget.document.imeHandler.isPreeditInContainer(nodeId)
+              ? widget.document.imeHandler.preeditText
+              : '',
+          imePreeditFragmentId: widget.document.imeHandler.isPreeditInContainer(nodeId)
+              ? widget.document.imeHandler.preeditFragmentId
+              : '',
+          imePreeditLocalOffset: widget.document.imeHandler.isPreeditInContainer(nodeId)
+              ? widget.document.imeHandler.preeditLocalOffset
+              : 0,
           children: imageWidgets,
         ),
       ),
@@ -734,6 +755,7 @@ class FParagraphRenderWidget extends MultiChildRenderObjectWidget {
     this.cursorColor,
     this.selectionColor,
     this.linkColor,
+    this.imeCompositionColor,
     required this.anchorFragmentId,
     required this.anchorLocalOffset,
     this.focusFragmentId,
@@ -746,6 +768,10 @@ class FParagraphRenderWidget extends MultiChildRenderObjectWidget {
     this.spellAnnotations = const [],
     this.commentAnnotations = const [],
     this.selectedCommentId,
+    // IME preedit
+    this.imePreeditText = '',
+    this.imePreeditFragmentId = '',
+    this.imePreeditLocalOffset = 0,
     super.children = const [],
   });
 
@@ -759,6 +785,7 @@ class FParagraphRenderWidget extends MultiChildRenderObjectWidget {
   final Color? cursorColor;
   final Color? selectionColor;
   final Color? linkColor;
+  final Color? imeCompositionColor;
 
   final String anchorFragmentId;
   final int anchorLocalOffset;
@@ -772,6 +799,10 @@ class FParagraphRenderWidget extends MultiChildRenderObjectWidget {
   final List<SpellAnnotation> spellAnnotations;
   final List<Map<String, dynamic>> commentAnnotations;
   final String? selectedCommentId;
+  // IME preedit
+  final String imePreeditText;
+  final String imePreeditFragmentId;
+  final int imePreeditLocalOffset;
 
   @override
   RenderObject createRenderObject(BuildContext context) {
@@ -786,6 +817,7 @@ class FParagraphRenderWidget extends MultiChildRenderObjectWidget {
         cursorColor: cursorColor ?? Theme.of(context).colorScheme.primary,
         selectionColor: selectionColor ?? Theme.of(context).colorScheme.primary.withAlpha(100),
         linkColor: linkColor ?? Theme.of(context).colorScheme.primary,
+        imeCompositionColor: imeCompositionColor ?? Theme.of(context).colorScheme.primary,
       )
       ..setCursorOffsets(
         anchorFragmentId,
@@ -801,7 +833,10 @@ class FParagraphRenderWidget extends MultiChildRenderObjectWidget {
       )
       ..spellAnnotations = spellAnnotations
       ..commentAnnotations = commentAnnotations
-      ..selectedCommentId = selectedCommentId;
+      ..selectedCommentId = selectedCommentId
+      ..imePreeditText = imePreeditText
+      ..imePreeditFragmentId = imePreeditFragmentId
+      ..imePreeditLocalOffset = imePreeditLocalOffset;
   }
 
   @override
@@ -815,6 +850,7 @@ class FParagraphRenderWidget extends MultiChildRenderObjectWidget {
     renderObject.cursorColor = cursorColor ?? Theme.of(context).colorScheme.primary;
     renderObject.selectionColor = selectionColor ?? Theme.of(context).colorScheme.primary.withAlpha(100);
     renderObject.linkColor = linkColor ?? Theme.of(context).colorScheme.primary;
+    renderObject.imeCompositionColor = imeCompositionColor ?? Theme.of(context).colorScheme.primary;
     renderObject.setCursorOffsets(
       anchorFragmentId,
       anchorLocalOffset,
@@ -830,6 +866,9 @@ class FParagraphRenderWidget extends MultiChildRenderObjectWidget {
     renderObject.spellAnnotations = spellAnnotations;
     renderObject.commentAnnotations = commentAnnotations;
     renderObject.selectedCommentId = selectedCommentId;
+    renderObject.imePreeditText = imePreeditText;
+    renderObject.imePreeditFragmentId = imePreeditFragmentId;
+    renderObject.imePreeditLocalOffset = imePreeditLocalOffset;
   }
 }
 

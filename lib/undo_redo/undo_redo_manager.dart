@@ -45,6 +45,7 @@ class UndoRedoManager {
   DateTime? _lastActionTime;
 
   bool _isRestoringState = false;
+  bool _forceNewAction = false;
 
   /// Pending snapshot captured by [beginSaveState]; committed by
   /// [commitSaveState] (called from [updateContent]).
@@ -73,6 +74,7 @@ class UndoRedoManager {
     // old pending snapshot is still valid because no mutation happened yet.
     if (!forceNewAction &&
         _pending != null &&
+        !_forceNewAction &&
         _currentGroupDescription != null &&
         description == _currentGroupDescription &&
         _lastActionTime != null &&
@@ -101,6 +103,7 @@ class UndoRedoManager {
       oldCursor: CursorSnapshot.fromDocument(document),
     );
 
+    _forceNewAction = forceNewAction;
     _currentGroupDescription = description;
     _lastActionTime = now;
     _groupingTimer?.cancel();
@@ -195,6 +198,47 @@ class UndoRedoManager {
       oldCursor: pending.oldCursor,
       newCursor: CursorSnapshot.fromDocument(document),
     );
+
+    // Merge with the last delta if we are still in the same group
+    // and the action was not forced.
+    if (_currentGroupDescription != null &&
+        _currentGroupDescription == pending.description &&
+        _undoStack.isNotEmpty &&
+        !_forceNewAction) {
+      final lastDelta = _undoStack.last;
+      if (lastDelta is NodeReplaceDelta &&
+          lastDelta.description == pending.description) {
+        final mergedChanges = <int, NodeChange>{};
+        for (final c in lastDelta.changes) {
+          mergedChanges[c.index] = c;
+        }
+        for (final c in delta.changes) {
+          final existing = mergedChanges[c.index];
+          if (existing != null) {
+            // Keep the oldest oldJson and the newest newJson.
+            mergedChanges[c.index] = NodeChange(
+              index: c.index,
+              oldJson: existing.oldJson,
+              newJson: c.newJson,
+            );
+          } else {
+            mergedChanges[c.index] = c;
+          }
+        }
+        final mergedDelta = NodeReplaceDelta(
+          description: pending.description,
+          timestamp: lastDelta.timestamp,
+          changes: mergedChanges.values.toList(),
+          oldCursor: lastDelta.oldCursor,
+          newCursor: delta.newCursor,
+        );
+        _undoStack.last = mergedDelta;
+        _pending = null;
+        _redoStack.clear();
+        _enforceMemoryLimit();
+        return;
+      }
+    }
 
     _undoStack.add(delta);
     _redoStack.clear();

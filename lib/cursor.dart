@@ -18,13 +18,22 @@ class Cursor extends ChangeNotifier {
   int _focusOffset = 0;
 
   String get anchorId => _anchorId;
-  int get anchorOffset => _anchorOffset;
+  int get anchorOffset => imeComposing ? imeComposingStart : _anchorOffset;
   String get focusId => _focusId;
-  int get focusOffset => _focusOffset;
+  int get focusOffset => imeComposing ? imeComposingStart : _focusOffset;
 
   /// Preferred x coordinate for vertical navigation (Up/Down).
   /// -1.0 = to recalculate (reset after Left/Right/click).
   double preferredX = -1.0;
+
+  /// True when an IME composition is active. During composition the cursor
+  /// is visually locked at [imeComposingStart] so the user sees a stable
+  /// insertion point while the preedit text changes.
+  bool imeComposing = false;
+
+  /// The local offset where the active IME composition started. The cursor
+  /// caret is painted at this position during composition.
+  int imeComposingStart = 0;
 
   bool _suppressNotifications = false;
 

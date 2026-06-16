@@ -116,6 +116,47 @@ class RenderFluentParagraph extends RenderFluentNode
   String? _selFocusFragmentId;
   int? _selFocusLocalOffset;
 
+  // ─── IME preedit state ──────────────────────────────────────────
+  /// Preedit text rendered with a blue dashed underline during composition.
+  String _imePreeditText = '';
+  String get imePreeditText => _imePreeditText;
+  set imePreeditText(String value) {
+    if (_imePreeditText != value) {
+      _imePreeditText = value;
+      markNeedsLayout();
+    }
+  }
+
+  /// The composing range within the preedit text.
+  TextRange _imeComposingRange = TextRange.empty;
+  TextRange get imeComposingRange => _imeComposingRange;
+  set imeComposingRange(TextRange value) {
+    if (_imeComposingRange != value) {
+      _imeComposingRange = value;
+      markNeedsPaint();
+    }
+  }
+
+  /// Fragment id where the preedit starts.
+  String _imePreeditFragmentId = '';
+  String get imePreeditFragmentId => _imePreeditFragmentId;
+  set imePreeditFragmentId(String value) {
+    if (_imePreeditFragmentId != value) {
+      _imePreeditFragmentId = value;
+      markNeedsLayout();
+    }
+  }
+
+  /// Local offset where the preedit starts.
+  int _imePreeditLocalOffset = 0;
+  int get imePreeditLocalOffset => _imePreeditLocalOffset;
+  set imePreeditLocalOffset(int value) {
+    if (_imePreeditLocalOffset != value) {
+      _imePreeditLocalOffset = value;
+      markNeedsLayout();
+    }
+  }
+
   InlineContainerNode _container;
 
   /// Registry in which this render automatically registers.
@@ -244,6 +285,15 @@ class RenderFluentParagraph extends RenderFluentNode
     }
   }
 
+  Color _imeCompositionColor = const Color(0xFF2196F3);
+  Color get imeCompositionColor => _imeCompositionColor;
+  set imeCompositionColor(Color value) {
+    if (_imeCompositionColor != value) {
+      _imeCompositionColor = value;
+      markNeedsPaint();
+    }
+  }
+
   // ─── Paint caches ───────────────────────────────────────────────
   // Cached structures to avoid recomputing expensive TextPainter
   // queries on every paint (e.g. cursor blink, selection highlight).
@@ -273,6 +323,7 @@ class RenderFluentParagraph extends RenderFluentNode
     Color cursorColor = const Color(0xFF2196F3),
     Color selectionColor = const Color(0xFF64B5F6),
     Color linkColor = const Color(0xFF2196F3),
+    Color imeCompositionColor = const Color(0xFF2196F3),
   }) : _lineHeight = lineHeight,
        _textAlign = textAlign,
        _container = container,
@@ -282,6 +333,7 @@ class RenderFluentParagraph extends RenderFluentNode
        _cursorColor = cursorColor,
        _selectionColor = selectionColor,
        _linkColor = linkColor,
+       _imeCompositionColor = imeCompositionColor,
        super(node: container as FNode);
 
   // ─── Lifecycle: automatic registration ──────────────────────────
@@ -516,6 +568,50 @@ class RenderFluentParagraph extends RenderFluentNode
     size = constraints.constrain(Size(width, _painter.height));
   }
 
+  /// Builds a TextSpan for the IME preedit text, styled with a blue dashed
+  /// underline. Inherits font properties from [baseStyle].
+  TextSpan _buildImePreeditSpan(TextStyle? baseStyle) {
+    final base = baseStyle ?? const TextStyle();
+    return TextSpan(
+      text: _imePreeditText,
+      style: base.copyWith(
+        decoration: TextDecoration.underline,
+        decorationStyle: TextDecorationStyle.dashed,
+        decorationColor: _imeCompositionColor,
+        decorationThickness: 1.5,
+      ),
+    );
+  }
+
+  /// Emits text spans for a fragment, injecting the IME preedit at the
+  /// correct local offset if this fragment is the preedit anchor.
+  void _emitFragmentSpans(
+    List<InlineSpan> spans,
+    String text,
+    TextStyle style,
+    String fragmentId,
+    int fragmentLocalOffset,
+    GestureRecognizer? recognizer,
+  ) {
+    final preeditHere = _imePreeditText.isNotEmpty &&
+        _imePreeditFragmentId == fragmentId &&
+        fragmentLocalOffset >= 0 &&
+        fragmentLocalOffset <= text.length;
+    if (!preeditHere) {
+      spans.add(TextSpan(text: text, style: style, recognizer: recognizer));
+      return;
+    }
+    final before = text.substring(0, fragmentLocalOffset);
+    final after = text.substring(fragmentLocalOffset);
+    if (before.isNotEmpty) {
+      spans.add(TextSpan(text: before, style: style, recognizer: recognizer));
+    }
+    spans.add(_buildImePreeditSpan(style));
+    if (after.isNotEmpty) {
+      spans.add(TextSpan(text: after, style: style, recognizer: recognizer));
+    }
+  }
+
   TextSpan _buildTextSpanAndTrackPositions(
     InlineContainerNode container,
     List<Size> childSizes,
@@ -637,8 +733,10 @@ class RenderFluentParagraph extends RenderFluentNode
                   isSuperscript: isSuperscript,
                 ));
               } else {
-                spans.add(
-                  TextSpan(text: text, style: effectiveStyle, recognizer: recognizer),
+                _emitFragmentSpans(
+                  spans, text, effectiveStyle, child.id,
+                  child.id == _imePreeditFragmentId ? _imePreeditLocalOffset : 0,
+                  recognizer,
                 );
               }
               currentOffset = end;
@@ -745,7 +843,11 @@ class RenderFluentParagraph extends RenderFluentNode
               isSuperscript: isSuperscript,
             ));
           } else {
-            spans.add(TextSpan(text: text, style: effectiveStyle));
+            _emitFragmentSpans(
+              spans, text, effectiveStyle, fragment.id,
+              fragment.id == _imePreeditFragmentId ? _imePreeditLocalOffset : 0,
+              null,
+            );
           }
           currentOffset = end;
           break;

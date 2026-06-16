@@ -1,8 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io' show Platform;
 
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:fluent_editor/controllers/document_language_controller.dart';
 import 'package:fluent_editor/comments/comment_provider.dart';
 import 'package:fluent_editor/spell_check/spell_check_provider.dart';
@@ -19,11 +17,9 @@ import 'package:flutter/services.dart';
 import 'package:fluent_editor/widgets/nodes/virtualized_selectable_area.dart';
 import 'package:fluent_editor/factories.dart';
 import 'package:fluent_editor/handlers/event_handler.dart';
-import 'package:fluent_editor/handlers/handle_backspace.dart';
-import 'package:fluent_editor/handlers/handle_insert_character.dart';
-import 'package:fluent_editor/handlers/handle_replace_selection.dart';
 import 'package:fluent_editor/core/paragraph_registry.dart';
 import 'package:fluent_editor/undo_redo/undo_redo_manager.dart';
+import 'package:fluent_editor/input/ime_handler.dart';
 import 'package:fluent_editor/localization/fluent_editor_labels.dart';
 
 class FluentDocument extends ChangeNotifier {
@@ -386,6 +382,8 @@ class FluentDocument extends ChangeNotifier {
   final UndoRedoManager _undoRedoManager = UndoRedoManager();
   UndoRedoManager get undoRedoManager => _undoRedoManager;
 
+  final FluentTextInputHandler imeHandler = FluentTextInputHandler();
+
   /// Notifies the comment provider that text in [paragraphId] was mutated.
   void notifyTextMutation(String paragraphId, int fromOffset, int delta) {
     commentProvider?.onDocumentMutation(paragraphId, fromOffset, delta);
@@ -432,11 +430,8 @@ class FluentDocument extends ChangeNotifier {
   final FocusNode editorFocusNode = FocusNode();
   void requestEditorFocus() => editorFocusNode.requestFocus();
 
-  /// FocusNode for the hidden TextField used for mobile keyboard support.
-  /// Exposed to allow requesting focus on tap (opens the virtual keyboard
-  /// on both native mobile and mobile web).
-  FocusNode? mobileTextFieldFocusNode;
-  void requestMobileKeyboardFocus() => mobileTextFieldFocusNode?.requestFocus();
+  /// Opens the virtual keyboard via the IME handler.
+  void requestMobileKeyboardFocus() => imeHandler.showKeyboard();
 
   final Map<String, GlobalKey> _nodeKeys = {};
   GlobalKey getKeyForNode(String nodeId) {
@@ -965,11 +960,7 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
   bool _showStatsPanel = false;
   bool _isSidebarCollapsed = false;
   bool _pendingScrollToCursor = false;
-  String _previousText = '\u200B';
-  bool _isResettingText = false;
   final FocusNode _focusNode = FocusNode();
-  final TextEditingController _textEditingController = TextEditingController();
-  final FocusNode _hiddenTextFieldFocusNode = FocusNode();
   final ScrollController _scrollController = ScrollController();
   final GlobalKey _contentStackKey = GlobalKey();
   // REMOVED: _scrollViewKey - no longer needed with virtualization
@@ -1090,17 +1081,14 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
   void initState() {
     super.initState();
     widget.document.addListener(_onDocumentChanged);
-    widget.document.mobileTextFieldFocusNode = _hiddenTextFieldFocusNode;
-    // Enable hidden TextField listener on all mobile platforms (native and web)
-    if (_isMobilePlatform()) {
-      _previousText = '\u200B';
-      _textEditingController.text = '\u200B';
-      _textEditingController.addListener(_onMobileTextChanged);
-      // On mobile (including web), register a HardwareKeyboard handler so that
-      // shortcuts (Ctrl+B, Ctrl+Z, arrows, etc.) are intercepted globally,
-      // even when the hidden TextField owns the focus instead of editorFocusNode.
-      HardwareKeyboard.instance.addHandler(_onHardwareKeyEvent);
-    }
+    // Attach the IME handler on all platforms so system IME (CJK, emoji,
+    // voice dictation, etc.) works everywhere.
+    widget.document.imeHandler.attachInput(widget.document);
+    // Commit any pending preedit when the editor loses focus.
+    widget.document.editorFocusNode.addListener(_onEditorFocusChanged);
+    // Register a global HardwareKeyboard handler so shortcuts and navigation
+    // are intercepted even when the platform text input owns focus.
+    HardwareKeyboard.instance.addHandler(_onHardwareKeyEvent);
     if (widget.document.content.nodes.isNotEmpty) {
       widget.document.cursor.document = widget.document;
       widget.document.eventHandler.document = widget.document;
@@ -1134,39 +1122,6 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
     }
   }
 
-  void _onMobileTextChanged() {
-    if (_isResettingText) return;
-
-    final currentText = _textEditingController.text;
-
-    if (currentText.isEmpty || currentText.length < _previousText.length) {
-      widget.document.saveState(description: 'Delete', forceNewAction: true);
-      executeHandleBackspace(widget.document);
-    } else if (currentText.length > _previousText.length) {
-      String newChars = currentText;
-      if (_previousText == '\u200B' && currentText.startsWith('\u200B')) {
-        newChars = currentText.substring(1);
-      } else if (currentText.length > _previousText.length) {
-        newChars = currentText.substring(_previousText.length);
-      }
-
-      if (newChars.isNotEmpty) {
-        final lastChar = newChars[newChars.length - 1];
-        if (!widget.document.cursor.isCollapsed) {
-          widget.document.saveState(description: 'Replace selection');
-          executeHandleReplaceSelection(lastChar, widget.document);
-        } else {
-          executeHandleInsertCharacter(lastChar, widget.document);
-        }
-      }
-    }
-
-    _previousText = '\u200B';
-    _isResettingText = true;
-    _textEditingController.text = '\u200B';
-    _isResettingText = false;
-  }
-
   void _onLanguageChanged() {
     final newLang = DocumentLanguageController.instance.current.code;
     if (widget.document.documentLanguage != newLang) {
@@ -1176,29 +1131,28 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
     }
   }
 
-  /// Global HardwareKeyboard handler active on mobile (native + web).
+  void _onEditorFocusChanged() {
+    if (!widget.document.editorFocusNode.hasFocus) {
+      widget.document.imeHandler.commitIfComposing();
+    }
+  }
+
+  /// Global HardwareKeyboard handler active on all platforms.
   /// Intercepts shortcuts and navigation keys so they reach the EventHandler
-  /// even when the hidden TextField owns the focus.
+  /// even when the platform text input owns focus.
   ///
-  /// Returns true only for shortcut/navigation keys so that normal character
-  /// input is NOT consumed here — it arrives via _onMobileTextChanged instead,
-  /// avoiding double insertion.
+  /// During an active IME composition all non-navigation keys are suppressed
+  /// so the system IME receives them instead of the raw key pipeline.
   bool _onHardwareKeyEvent(KeyEvent event) {
     if (event is! KeyDownEvent && event is! KeyRepeatEvent) return false;
 
+    final doc = widget.document;
     final keyboard = HardwareKeyboard.instance;
     final isCtrl = keyboard.isControlPressed;
     final isMeta = keyboard.isMetaPressed;
-    final isShift = keyboard.isShiftPressed;
     final key = event.logicalKey;
 
-    // Shortcut combos (Ctrl/Meta + key)
-    if (isCtrl || isMeta) {
-      widget.document.manageEvent(event);
-      return true;
-    }
-
-    // Navigation keys
+    // Navigation keys are always routed through the editor.
     final navKeys = {
       LogicalKeyboardKey.arrowLeft,
       LogicalKeyboardKey.arrowRight,
@@ -1214,18 +1168,45 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
       LogicalKeyboardKey.pageDown,
     };
 
+    // Keys that are safe to route to the editor even during IME composition.
+    final nonDestructiveNavKeys = {
+      LogicalKeyboardKey.arrowLeft,
+      LogicalKeyboardKey.arrowRight,
+      LogicalKeyboardKey.arrowUp,
+      LogicalKeyboardKey.arrowDown,
+      LogicalKeyboardKey.home,
+      LogicalKeyboardKey.end,
+      LogicalKeyboardKey.pageUp,
+      LogicalKeyboardKey.pageDown,
+    };
+
+    // During active IME composition, suppress everything except non-destructive
+    // navigation and shortcuts so the IME receives normal character keys,
+    // backspace, delete and enter.
+    if (doc.imeHandler.isComposing) {
+      if (nonDestructiveNavKeys.contains(key)) {
+        doc.manageEvent(event);
+        return true;
+      }
+      if (isCtrl || isMeta) {
+        doc.manageEvent(event);
+        return true;
+      }
+      return false; // Let IME consume everything else
+    }
+
+    // Shortcut combos (Ctrl/Meta + key)
+    if (isCtrl || isMeta) {
+      doc.manageEvent(event);
+      return true;
+    }
+
     if (navKeys.contains(key)) {
-      widget.document.manageEvent(event);
+      doc.manageEvent(event);
       return true;
     }
 
-    // Shift + navigation (selection extension)
-    if (isShift && navKeys.contains(key)) {
-      widget.document.manageEvent(event);
-      return true;
-    }
-
-    // Normal character input: do NOT consume — let _onMobileTextChanged handle it.
+    // Normal character input: do NOT consume — let the IME channel handle it.
     return false;
   }
 
@@ -1348,25 +1329,14 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
   void dispose() {
     _blinkTimer?.cancel();
     widget.document.removeListener(_onDocumentChanged);
+    widget.document.editorFocusNode.removeListener(_onEditorFocusChanged);
     DocumentLanguageController.instance.currentLanguage
         .removeListener(_onLanguageChanged);
     _scrollController.dispose();
     _focusNode.dispose();
-    if (_isMobilePlatform()) {
-      _textEditingController.removeListener(_onMobileTextChanged);
-      HardwareKeyboard.instance.removeHandler(_onHardwareKeyEvent);
-    }
-    _textEditingController.dispose();
-    _hiddenTextFieldFocusNode.dispose();
+    HardwareKeyboard.instance.removeHandler(_onHardwareKeyEvent);
+    widget.document.imeHandler.detachInput();
     super.dispose();
-  }
-
-  /// Returns true on native mobile (Android/iOS) and on all web platforms.
-  /// The hidden TextField is always active in these contexts so the virtual
-  /// keyboard opens on tap.
-  bool _isMobilePlatform() {
-    if (kIsWeb) return true;
-    return Platform.isAndroid || Platform.isIOS;
   }
 
   @override
@@ -1379,31 +1349,6 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
           Expanded(
             child: Stack(
               children: [
-                // Hidden TextField for virtual keyboard (native mobile + mobile web).
-                // fontSize: 1 + transparent color avoids iOS zoom while staying invisible.
-                if (_isMobilePlatform())
-                  Positioned(
-                    top: 0,
-                    left: 0,
-                    child: SizedBox(
-                      width: 1,
-                      height: 1,
-                      child: TextField(
-                        controller: _textEditingController,
-                        focusNode: _hiddenTextFieldFocusNode,
-                        keyboardType: TextInputType.multiline,
-                        maxLines: null,
-                        decoration: const InputDecoration(
-                          border: InputBorder.none,
-                          contentPadding: EdgeInsets.zero,
-                        ),
-                        style: const TextStyle(
-                          fontSize: 1,
-                          color: Color(0x00000000), // fully transparent
-                        ),
-                      ),
-                    ),
-                  ),
                 Stack(
                   children: [
                     // ALWAYS USE VIRTUALIZED CONTENT - INTEGRATE ALL FEATURES HERE
