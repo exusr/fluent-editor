@@ -970,6 +970,11 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
   final Map<String, int> _nodeIndexCache = {};
   bool _nodeIndexCacheDirty = true;
 
+  // Measured item heights from the virtualized list for accurate scroll
+  // positioning. Keys are node indices, values are actual rendered heights.
+  final Map<int, double> _itemHeights = {};
+  double _averageItemHeight = 40.0;
+
   // Cursor blink driver. A single periodic timer toggles the caret visibility
   // and repaints only the paragraph that owns the caret (O(1)).
   Timer? _blinkTimer;
@@ -1054,7 +1059,16 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
             constraints: BoxConstraints(maxWidth: widget.maxWidth),
             child: VirtualizedSelectableArea(
               document: widget.document,
+              scrollController: _scrollController,
               itemCount: widget.document.content.nodes.length,
+              onHeightsChanged: (heights) {
+                _itemHeights.clear();
+                _itemHeights.addAll(heights);
+                if (heights.isNotEmpty) {
+                  final sum = heights.values.reduce((a, b) => a + b);
+                  _averageItemHeight = sum / heights.length;
+                }
+              },
               itemBuilder: (context, index) {
                 final node = widget.document.content.nodes[index];
                 return buildFNodeWidget(node, widget.document);
@@ -1263,35 +1277,41 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
 
     // Post-frame callback to ensure ListView is built
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      // Try to find the VirtualizedSelectableArea and scroll to the cursor index
-      final virtualizedAreaContext = _findVirtualizedAreaContext();
-      if (virtualizedAreaContext != null) {
-        try {
-          final scrollableState = Scrollable.of(virtualizedAreaContext);
-          const estimatedItemHeight = 40.0;
-          final targetOffset = cursorNodeIndex * estimatedItemHeight;
+      if (!_scrollController.hasClients) return;
 
-          // Skip the animated scroll when the cursor is already within the
-          // visible viewport. During key-hold the cursor moves a few pixels
-          // per press and rarely leaves the viewport; starting a 150 ms
-          // animation every time creates a backlog that lags the UI.
-          final viewportStart = scrollableState.position.pixels;
-          final viewportEnd =
-              viewportStart + scrollableState.position.viewportDimension;
-          if (targetOffset >= viewportStart && targetOffset <= viewportEnd) {
-            return; // Already visible — nothing to do.
-          }
-
-          scrollableState.position.animateTo(
-            targetOffset.toDouble(),
-            duration: const Duration(milliseconds: 150),
-            curve: Curves.easeOut,
-          );
-        } catch (e) {
-          // Scrollable widget not found, likely because virtualized area isn't built yet
-          // This is a normal condition during initial setup
-        }
+      // Compute cumulative offset up to the cursor node using measured
+      // heights when available, falling back to the average for unseen
+      // nodes. This is critical for large paragraphs where 40px guesses
+      // are wildly wrong.
+      double nodeStart = 0.0;
+      for (int i = 0; i < cursorNodeIndex; i++) {
+        nodeStart += _itemHeights[i] ?? _averageItemHeight;
       }
+      final nodeHeight = _itemHeights[cursorNodeIndex] ?? _averageItemHeight;
+      final nodeEnd = nodeStart + nodeHeight;
+
+      final position = _scrollController.position;
+      const margin = 80.0;
+      final viewportStart = position.pixels;
+      final viewportEnd   = viewportStart + position.viewportDimension;
+
+      if (nodeStart >= viewportStart + margin &&
+          nodeEnd   <= viewportEnd   - margin) {
+        return; // Already well inside viewport — nothing to do.
+      }
+
+      double scrollTarget;
+      if (nodeEnd > viewportEnd - margin) {
+        scrollTarget = nodeEnd + margin - position.viewportDimension;
+      } else {
+        scrollTarget = nodeStart - margin;
+      }
+
+      final clampedOffset = scrollTarget.clamp(
+        position.minScrollExtent,
+        position.maxScrollExtent,
+      );
+      position.jumpTo(clampedOffset.toDouble());
     });
   }
 

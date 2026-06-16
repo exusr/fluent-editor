@@ -17,11 +17,15 @@ class VirtualizedSelectableArea extends StatefulWidget {
     required this.document,
     required this.itemCount,
     required this.itemBuilder,
+    this.scrollController,
+    this.onHeightsChanged,
   });
 
   final FluentDocument document;
   final int itemCount;
   final Widget Function(BuildContext context, int index) itemBuilder;
+  final ScrollController? scrollController;
+  final ValueChanged<Map<int, double>>? onHeightsChanged;
 
   @override
   State<VirtualizedSelectableArea> createState() => _VirtualizedSelectableAreaState();
@@ -30,7 +34,10 @@ class VirtualizedSelectableArea extends StatefulWidget {
 class _VirtualizedSelectableAreaState extends State<VirtualizedSelectableArea> {
   bool _isSelecting = false;
   Offset? _pointerDownPosition;
-  final ScrollController _scrollController = ScrollController();
+  final ScrollController _internalScrollController = ScrollController();
+
+  ScrollController get _scrollController =>
+      widget.scrollController ?? _internalScrollController;
 
   // ─── Mobile-web gesture detection ─────────────────────────
   /// Tracks the gesture state for distinguishing tap / scroll / drag.
@@ -66,7 +73,9 @@ class _VirtualizedSelectableAreaState extends State<VirtualizedSelectableArea> {
   void dispose() {
     _selectionUpdateTimer?.cancel();
     _tapTimer?.cancel();
-    _scrollController.dispose();
+    if (widget.scrollController == null) {
+      _internalScrollController.dispose();
+    }
     super.dispose();
   }
 
@@ -418,6 +427,7 @@ class _VirtualizedSelectableAreaState extends State<VirtualizedSelectableArea> {
     _heightSum += height;
     _averageItemHeight = _heightSum / _itemHeights.length;
     _cumulativeHeightsDirty = true;
+    widget.onHeightsChanged?.call(Map.unmodifiable(_itemHeights));
   }
 
   /// Fallback method for virtualized nodes without RenderBox
