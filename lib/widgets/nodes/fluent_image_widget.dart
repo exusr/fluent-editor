@@ -39,6 +39,9 @@ class _FluentImageWidgetState
   _ResizeHandle? _activeHandle;
   _ResizeHandle? _hoveredHandle;
   Offset? _dragStartPosition;
+  
+  // Resize mode: activated by double-tap, gives image priority over scroll/selection
+  bool _isResizeMode = false;
 
   // Aspect ratio tracking
   double? _originalAspectRatio;
@@ -230,7 +233,8 @@ class _FluentImageWidgetState
       }
     }
 
-    final showHandles = cursorOnImage || isSelected;
+    // Show resize handles only in resize mode (activated by double-tap)
+    final showHandles = _isResizeMode;
 
     return Container(
       alignment: _parseAlignment(image.textAlign),
@@ -247,6 +251,13 @@ class _FluentImageWidgetState
             // Handle tap to prevent it from reaching the link
             // Position cursor on the image
             widget.document.cursor.moveTo(widget.node.id, 0);
+          },
+          onDoubleTap: () {
+            // Toggle resize mode on double tap
+            setState(() {
+              _isResizeMode = !_isResizeMode;
+              widget.document.isResizingImage = _isResizeMode;
+            });
           },
           onSecondaryTapUp: (details) => _showContextMenu(details.globalPosition),
           onLongPressStart: (details) => _showContextMenu(details.globalPosition),
@@ -414,6 +425,9 @@ class _FluentImageWidgetState
               imgHeight,
             );
           });
+          // Notify document that image resize is in progress
+          // This prevents text selection from interfering
+          widget.document.isResizingImage = true;
         },
         onPanUpdate: (details) {
           if (_activeHandle == null || _dragStartPosition == null) return;
@@ -518,6 +532,8 @@ class _FluentImageWidgetState
             _activeHandle = null;
             _dragStartPosition = null;
           });
+          // Clear the resize flag when drag ends
+          widget.document.isResizingImage = false;
           // Update document only when drag ends
           widget.document.updateContent();
         },

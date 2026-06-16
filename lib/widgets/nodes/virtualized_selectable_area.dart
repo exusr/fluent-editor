@@ -80,6 +80,9 @@ class _VirtualizedSelectableAreaState extends State<VirtualizedSelectableArea> {
   //     is starved by the browser's native scroll). ─────────────────
 
   void _onPointerDown(PointerDownEvent event) {
+    // Ignore pointer events while resizing images
+    if (widget.document.isResizingImage) return;
+    
     _pointerDownPosition = event.position;
     _isDragging = false;
     _isSelecting = false;
@@ -94,9 +97,9 @@ class _VirtualizedSelectableAreaState extends State<VirtualizedSelectableArea> {
       // Timer expired while finger is still down → possible long-press
     });
     
-    // On web-mobile, start long-press timer for scroll mode
-    // If user holds without moving much, we enter scroll mode (close keyboard)
-    if (kIsWeb) {
+    // On mobile (native and web), start long-press timer for scroll mode.
+    // If user holds without moving much, we enter scroll mode (close keyboard).
+    if (_isMobilePlatform()) {
       _longPressTimer = Timer(_kLongPressTimeout, () {
         if (!_isDragging && _pointerDownPosition != null) {
           // Long press without drag → enter scroll mode
@@ -117,6 +120,9 @@ class _VirtualizedSelectableAreaState extends State<VirtualizedSelectableArea> {
   }
 
   void _onPointerMove(PointerMoveEvent event) {
+    // Ignore pointer events while resizing images
+    if (widget.document.isResizingImage) return;
+    
     final downPos = _pointerDownPosition;
     if (downPos == null) return;
 
@@ -127,13 +133,13 @@ class _VirtualizedSelectableAreaState extends State<VirtualizedSelectableArea> {
       // Cancel long-press timer as this is either drag or scroll
       _longPressTimer?.cancel();
       
-      // On web-mobile with vertical movement, prefer scroll over selection
+      // On mobile with vertical movement, prefer scroll over selection
       // when the movement is predominantly vertical
       final dx = (event.position.dx - downPos.dx).abs();
       final dy = (event.position.dy - downPos.dy).abs();
       
-      if (kIsWeb && dy > dx * 1.5) {
-        // Predominantly vertical movement on web → scroll mode
+      if (_isMobilePlatform() && dy > dx * 1.5) {
+        // Predominantly vertical movement on mobile → scroll mode
         _isScrolling = true;
         _dismissKeyboard();
         return; // Don't block scroll, let ListView handle it
@@ -152,6 +158,17 @@ class _VirtualizedSelectableAreaState extends State<VirtualizedSelectableArea> {
   }
 
   void _onPointerUp(PointerUpEvent event) {
+    // Ignore pointer events while resizing images (but still clean up)
+    if (widget.document.isResizingImage) {
+      _tapTimer?.cancel();
+      _longPressTimer?.cancel();
+      _isDragging = false;
+      _isScrolling = false;
+      _isSelecting = false;
+      _pointerDownPosition = null;
+      return;
+    }
+    
     _tapTimer?.cancel();
     _longPressTimer?.cancel();
 
@@ -431,8 +448,11 @@ class _VirtualizedSelectableAreaState extends State<VirtualizedSelectableArea> {
 
   @override
   Widget build(BuildContext context) {
+    // When image resize is active, disable text selection cursor and scroll
+    final isResizeActive = widget.document.isResizingImage;
+    
     return MouseRegion(
-      cursor: SystemMouseCursors.text,
+      cursor: isResizeActive ? SystemMouseCursors.basic : SystemMouseCursors.text,
       child: Listener(
         behavior: HitTestBehavior.translucent,
         onPointerDown: _onPointerDown,
@@ -441,7 +461,9 @@ class _VirtualizedSelectableAreaState extends State<VirtualizedSelectableArea> {
         onPointerCancel: _onPointerCancel,
         child: ListView.builder(
           controller: _scrollController,
-          physics: _isDragging ? const NeverScrollableScrollPhysics() : null,
+          physics: (isResizeActive || _isDragging) 
+              ? const NeverScrollableScrollPhysics() 
+              : null,
           itemCount: widget.itemCount,
           itemBuilder: (context, index) {
             // Wrap each item to measure its actual height (only fires when

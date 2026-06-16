@@ -31,6 +31,10 @@ class FluentDocument extends ChangeNotifier {
   /// When the user types, new text inherits this font.
   String pendingFontFamily = 'DejaVu Sans';
 
+  /// True when an image resize handle is being dragged.
+  /// Used to prevent text selection from interfering with image resize.
+  bool isResizingImage = false;
+
   /// Active font size for collapsed cursor.
   double pendingFontSize = 14.0;
 

@@ -1042,6 +1042,8 @@ class _InlineImageWidgetState extends State<InlineImageWidget> {
               final imgHeight = widget.node.height ?? _defaultImgHeight;
               _dragStartPosition = _getHandlePosition(handle, imgWidth, imgHeight);
             });
+            // Notify document that image resize is in progress
+            widget.document.isResizingImage = true;
           }
         },
         onPanUpdate: (details) {
