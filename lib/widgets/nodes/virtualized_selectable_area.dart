@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:fluent_editor/fluent_document.dart';
 import 'package:fluent_editor/factories.dart';
 import 'package:fluent_editor/renderers/render_paragraph.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/widgets.dart';
 
@@ -31,14 +32,19 @@ class _VirtualizedSelectableAreaState extends State<VirtualizedSelectableArea> {
   Offset? _pointerDownPosition;
   final ScrollController _scrollController = ScrollController();
 
-  // ─── Mobile-web tap-vs-drag detection ─────────────────────────
-  /// Set to true when the pointer moves more than [_kDragThreshold]
-  /// pixels; cancels the pending tap timer so the keyboard is NOT
-  /// opened on drag selection.
+  // ─── Mobile-web gesture detection ─────────────────────────
+  /// Tracks the gesture state for distinguishing tap / scroll / drag.
   bool _isDragging = false;
+  bool _isScrolling = false;
   Timer? _tapTimer;
+  Timer? _longPressTimer;
+  
+  /// Threshold for drag (selection) vs scroll detection
   static const _kDragThreshold = 10.0;
+  /// Timeout for tap detection
   static const _kTapTimeout = Duration(milliseconds: 250);
+  /// Timeout for long-press detection (scroll mode on web-mobile)
+  static const _kLongPressTimeout = Duration(milliseconds: 400);
 
   // Performance optimizations for large documents
   final Map<int, double> _itemHeights = {};
@@ -77,16 +83,37 @@ class _VirtualizedSelectableAreaState extends State<VirtualizedSelectableArea> {
     _pointerDownPosition = event.position;
     _isDragging = false;
     _isSelecting = false;
+    _isScrolling = false;
 
-    // Start a tap timer. If the finger lifts before it fires, we treat
-    // the gesture as a tap (place cursor + open keyboard).  If the
-    // finger moves past the drag threshold we cancel the timer and
-    // switch to drag-selection instead.
+    // Cancel any pending timers
     _tapTimer?.cancel();
+    _longPressTimer?.cancel();
+    
+    // Start tap timer for keyboard activation
     _tapTimer = Timer(_kTapTimeout, () {
-      // Timer expired while finger is still down → long-press, not tap.
-      // Do nothing here; selection will start on pointer-move if needed.
+      // Timer expired while finger is still down → possible long-press
     });
+    
+    // On web-mobile, start long-press timer for scroll mode
+    // If user holds without moving much, we enter scroll mode (close keyboard)
+    if (kIsWeb) {
+      _longPressTimer = Timer(_kLongPressTimeout, () {
+        if (!_isDragging && _pointerDownPosition != null) {
+          // Long press without drag → enter scroll mode
+          _isScrolling = true;
+          // Close keyboard to allow smooth scrolling
+          _dismissKeyboard();
+        }
+      });
+    }
+  }
+  
+  /// Dismisses the virtual keyboard on mobile platforms
+  void _dismissKeyboard() {
+    if (_isMobilePlatform()) {
+      // Remove focus from any text field to close keyboard
+      FocusManager.instance.primaryFocus?.unfocus();
+    }
   }
 
   void _onPointerMove(PointerMoveEvent event) {
@@ -95,15 +122,27 @@ class _VirtualizedSelectableAreaState extends State<VirtualizedSelectableArea> {
 
     final distance = (event.position - downPos).distance;
 
-    if (!_isDragging && distance > _kDragThreshold) {
-      // Finger moved enough → this is a drag, not a tap.
+    if (!_isDragging && !_isScrolling && distance > _kDragThreshold) {
+      // Finger moved past threshold before long-press timeout
+      // Cancel long-press timer as this is either drag or scroll
+      _longPressTimer?.cancel();
+      
+      // On web-mobile with vertical movement, prefer scroll over selection
+      // when the movement is predominantly vertical
+      final dx = (event.position.dx - downPos.dx).abs();
+      final dy = (event.position.dy - downPos.dy).abs();
+      
+      if (kIsWeb && dy > dx * 1.5) {
+        // Predominantly vertical movement on web → scroll mode
+        _isScrolling = true;
+        _dismissKeyboard();
+        return; // Don't block scroll, let ListView handle it
+      }
+      
+      // Diagonal or horizontal movement → drag selection
       _isDragging = true;
       _tapTimer?.cancel();
-
-      // Block native/ListView scroll so the finger controls selection only.
       setState(() {});
-
-      // Start selection exactly where the pointer went down.
       _startSelectionAt(downPos);
     }
 
@@ -114,17 +153,19 @@ class _VirtualizedSelectableAreaState extends State<VirtualizedSelectableArea> {
 
   void _onPointerUp(PointerUpEvent event) {
     _tapTimer?.cancel();
+    _longPressTimer?.cancel();
 
-    if (!_isDragging) {
+    if (!_isDragging && !_isScrolling) {
       // It was a tap (finger never moved past the threshold).
       _handleTapAt(event.position);
     }
 
-    // Re-enable scroll if it was blocked during a drag.
     final wasDragging = _isDragging;
+    final wasScrolling = _isScrolling;
 
     // Clean-up shared state.
     _isDragging = false;
+    _isScrolling = false;
     _isSelecting = false;
     _pointerDownPosition = null;
     _selectionUpdateTimer?.cancel();
@@ -133,11 +174,24 @@ class _VirtualizedSelectableAreaState extends State<VirtualizedSelectableArea> {
 
     if (wasDragging) {
       setState(() {});
-      // Open keyboard after any drag on mobile.
+      // Open keyboard after drag selection on mobile.
       if (_isMobilePlatform()) {
         widget.document.requestMobileKeyboardFocus();
       }
+    } else if (wasScrolling) {
+      // After scroll, don't automatically reopen keyboard
+      // User can tap to edit when ready
+      setState(() {});
     }
+  }
+  
+  /// Prevents browser's default context menu on web
+  void _onPointerCancel(PointerCancelEvent event) {
+    _tapTimer?.cancel();
+    _longPressTimer?.cancel();
+    _isDragging = false;
+    _isScrolling = false;
+    _pointerDownPosition = null;
   }
 
   // ─── Selection helpers (used by both raw-pointer and gesture paths) ─
@@ -384,6 +438,7 @@ class _VirtualizedSelectableAreaState extends State<VirtualizedSelectableArea> {
         onPointerDown: _onPointerDown,
         onPointerMove: _onPointerMove,
         onPointerUp: _onPointerUp,
+        onPointerCancel: _onPointerCancel,
         child: ListView.builder(
           controller: _scrollController,
           physics: _isDragging ? const NeverScrollableScrollPhysics() : null,
