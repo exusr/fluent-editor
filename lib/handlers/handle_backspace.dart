@@ -13,9 +13,10 @@ import 'package:fluent_editor/utils/resolve_selection.dart';
 /// 2. If cursor is at the start of a ListItem: outdent (remove from list)
 /// 3. If cursor is at the start of another node: merge with the previous node
 /// 4. If cursor is on an image: remove the image
-/// 5. If ctrl is pressed: delete the previous word
-/// 6. Otherwise: delete the previous character in the fragment
-bool executeHandleBackspace(FluentDocument document, {bool ctrl = false}) {
+/// 5. If lineStart is pressed: delete to beginning of line
+/// 6. If ctrl is pressed: delete the previous word
+/// 7. Otherwise: delete the previous character in the fragment
+bool executeHandleBackspace(FluentDocument document, {bool ctrl = false, bool lineStart = false}) {
   final root = document.content;
   final cursor = document.cursor;
 
@@ -36,7 +37,12 @@ bool executeHandleBackspace(FluentDocument document, {bool ctrl = false}) {
     return true;
   }
 
-  // Case 1.5: If ctrl is pressed, delete the previous word
+  // Case 1.5: If lineStart is pressed, delete to beginning of current line
+  if (lineStart) {
+    return _handleDeleteToLineStart(document);
+  }
+
+  // Case 1.6: If ctrl is pressed, delete the previous word
   if (ctrl) {
     return _handleDeleteWord(document);
   }
@@ -546,6 +552,29 @@ CaretStop? _findPreviousStop(
     cachedLines: cachedLines,
   );
   return result.position;
+}
+
+/// Deletes from the current cursor position back to the start of the
+/// current logical line (macOS Cmd+Backspace behaviour).
+bool _handleDeleteToLineStart(FluentDocument document) {
+  final cursor = document.cursor;
+  final current = CaretStop(cursor.anchorId, cursor.anchorOffset);
+
+  // Find the logical line that contains the current cursor position.
+  for (final line in document.logicalLines) {
+    final idx = line.stops.indexWhere(
+      (s) => s.fragmentId == current.fragmentId && s.offset == current.offset,
+    );
+    if (idx >= 0) {
+      final firstStop = line.stops.first;
+      cursor.focusTo(firstStop.fragmentId, firstStop.offset);
+      executeHandleReplaceSelection('', document);
+      return true;
+    }
+  }
+
+  // Fallback: nothing to delete
+  return false;
 }
 
 /// Handles deleting the previous word (Ctrl+Backspace).

@@ -288,7 +288,13 @@ class EventHandler {
     if (event.logicalKey == LogicalKeyboardKey.backspace) {
       // Save state before deletion
       document.saveState(description: 'Delete', forceNewAction: true);
-      executeHandleBackspace(document, ctrl: isCtrlPressed);
+      // On macOS Cmd+Backspace deletes to beginning of line; physical
+      // Ctrl+Backspace deletes word. The meta/ctrl keys are swapped in
+      // updateModifiers on macOS, so isCtrlPressed here means Cmd.
+      final isApple = !kIsWeb && (Platform.isMacOS || Platform.isIOS);
+      final lineStart = isApple && isCtrlPressed;
+      final wordDelete = isApple ? isMetaPressed : isCtrlPressed;
+      executeHandleBackspace(document, ctrl: wordDelete, lineStart: lineStart);
       return true;
     }
     return false;

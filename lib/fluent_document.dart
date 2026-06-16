@@ -1205,10 +1205,14 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
     };
 
     // When our editor FocusNode already has focus, the Focus widget's
-    // onKeyEvent handles navigation keys. The global HardwareKeyboard
-    // handler only needs to intercept when the platform text input
-    // owns focus (e.g. during IME composition).
-    if (doc.editorFocusNode.hasFocus && navKeys.contains(key)) {
+    // onKeyEvent handles most keys. However, some OS-level shortcuts
+    // (e.g. Cmd+Z on macOS) are consumed by the platform before they
+    // reach our Focus widget, so we must intercept them at the global
+    // handler level.
+    final shortcutKeys = {
+      LogicalKeyboardKey.keyZ,
+    };
+    if (doc.editorFocusNode.hasFocus && !shortcutKeys.contains(key)) {
       return false;
     }
 
