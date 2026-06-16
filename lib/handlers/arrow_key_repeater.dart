@@ -1,24 +1,27 @@
 // arrow_key_repeater.dart
 //
-// WORKAROUND for a Linux desktop (GTK embedder) issue where, during native
-// keyboard autorepeat, KeyRepeatEvent is delivered correctly and the
-// underlying document/cursor state updates on every repeat (confirmed via
-// logging), but the visual repaint of the selection highlight does not
-// occur until the key is released. Neither markNeedsPaint(),
-// ensureVisualUpdate(), scheduleFrame(), nor scheduleWarmUpFrame() force a
-// frame during this state — the compositor vsync appears to be starved by
-// the synchronous autorepeat event loop.
+// WORKAROUND for platforms where native KeyRepeatEvent is not delivered
+// reliably (Linux GTK embedder missing repaint, iOS/macOS physical
+// keyboard not generating repeat events).
 //
-// Fix: on Linux, native KeyRepeatEvent for arrow keys is ignored entirely,
-// and repetition is instead driven by a Dart Timer.periodic, which runs
-// outside the autorepeat event delivery and triggers normal frame
-// scheduling correctly.
+// On Linux: during native autorepeat, KeyRepeatEvent is delivered but the
+// visual repaint of the selection highlight does not occur until the key is
+// released. The compositor vsync appears to be starved by the synchronous
+// autorepeat event loop.
 //
-// On other platforms (macOS, Windows, Web, Android, iOS) this class is
-// inert: native KeyRepeatEvent is left untouched and handled as before.
+// On iOS/macOS with physical keyboard: KeyRepeatEvent is not generated at
+// all by the embedder, so holding a key only fires once.
 //
-// Remove this workaround if/when the upstream Flutter/Linux embedder issue
-// is fixed.
+// Fix: on Linux, iOS and macOS, native KeyRepeatEvent is ignored entirely
+// for supported keys, and repetition is instead driven by a Dart Timer +
+// Ticker, which runs outside the autorepeat event delivery and triggers
+// normal frame scheduling correctly.
+//
+// On other platforms (Windows, Web, Android) this class is inert: native
+// KeyRepeatEvent is left untouched and handled as before.
+//
+// Remove this workaround if/when the upstream Flutter embedder issues are
+// fixed.
 
 import 'dart:async';
 import 'dart:io' show Platform;
@@ -34,7 +37,7 @@ class ArrowKeyRepeater {
 
   final ArrowKeyHandler _onRepeat;
 
-  static final bool _active = !kIsWeb && Platform.isLinux;
+  static final bool _active = !kIsWeb && (Platform.isLinux || Platform.isMacOS || Platform.isIOS);
 
   /// Whether this workaround is active on the current platform.
   /// When false, native KeyRepeatEvent should be handled normally.
@@ -47,11 +50,14 @@ class ArrowKeyRepeater {
 
   static const Duration _initialDelay = Duration(milliseconds: 250);
 
-  bool isArrowKey(LogicalKeyboardKey key) {
+  bool supportsRepeat(LogicalKeyboardKey key) {
     return key == LogicalKeyboardKey.arrowLeft ||
         key == LogicalKeyboardKey.arrowRight ||
         key == LogicalKeyboardKey.arrowUp ||
-        key == LogicalKeyboardKey.arrowDown;
+        key == LogicalKeyboardKey.arrowDown ||
+        key == LogicalKeyboardKey.backspace ||
+        key == LogicalKeyboardKey.delete ||
+        key == LogicalKeyboardKey.keyZ;
   }
 
   /// Starts manual repetition for [event].

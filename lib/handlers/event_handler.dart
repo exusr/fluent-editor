@@ -217,7 +217,7 @@ class EventHandler {
       }
       if (event is KeyUpEvent) {
         updateModifiers(event);
-        if (_arrowRepeater.isActive && _arrowRepeater.isArrowKey(event.logicalKey)) {
+        if (_arrowRepeater.isActive && _arrowRepeater.supportsRepeat(event.logicalKey)) {
           _arrowRepeater.stop();
         }
       }
@@ -226,7 +226,7 @@ class EventHandler {
         // On Linux, arrow key native autorepeat is ignored: repetition is
         // driven manually by ArrowKeyRepeater instead, to work around
         // missing repaint during OS-level key autorepeat.
-        if (_arrowRepeater.isActive && _arrowRepeater.isArrowKey(event.logicalKey)) {
+        if (_arrowRepeater.isActive && _arrowRepeater.supportsRepeat(event.logicalKey)) {
           return;
         }
       }
@@ -235,7 +235,7 @@ class EventHandler {
       }
       if (event is KeyDownEvent &&
           _arrowRepeater.isActive &&
-          _arrowRepeater.isArrowKey(event.logicalKey)) {
+          _arrowRepeater.supportsRepeat(event.logicalKey)) {
         this.document = document;
         _arrowRepeater.start(event, fast: isShiftPressed);
       }
