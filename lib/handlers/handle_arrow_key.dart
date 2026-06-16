@@ -61,6 +61,46 @@ bool executeHandleArrowKey(
   late final NavigationResult result;
   late final bool isVertical;
 
+  // When there's an active selection and shift is not pressed, arrow keys
+  // should collapse the selection to the appropriate edge rather than
+  // moving from the anchor position.
+  if (!shift && !cursor.isCollapsed) {
+    final anchorIdx = findStopIndex(stops, cursor.anchorId, cursor.anchorOffset);
+    final focusIdx = findStopIndex(stops, cursor.focusId, cursor.focusOffset);
+
+    if (anchorIdx >= 0 && focusIdx >= 0) {
+      final start = anchorIdx <= focusIdx
+          ? CaretStop(cursor.anchorId, cursor.anchorOffset)
+          : CaretStop(cursor.focusId, cursor.focusOffset);
+      final end = anchorIdx <= focusIdx
+          ? CaretStop(cursor.focusId, cursor.focusOffset)
+          : CaretStop(cursor.anchorId, cursor.anchorOffset);
+
+      if (key == LogicalKeyboardKey.arrowLeft ||
+          key == LogicalKeyboardKey.arrowUp) {
+        cursor.batchUpdate(() {
+          cursor.moveTo(start.fragmentId, start.offset);
+        });
+        document.syncPendingFontWithCursor();
+        document.selectionManager.collapse();
+        _syncSelectionManager(document);
+        document.cursorOnlyUpdate();
+        return true;
+      }
+      if (key == LogicalKeyboardKey.arrowRight ||
+          key == LogicalKeyboardKey.arrowDown) {
+        cursor.batchUpdate(() {
+          cursor.moveTo(end.fragmentId, end.offset);
+        });
+        document.syncPendingFontWithCursor();
+        document.selectionManager.collapse();
+        _syncSelectionManager(document);
+        document.cursorOnlyUpdate();
+        return true;
+      }
+    }
+  }
+
   final swWord = Stopwatch()..start();
   if (key == LogicalKeyboardKey.arrowLeft) {
     final swMove = Stopwatch()..start();

@@ -1204,6 +1204,14 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
       LogicalKeyboardKey.pageDown,
     };
 
+    // When our editor FocusNode already has focus, the Focus widget's
+    // onKeyEvent handles navigation keys. The global HardwareKeyboard
+    // handler only needs to intercept when the platform text input
+    // owns focus (e.g. during IME composition).
+    if (doc.editorFocusNode.hasFocus && navKeys.contains(key)) {
+      return false;
+    }
+
     // During active IME composition, suppress everything except non-destructive
     // navigation and shortcuts so the IME receives normal character keys,
     // backspace, delete and enter.
