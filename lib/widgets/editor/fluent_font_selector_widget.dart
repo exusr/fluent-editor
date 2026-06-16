@@ -28,6 +28,37 @@ const _fallbackFonts = <String>[
   'Verdana',
 ];
 
+/// Curated list of popular Google Fonts for web.
+/// These fonts are bundled locally in assets/google_fonts/.
+/// To add more fonts, place .ttf files in that directory and update this list.
+const _googleFontsForWeb = <String>[
+  'Crimson Text',
+  'Fira Sans',
+  'Inter',
+  'Lato',
+  'Libre Baskerville',
+  'Literata',
+  'Lora',
+  'Merriweather',
+  'Montserrat',
+  'Noto Sans',
+  'Noto Serif',
+  'Nunito',
+  'Open Sans',
+  'Oswald',
+  'PT Sans',
+  'Playfair Display',
+  'Poppins',
+  'Quicksand',
+  'Raleway',
+  'Roboto',
+  'Roboto Slab',
+  'Source Sans Pro',
+  'Titillium Web',
+  'Ubuntu',
+  'Work Sans',
+];
+
 // ─── Font names to exclude (symbols, icons, internal system fonts) ──────
 
 /// Fonts to always exclude, regardless of platform.
@@ -77,13 +108,21 @@ final _nonLatinNamePatterns = <RegExp>[
 
 // ─── Font retrieval by platform ───────────────────────────────────────────
 
+/// Returns the list of Google Fonts bundled locally for web.
+/// These fonts are registered in pubspec.yaml and loaded from
+/// assets/google_fonts/ without network requests.
+List<String> _getWebFonts() {
+  // Return the curated list directly - fonts are registered in pubspec.yaml
+  return _googleFontsForWeb;
+}
+
 /// Retrieves available font families on the current system.
 /// Returns an ordered, deduplicated, and filtered list.
 Future<List<String>> getSystemFonts() async {
   List<String> raw;
 
   if (kIsWeb) {
-    return _fallbackFonts;
+    return _getWebFonts();
   } else if (Platform.isAndroid || Platform.isIOS) {
     raw = await _getMobileFonts();
   } else if (Platform.isLinux) {
@@ -304,6 +343,13 @@ class _FluentFontSelectorWidgetState extends State<FluentFontSelectorWidget> {
   String _currentFont = 'Arial';
   List<String> _availableFonts = _fallbackFonts;
 
+  _FluentFontSelectorWidgetState() {
+    if (kIsWeb) {
+      _currentFont = 'Roboto';
+      _availableFonts = _googleFontsForWeb;
+    }
+  }
+
   @override
   void initState() {
     super.initState();
@@ -420,17 +466,21 @@ class _FluentFontSelectorWidgetState extends State<FluentFontSelectorWidget> {
                 color: colorScheme.onSurface,
               ),
               selectedItemBuilder: (context) {
+                // Use TextStyle with fontFamily to avoid network requests
+                // Fonts are loaded from local assets/google_fonts/
                 return _availableFonts.map((font) {
                   return Center(
                     child: Text(
                       _currentFont,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontSize: 13),
+                      style: TextStyle(fontFamily: _currentFont, fontSize: 13),
                     ),
                   );
                 }).toList();
               },
               items: _availableFonts.map((String font) {
+                // Use TextStyle with fontFamily to avoid network requests
+                // Fonts are loaded from local assets/google_fonts/
                 return DropdownMenuItem<String>(
                   value: font,
                   child: Text(

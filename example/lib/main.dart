@@ -1,12 +1,57 @@
 import 'dart:convert';
-
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:fluent_editor/fluent_editor.dart';
 import 'package:fluent_editor/fluent_document.dart';
 
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  
+  // Load bundled Google Fonts on web platform
+  if (kIsWeb) {
+    await _loadBundledFonts();
+  }
+  
   runApp(const MyApp());
+}
+
+/// Loads bundled Google Fonts from local assets.
+/// On Flutter Web, this ensures fonts are available before the app starts.
+Future<void> _loadBundledFonts() async {
+  const bundledFonts = [
+    'Crimson Text', 'Fira Sans', 'Inter', 'Lato', 'Libre Baskerville',
+    'Literata', 'Lora', 'Merriweather', 'Montserrat', 'Noto Sans',
+    'Noto Serif', 'Nunito', 'Open Sans', 'Oswald', 'PT Sans',
+    'Playfair Display', 'Poppins', 'Quicksand', 'Raleway', 'Roboto',
+    'Roboto Slab', 'Source Sans Pro', 'Titillium Web', 'Ubuntu', 'Work Sans',
+  ];
+  
+  for (final fontName in bundledFonts) {
+    final fontLoader = FontLoader(fontName);
+    final fileName = fontName.replaceAll(' ', '');
+    var loadedAny = false;
+    
+    for (final suffix in ['-Regular.ttf', '-Italic.ttf', '-Bold.ttf', '-BoldItalic.ttf']) {
+      try {
+        final fontData = await rootBundle.load(
+          'packages/fluent_editor/assets/google_fonts/$fileName$suffix',
+        );
+        fontLoader.addFont(Future.value(fontData));
+        loadedAny = true;
+      } catch (_) {
+        // Variant not available, skip
+      }
+    }
+    
+    if (loadedAny) {
+      try {
+        await fontLoader.load();
+      } catch (_) {
+        // Font loading failed, will fall back to default
+      }
+    }
+  }
 }
 
 class MyApp extends StatefulWidget {

@@ -709,8 +709,10 @@ class RenderFluentParagraph extends RenderFluentNode
               );
             }
           }
+          final fontFamily = _getEffectiveFontFamily(fragment);
+          // Use fontFamily directly - fonts are bundled locally in assets/google_fonts/
           effectiveStyle = (effectiveStyle ?? const TextStyle()).copyWith(
-            fontFamily: _getEffectiveFontFamily(fragment),
+            fontFamily: fontFamily,
             fontSize: _getEffectiveFontSize(fragment),
             color: ColorUtils.parseColor(fragment.color),
             backgroundColor: ColorUtils.parseColor(fragment.highlightColor),
