@@ -1,9 +1,11 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:fluent_editor/fluent_document.dart';
 import 'package:fluent_editor/handlers/handle_insert_character.dart';
 import 'package:fluent_editor/handlers/handle_replace_selection.dart';
 import 'package:fluent_editor/handlers/handle_enter.dart';
+import 'package:fluent_editor/handlers/handle_backspace.dart';
 
 /// Singleton IME handler that implements [TextInputClient] for Flutter's
 /// system text input channel. Preedit text is kept isolated from the document
@@ -15,6 +17,14 @@ class FluentTextInputHandler with DeltaTextInputClient {
 
   TextInputConnection? _connection;
   FluentDocument? _document;
+
+  /// iOS is the only platform where the on-screen keyboard backspace does not
+  /// surface as a hardware KeyEvent and does not reliably emit deletion deltas
+  /// against an empty buffer. The dummy-string workaround is therefore scoped
+  /// to iOS only, so desktop (which deletes via EventHandler/KeyEvent) and
+  /// Android (which emits proper deltas) are left untouched.
+  bool get _useDummyStringWorkaround =>
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS;
 
   /// Current preedit text displayed to the user but not yet committed.
   String _preeditText = '';
@@ -80,6 +90,13 @@ class FluentTextInputHandler with DeltaTextInputClient {
         inputType: TextInputType.multiline,
         textCapitalization: TextCapitalization.sentences,
         inputAction: TextInputAction.newline,
+        // Required for updateEditingValueWithDeltas to actually be called.
+        // Without this, the platform sends only full TextEditingValue
+        // snapshots via updateEditingValue, which is ambiguous for
+        // detecting deletions against an intentionally-empty local buffer
+        // (a backspace with no composition active would be indistinguishable
+        // from "no change": both report text: '').
+        enableDeltaModel: true,
       ),
     );
     // Initialise the IME with an EMPTY buffer (not whatever stale preedit
@@ -97,11 +114,25 @@ class FluentTextInputHandler with DeltaTextInputClient {
 
   @override
   TextEditingValue? get currentTextEditingValue {
-    return TextEditingValue(
-      text: _preeditText,
-      selection: TextSelection.collapsed(offset: _preeditText.length),
-      composing: _composingRange,
-    );
+    if (_isComposing) {
+      return TextEditingValue(
+        text: _preeditText,
+        selection: TextSelection.collapsed(offset: _preeditText.length),
+        composing: _composingRange,
+      );
+    }
+    // iOS dummy string workaround: keep a single space in the IME buffer
+    // when not composing so the on-screen keyboard always has something to
+    // delete, allowing backspace to surface as a deletion delta.
+    if (_useDummyStringWorkaround) {
+      return const TextEditingValue(
+        text: ' ',
+        selection: TextSelection.collapsed(offset: 1),
+        composing: TextRange.empty,
+      );
+    }
+    // Other platforms keep an empty buffer (backspace handled via KeyEvent).
+    return const TextEditingValue();
   }
 
   @override
@@ -109,7 +140,73 @@ class FluentTextInputHandler with DeltaTextInputClient {
     if (_updatingSelf) return;
     if (_document == null) return;
 
-    // Reconstruct the final TextEditingValue by applying deltas sequentially.
+    // Our local buffer (currentTextEditingValue) is intentionally kept
+    // EMPTY whenever there is no active composition — we apply finalized
+    // text directly to the document and reset the platform buffer
+    // immediately after. This means a pure deletion delta (backspace with
+    // no composition in progress) always computes as "delete from an empty
+    // string", which produces no visible text change and was silently
+    // swallowed by updateEditingValue's "new composition" branch.
+    //
+    // Deletion deltas must be handled explicitly here, before trying to
+    // reconstruct a TextEditingValue from a buffer that doesn't represent
+    // real document content.
+    //
+    // PLATFORM QUIRK (iOS): UIKit's text input system does not reliably
+    // emit TextEditingDeltaDeletion for a plain Backspace the way Android's
+    // IME does. A single backspace on iOS very often arrives as a
+    // TextEditingDeltaReplacement with an empty replacementText covering
+    // the range to remove (effectively "replace these N characters with
+    // nothing"), sometimes even when there is no real "replacement"
+    // happening from the user's perspective. If we only special-case
+    // TextEditingDeltaDeletion, backspace silently does nothing on iOS once
+    // text has been committed, while insertion (which always arrives as a
+    // proper TextEditingDeltaInsertion) keeps working — exactly the
+    // reported symptom. We treat any TextEditingDeltaReplacement whose
+    // replacementText is empty as a deletion too.
+    //
+    // iOS: when not composing we keep a dummy " " in the IME buffer so the
+    // platform always has something to delete. A backspace on already
+    // committed document text arrives here as a TextEditingDeltaDeletion
+    // (or an empty TextEditingDeltaReplacement) that removes the dummy
+    // space. Because iOS does NOT emit a hardware KeyEvent for the virtual
+    // keyboard, we MUST apply the deletion to the real document here and
+    // then re-arm the dummy string for the next backspace.
+    if (!_isComposing) {
+      final doc = _document!;
+      for (final delta in deltas) {
+        if (delta is TextEditingDeltaDeletion ||
+            (delta is TextEditingDeltaReplacement &&
+                delta.replacementText.isEmpty)) {
+          // Deletion of the dummy buffer => backspace on the document.
+          // Only on iOS: other platforms delete via KeyEvent/EventHandler,
+          // so applying it here too would double-delete.
+          if (_useDummyStringWorkaround) {
+            doc.saveState(description: 'Backspace', forceNewAction: false);
+            executeHandleBackspace(doc);
+            _resetToDummyString();
+          }
+          return;
+        } else if (delta is TextEditingDeltaNonTextUpdate) {
+          // Selection/composing-only update with no text change: ignore.
+          continue;
+        } else {
+          // Insertion or non-empty replacement delta with no active
+          // composition: fall through to the normal value-based path below
+          // for this and any remaining deltas.
+          TextEditingValue value = currentTextEditingValue ?? const TextEditingValue();
+          for (final d in deltas) {
+            value = d.apply(value);
+          }
+          updateEditingValue(value);
+          return;
+        }
+      }
+      return;
+    }
+
+    // Composition active: reconstruct the final TextEditingValue by
+    // applying deltas sequentially against our preedit buffer, as before.
     TextEditingValue value = currentTextEditingValue ?? const TextEditingValue();
     for (final delta in deltas) {
       value = delta.apply(value);
@@ -125,58 +222,75 @@ class FluentTextInputHandler with DeltaTextInputClient {
     final doc = _document!;
     final cursor = doc.cursor;
 
+    // ─── iOS Dummy String Workaround ───────────────────────────────
+    if (_useDummyStringWorkaround) {
+      // Resting state: the dummy " " sitting in the buffer. Nothing to do.
+      if (value.text == ' ' && !value.composing.isValid) {
+        return;
+      }
+
+      // Backspace consumed the dummy " " (or the document is already empty)
+      // with no active composition => delete one character from the document
+      // and re-arm the dummy buffer for the next backspace.
+      if (value.text.isEmpty && !_isComposing) {
+        doc.saveState(description: 'Backspace', forceNewAction: false);
+        executeHandleBackspace(doc);
+        _resetToDummyString();
+        return;
+      }
+    }
+
     // ─── Active composition handling ────────────────────────────────
     if (_isComposing) {
       if (value.composing.isValid) {
-        // Still composing: just update the preedit underline. This is the
-        // common case while Gboard/iOS keep revising the candidate text.
+        // Composition shrank (backspace inside the preedit on iOS).
+        if (value.text.isEmpty) {
+          // Preedit fully erased. The preedit lives isolated from the
+          // document, so cancelling it removes exactly the characters the
+          // user typed — we must NOT also backspace the document, otherwise
+          // the committed character before the preedit gets deleted too.
+          _cancelPreedit();
+          _resetToDummyString();
+          return;
+        }
+        // Still has preedit content: just shrink the underline.
         _preeditText = value.text;
         _composingRange = value.composing;
         _invalidatePreeditRender();
         return;
       }
 
-      // composing became invalid. This does NOT always mean "the user
-      // confirmed the word" — many IMEs (Gboard in particular, with
-      // autocorrect/suggestions enabled) emit one or more intermediate
-      // updates where `composing` is temporarily empty/invalid even though
-      // the user is still mid-word and suggestions are still showing.
-      //
-      // composing became invalid while we were composing -> this is a
-      // genuine commit (or cancel if the text was deleted to empty).
+      // Composing became invalid (text confirmed / space pressed).
+      if (value.text == _preeditText) {
+        // Spurious echo, keep composing
+        return;
+      }
+
       if (value.text.isEmpty) {
+        // Preedit became empty - the last preedit character was erased.
+        // Only cancel the preedit; do NOT backspace the document (the
+        // preedit was never committed, so there is nothing extra to delete).
         _cancelPreedit();
+        _resetToDummyString();
         return;
       }
 
       _commitPreedit(value.text);
+      _resetToDummyString();
       return;
     }
 
     // ─── New composition start ────────────────────────────────────
-    // Only treat this as the start of a *composition* (i.e. preedit that
-    // must be isolated from the document) when the platform actually marks
-    // a composing range. If the IME sends already-finalized text with no
-    // composing range (e.g. a single committed keystroke, or a suggestion
-    // tapped without ever showing an underline), insert it directly instead
-    // of parking it in the preedit buffer — otherwise it sits there
-    // displayed-but-uncommitted until some later, unrelated event flushes
-    // it, which is exactly the "text appears before it's confirmed" bug.
     if (value.text.isEmpty) return;
 
     if (!value.composing.isValid) {
+      // Caso 4: Testo confermato senza composizione
       _insertFinalizedText(value.text);
+      _resetToDummyString();
       return;
     }
 
-    // If the user had an active selection when composition started (e.g.
-    // selected a word and started typing over it via the IME), that
-    // selection must be deleted NOW, while we still know about it. Once we
-    // call selectionManager.clear() below, the selection highlight is gone
-    // from SelectionManager's state but the *document* still contains the
-    // old selected text — clear() only clears the highlight, it does not
-    // delete content. If we don't delete it here, the committed IME text
-    // will be inserted next to the old text instead of replacing it.
+    // Start new composition
     if (!cursor.isCollapsed) {
       doc.saveState(description: 'Replace selection', forceNewAction: false);
       executeHandleReplaceSelection('', doc);
@@ -192,6 +306,25 @@ class FluentTextInputHandler with DeltaTextInputClient {
     _preeditText = value.text;
     _composingRange = value.composing;
     _invalidatePreeditRender();
+  }
+
+  /// Re-arm the platform IME buffer after applying text to the document.
+  /// On iOS this installs the dummy " " so the next backspace produces a
+  /// deletion delta; on every other platform it resets to an empty buffer
+  /// (the long-standing behavior, backspace handled via KeyEvent).
+  void _resetToDummyString() {
+    if (_connection == null || !_connection!.attached) return;
+    _updatingSelf = true;
+    _connection!.setEditingState(
+      _useDummyStringWorkaround
+          ? const TextEditingValue(
+              text: ' ',
+              selection: TextSelection.collapsed(offset: 1),
+              composing: TextRange.empty,
+            )
+          : const TextEditingValue(),
+    );
+    _updatingSelf = false;
   }
 
   @override
@@ -217,6 +350,16 @@ class FluentTextInputHandler with DeltaTextInputClient {
   @override
   void performPrivateCommand(String action, Map<String, dynamic> data) {
     // No-op for now.
+  }
+
+  @override
+  bool onFocusReceived() {
+    // Returning false keeps the platform's default behavior (it will still
+    // proceed to show the keyboard via showKeyboard()/show() as we already
+    // drive that ourselves). We don't need custom focus-acquisition logic
+    // here, but the override is mandatory on Flutter versions where
+    // TextInputClient declares it without a default mixin implementation.
+    return false;
   }
 
   @override

@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:fluent_editor/controllers/document_language_controller.dart';
 import 'package:fluent_editor/comments/comment_provider.dart';
 import 'package:fluent_editor/spell_check/spell_check_provider.dart';
@@ -12,8 +14,6 @@ import 'package:fluent_editor/utils/cursor_utils.dart';
 import 'package:fluent_editor/utils/node_operations.dart';
 import 'package:fluent_editor/utils/editor_utils.dart';
 import 'package:fluent_editor/widgets/editor/fluent_toolbar_widget.dart';
-import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:fluent_editor/widgets/nodes/virtualized_selectable_area.dart';
 import 'package:fluent_editor/factories.dart';
 import 'package:fluent_editor/handlers/event_handler.dart';
@@ -960,7 +960,6 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
   bool _showStatsPanel = false;
   bool _isSidebarCollapsed = false;
   bool _pendingScrollToCursor = false;
-  final FocusNode _focusNode = FocusNode();
   final ScrollController _scrollController = ScrollController();
   final GlobalKey _contentStackKey = GlobalKey();
   // REMOVED: _scrollViewKey - no longer needed with virtualization
@@ -1018,6 +1017,31 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
       focusNode: widget.document.editorFocusNode,
       autofocus: true,
       onKeyEvent: (node, event) {
+        // During IME composition, suppress most key events to let IME handle them
+        if (widget.document.imeHandler.isComposing) {
+          // Allow only non-destructive navigation and shortcuts
+          final key = event.logicalKey;
+          final isCtrl = HardwareKeyboard.instance.isControlPressed;
+          final isMeta = HardwareKeyboard.instance.isMetaPressed;
+          final nonDestructiveNavKeys = {
+            LogicalKeyboardKey.arrowLeft,
+            LogicalKeyboardKey.arrowRight,
+            LogicalKeyboardKey.arrowUp,
+            LogicalKeyboardKey.arrowDown,
+          };
+
+          if (nonDestructiveNavKeys.contains(key)) {
+            widget.document.manageEvent(event);
+            return KeyEventResult.handled;
+          }
+          if (isCtrl || isMeta) {
+            widget.document.manageEvent(event);
+            return KeyEventResult.handled;
+          }
+          return KeyEventResult.ignored;
+        }
+
+        // When not composing, let backspace/delete be handled by standard key event handler
         widget.document.manageEvent(event);
         return KeyEventResult.handled;
       },
@@ -1153,14 +1177,14 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
     final key = event.logicalKey;
 
     // Navigation keys are always routed through the editor.
+    // Note: backspace and delete are excluded here to avoid double-handling
+    // since they're also handled by the Focus widget's onKeyEvent.
     final navKeys = {
       LogicalKeyboardKey.arrowLeft,
       LogicalKeyboardKey.arrowRight,
       LogicalKeyboardKey.arrowUp,
       LogicalKeyboardKey.arrowDown,
       LogicalKeyboardKey.enter,
-      LogicalKeyboardKey.backspace,
-      LogicalKeyboardKey.delete,
       LogicalKeyboardKey.tab,
       LogicalKeyboardKey.home,
       LogicalKeyboardKey.end,
@@ -1332,10 +1356,7 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
     widget.document.editorFocusNode.removeListener(_onEditorFocusChanged);
     DocumentLanguageController.instance.currentLanguage
         .removeListener(_onLanguageChanged);
-    _scrollController.dispose();
-    _focusNode.dispose();
     HardwareKeyboard.instance.removeHandler(_onHardwareKeyEvent);
-    widget.document.imeHandler.detachInput();
     super.dispose();
   }
 
@@ -1468,7 +1489,7 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
   int _countChars() {
     int count = 0;
     final root = widget.document.content;
-    
+
     void visit(FNode node) {
       if (node is Fragment) {
         count += node.text.length;
@@ -1482,7 +1503,7 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
         }
       }
     }
-    
+
     visit(root);
     return count;
   }

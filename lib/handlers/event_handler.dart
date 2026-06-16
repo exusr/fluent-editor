@@ -266,9 +266,9 @@ class EventHandler {
 
       if (document.cursor.isCollapsed) {
         executeHandleInsertCharacter(character, document);
-        return true;
+      } else {
+        executeHandleReplaceSelection(character, document);
       }
-      executeHandleReplaceSelection(character, document);
       return true;
     }
     return false;
