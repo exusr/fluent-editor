@@ -239,6 +239,23 @@ class FluentTextInputHandler with DeltaTextInputClient {
   @override
   TextEditingValue? get currentTextEditingValue {
     if (_isComposing) {
+      // On buffer-sync platforms the IME computes deltas against the full
+      // fragment text. Return the reconstructed full buffer so delta
+      // application stays consistent and avoids random duplication.
+      if (_shouldSyncBuffer) {
+        final fragText = _getCurrentFragmentText() ?? '';
+        final start = _preeditLocalOffset.clamp(0, fragText.length);
+        final text = fragText.substring(0, start) + _preeditText + fragText.substring(start);
+        final composingStart = start;
+        final composingEnd = start + _preeditText.length;
+        return TextEditingValue(
+          text: text,
+          selection: TextSelection.collapsed(
+            offset: composingStart + _preeditCaretOffset.clamp(0, _preeditText.length),
+          ),
+          composing: TextRange(start: composingStart, end: composingEnd),
+        );
+      }
       return TextEditingValue(
         text: _preeditText,
         selection: TextSelection.collapsed(offset: _preeditText.length),

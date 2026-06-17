@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -21,6 +22,35 @@ void main() {
 
     tearDown(() {
       handler.detachInput();
+    });
+
+    test('currentTextEditingValue returns full buffer during composition on iOS', () {
+      final para = doc.content.nodes.first as Paragraph;
+      final frag = para.fragments.first as Fragment;
+      doc.cursor.moveTo(frag.id, 5);
+
+      // Simulate iOS buffer-sync platform.
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      addTearDown(() => debugDefaultTargetPlatformOverride = null);
+
+      // Start composition: the full buffer the IME sees is "Hello aworld"
+      // with composing range (6, 7) around the preedit 'a'.
+      handler.updateEditingValue(
+        const TextEditingValue(
+          text: 'Hello aworld',
+          composing: TextRange(start: 6, end: 7),
+        ),
+      );
+
+      expect(handler.isComposing, isTrue);
+      expect(handler.preeditText, 'a');
+
+      // currentTextEditingValue must return the full buffer so that
+      // subsequent deltas from the IME are applied to a consistent base.
+      final value = handler.currentTextEditingValue!;
+      expect(value.text, 'Hello aworld');
+      expect(value.composing, const TextRange(start: 6, end: 7));
+      expect(value.selection, const TextSelection.collapsed(offset: 7));
     });
 
     test('IME preedit single character', () {
