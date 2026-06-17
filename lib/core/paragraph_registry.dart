@@ -133,6 +133,23 @@ class ParagraphRegistry {
     return 0.0;
   }
 
+  /// Returns the global screen [Rect] of the caret for [fragmentId]/[offset].
+  /// Returns null if the fragment's render object is not currently in the tree.
+  Rect? resolveCaretScreenRect(String fragmentId, int offset) {
+    for (final id in _visibleContainerIds) {
+      final render = _renders[id];
+      if (render != null) {
+        final rect = render.getCaretScreenRect(fragmentId, offset);
+        if (rect != null) return rect;
+      }
+    }
+    for (final render in _renders.values) {
+      final rect = render.getCaretScreenRect(fragmentId, offset);
+      if (rect != null) return rect;
+    }
+    return null;
+  }
+
   /// Finds the rendered paragraph whose global bounds vertically contain
   /// [globalY]; if none contains it, returns the vertically nearest one.
   ///

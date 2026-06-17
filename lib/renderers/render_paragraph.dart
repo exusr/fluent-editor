@@ -489,6 +489,75 @@ class RenderFluentParagraph extends RenderFluentNode
   }
 
 
+  /// Returns a [Rect] in global screen coordinates representing the caret line
+  /// at [fragmentId]/[localOffset]. Used to position the IME candidate window
+  /// on macOS (via [TextInputConnection.setCaretRect]).
+  /// Returns null if the fragment is not in this paragraph.
+  Rect? getCaretScreenRect(String fragmentId, int localOffset) {
+    final globalOffset = _localToGlobal(fragmentId, localOffset);
+    if (globalOffset == null) return null;
+    return _screenRectForPainterOffset(globalOffset);
+  }
+
+  /// Returns the caret [Rect] (global screen coords) for a caret sitting
+  /// [caretOffsetInPreedit] characters into the active IME preedit. The
+  /// preedit is injected into [_painter] but not into [_fragmentPositions],
+  /// so the painter offset is the preedit-start global offset plus the
+  /// in-preedit caret offset. Lets the candidate window follow the caret.
+  Rect? getImePreeditCaretScreenRect(int caretOffsetInPreedit) {
+    if (_imePreeditFragmentId.isEmpty) return null;
+    final base = _localToGlobal(_imePreeditFragmentId, _imePreeditLocalOffset);
+    if (base == null) return null;
+    return _screenRectForPainterOffset(base + caretOffsetInPreedit);
+  }
+
+  /// Shared: caret line [Rect] in global screen coords for a painter offset.
+  Rect? _screenRectForPainterOffset(int globalOffset) {
+    TextBox? charBox;
+    final textLength = _painter.text?.toPlainText().length ?? 0;
+    if (globalOffset > 0 && globalOffset <= textLength) {
+      final boxes = _painter.getBoxesForSelection(
+        TextSelection(baseOffset: globalOffset - 1, extentOffset: globalOffset),
+      );
+      if (boxes.isNotEmpty) charBox = boxes.first;
+    } else if (globalOffset == 0 && textLength > 0) {
+      final boxes = _painter.getBoxesForSelection(
+        TextSelection(baseOffset: 0, extentOffset: 1),
+      );
+      if (boxes.isNotEmpty) charBox = boxes.first;
+    }
+
+    if (charBox != null) {
+      if (_lineMetricsDirty || _cachedLineMetrics == null) {
+        _cachedLineMetrics = _painter.computeLineMetrics();
+        _lineMetricsDirty = false;
+      }
+      for (final lm in _cachedLineMetrics!) {
+        if (lm.baseline >= charBox.top && lm.baseline <= charBox.bottom) {
+          final topLocal = lm.baseline - lm.ascent;
+          final topGlobal = localToGlobal(Offset(charBox.left + _alignmentXOffset, topLocal));
+          final x = globalOffset == 0 ? charBox.left : charBox.right;
+          return Rect.fromLTWH(
+            localToGlobal(Offset(x + _alignmentXOffset, 0)).dx,
+            topGlobal.dy,
+            1.0,
+            lm.ascent + lm.descent,
+          );
+        }
+      }
+      // Fallback: use charBox bounds
+      final tl = localToGlobal(Offset(charBox.left + _alignmentXOffset, charBox.top));
+      return Rect.fromLTWH(tl.dx, tl.dy, 1.0, charBox.bottom - charBox.top);
+    }
+
+    // Empty paragraph fallback
+    final caretOffset = _painter.getOffsetForCaret(
+      TextPosition(offset: globalOffset), Rect.zero);
+    final globalPt = localToGlobal(Offset(caretOffset.dx + _alignmentXOffset, caretOffset.dy));
+    final lineH = _painter.preferredLineHeight;
+    return Rect.fromLTWH(globalPt.dx, globalPt.dy, 1.0, lineH);
+  }
+
   /// Returns true if this paragraph contains the given fragment.
   bool containsFragment(String fragmentId) =>
       _fragmentPositions.any((p) => p.id == fragmentId);

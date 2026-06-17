@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:fluent_editor/controllers/document_language_controller.dart';
@@ -1012,31 +1013,46 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
       focusNode: widget.document.editorFocusNode,
       autofocus: true,
       onKeyEvent: (node, event) {
-        // During IME composition, suppress most key events to let IME handle them
+        // During IME composition, let the IME handle navigation and character
+        // keys. Arrow keys are routed to the IME (KeyEventResult.ignored) so
+        // the user can navigate within the marked text to edit portions of the
+        // composition (native macOS behavior). Only Ctrl/Meta shortcuts are
+        // intercepted by the editor.
         if (widget.document.imeHandler.isComposing) {
-          // Allow only non-destructive navigation and shortcuts
-          final key = event.logicalKey;
           final isCtrl = HardwareKeyboard.instance.isControlPressed;
           final isMeta = HardwareKeyboard.instance.isMetaPressed;
-          final nonDestructiveNavKeys = {
-            LogicalKeyboardKey.arrowLeft,
-            LogicalKeyboardKey.arrowRight,
-            LogicalKeyboardKey.arrowUp,
-            LogicalKeyboardKey.arrowDown,
-          };
-
-          if (nonDestructiveNavKeys.contains(key)) {
-            widget.document.manageEvent(event);
-            return KeyEventResult.handled;
-          }
           if (isCtrl || isMeta) {
             widget.document.manageEvent(event);
             return KeyEventResult.handled;
           }
+          // Everything else (arrows, chars, backspace, enter) goes to the IME.
           return KeyEventResult.ignored;
         }
 
-        // When not composing, let backspace/delete be handled by standard key event handler
+        // On desktop with an active TextInput connection, printable character
+        // keys must propagate to FlutterTextInputPlugin (secondary responder)
+        // so it calls interpretKeyEvents: on NSTextInputContext, activating the
+        // CJK candidate window. Returning ignored here does NOT prevent the
+        // character from being inserted — it arrives back via
+        // updateEditingValueWithDeltas → _insertFinalizedText.
+        // Backspace, Delete, Enter and all nav keys are handled directly here.
+        final _isDesktop = !kIsWeb && (
+          defaultTargetPlatform == TargetPlatform.macOS ||
+          defaultTargetPlatform == TargetPlatform.windows ||
+          defaultTargetPlatform == TargetPlatform.linux);
+        if (_isDesktop && widget.document.imeHandler.isConnectionActive) {
+          final _isCtrl = HardwareKeyboard.instance.isControlPressed;
+          final _isMeta = HardwareKeyboard.instance.isMetaPressed;
+          if (!_isCtrl && !_isMeta) {
+            final _ch = event.character;
+            final _isPrintable = _ch != null &&
+                _ch.isNotEmpty &&
+                _ch.runes.every((r) => r >= 32 && r != 127);
+            if (_isPrintable) return KeyEventResult.ignored;
+          }
+        }
+
+        // All non-printable events (nav, backspace, enter, shortcuts).
         widget.document.manageEvent(event);
         return KeyEventResult.handled;
       },
@@ -1072,7 +1088,34 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
 
   // REMOVED: _buildOriginalContent - no longer needed since virtualization is always used
 
+  /// Resolves the current caret screen rect and forwards it to the IME so
+  /// macOS can position the candidate window next to the cursor.
+  /// Uses two nested postFrameCallbacks: the first waits for the current frame
+  /// to complete (setState/layout), the second waits for the following paint so
+  /// the render object coordinates are guaranteed to be up-to-date.
+  void _updateImeCaretRect() {
+    final cursor = widget.document.cursor;
+    final fragId = cursor.focusId.isNotEmpty ? cursor.focusId : cursor.anchorId;
+    if (fragId.isEmpty) return;
+    final offset = cursor.focusId.isNotEmpty ? cursor.focusOffset : cursor.anchorOffset;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        final rect = widget.document.paragraphRegistry.resolveCaretScreenRect(fragId, offset);
+        if (rect != null && (rect.width > 0 || rect.height > 0)) {
+          final view = View.of(context);
+          final viewH = view.physicalSize.height / view.devicePixelRatio;
+          widget.document.imeHandler.setViewHeight(viewH);
+          widget.document.imeHandler.updateCaretRect(rect);
+        }
+      });
+    });
+  }
+
   void _onDocumentChanged() {
+    _updateImeCaretRect();
+
     if (widget.document.cursorOnlyChange) {
       // Cursor/selection-only change: the visible paragraphs already listen
       // to cursor/selectionManager and call their own setState. Avoid the
@@ -1112,7 +1155,9 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
     // Attach the IME handler on all platforms so system IME (CJK, emoji,
     // voice dictation, etc.) works everywhere.
     widget.document.imeHandler.attachInput(widget.document);
-    // Commit any pending preedit when the editor loses focus.
+    // Open/commit the IME connection with focus changes. On desktop
+    // showKeyboard() must be called when focus is gained so the platform
+    // activates the text input context (required for physical CJK keyboards).
     widget.document.editorFocusNode.addListener(_onEditorFocusChanged);
     // Register a global HardwareKeyboard handler so shortcuts and navigation
     // are intercepted even when the platform text input owns focus.
@@ -1133,6 +1178,11 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
       }
     }
     widget.document.saveState(description: 'Initial state', forceNewAction: true);
+    // Open the IME connection after the first frame so the OS registers
+    // an active text-input context for physical CJK keyboards.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      widget.document.imeHandler.showKeyboard();
+    });
     _initSpellCheck();
     DocumentLanguageController.instance.currentLanguage
         .addListener(_onLanguageChanged);
@@ -1160,7 +1210,11 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
   }
 
   void _onEditorFocusChanged() {
-    if (!widget.document.editorFocusNode.hasFocus) {
+    if (widget.document.editorFocusNode.hasFocus) {
+      // Activates NSTextInputContext on macOS (and the equivalent on other
+      // desktop platforms) so physical CJK keyboards show the IME panel.
+      widget.document.imeHandler.showKeyboard();
+    } else {
       widget.document.imeHandler.commitIfComposing();
     }
   }
@@ -1196,17 +1250,7 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
       LogicalKeyboardKey.pageDown,
     };
 
-    // Keys that are safe to route to the editor even during IME composition.
-    final nonDestructiveNavKeys = {
-      LogicalKeyboardKey.arrowLeft,
-      LogicalKeyboardKey.arrowRight,
-      LogicalKeyboardKey.arrowUp,
-      LogicalKeyboardKey.arrowDown,
-      LogicalKeyboardKey.home,
-      LogicalKeyboardKey.end,
-      LogicalKeyboardKey.pageUp,
-      LogicalKeyboardKey.pageDown,
-    };
+
 
     // When our editor FocusNode already has focus, the Focus widget's
     // onKeyEvent handles most keys. However, some OS-level shortcuts
@@ -1220,19 +1264,16 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
       return false;
     }
 
-    // During active IME composition, suppress everything except non-destructive
-    // navigation and shortcuts so the IME receives normal character keys,
-    // backspace, delete and enter.
+    // During active IME composition, let the IME consume everything (including
+    // arrow keys, so the user can navigate within the marked text to edit the
+    // composition — native macOS behavior). Only Ctrl/Meta shortcuts are
+    // intercepted by the editor.
     if (doc.imeHandler.isComposing) {
-      if (nonDestructiveNavKeys.contains(key)) {
-        doc.manageEvent(event);
-        return true;
-      }
       if (isCtrl || isMeta) {
         doc.manageEvent(event);
         return true;
       }
-      return false; // Let IME consume everything else
+      return false; // Let IME consume everything else (incl. arrows)
     }
 
     // Shortcut combos (Ctrl/Meta + key)
@@ -1246,8 +1287,12 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
       return true;
     }
 
-    // Normal character input: do NOT consume — let the IME channel handle it.
-    return false;
+    // Normal character input: prefer the IME channel (TextInput) so the platform
+    // can run interpretKeyEvents: / NSTextInputContext for CJK keyboards.
+    // Fall back to direct insertion only if the TextInput connection is not active.
+    if (doc.imeHandler.isConnectionActive) return false;
+    doc.manageEvent(event);
+    return true;
   }
 
   void _ensureCursorVisible() {

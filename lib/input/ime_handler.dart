@@ -35,6 +35,11 @@ class FluentTextInputHandler with DeltaTextInputClient {
   int _preeditLocalOffset = 0;
   String _preeditContainerId = '';
 
+  /// Caret position WITHIN the preedit/marked text (0.._preeditText.length).
+  /// Used to position the IME candidate window so it follows the caret as the
+  /// user types or navigates inside the composition.
+  int _preeditCaretOffset = 0;
+
   /// Whether a composition is currently active.
   bool _isComposing = false;
   bool get isComposing => _isComposing;
@@ -53,6 +58,44 @@ class FluentTextInputHandler with DeltaTextInputClient {
   /// a commit, to reset the IME's internal buffer) so that the resulting
   /// platform echo is not misinterpreted as new user input.
   bool _updatingSelf = false;
+
+  /// Whether the platform TextInput connection is currently open.
+  bool get isConnectionActive => _connection != null && _connection!.attached;
+
+  /// Last known caret rect (Flutter view logical coordinates).
+  Rect? _lastCaretRect;
+
+  /// Last known Flutter view height in logical pixels.
+  double? _lastViewHeight;
+
+  /// Call this whenever the Flutter view height is known (e.g. in
+  /// _updateImeCaretRect). Stores the height and re-sends the transform
+  /// so the macOS plugin can map caret rect → screen rect correctly.
+  ///
+  /// The macOS FlutterTextInputPlugin applies _editableTransform to the
+  /// caret rect before calling [fromView convertRect:toView:nil]. Without
+  /// a Y-flip the plugin treats Flutter's top-left Y as Cocoa's bottom-left Y,
+  /// Stores the Flutter view height and sends an explicit identity
+  /// transform to reset any previously-set (potentially corrupted)
+  /// _editableTransform in the macOS plugin.
+  void setViewHeight(double viewHeight) {
+    _lastViewHeight = viewHeight;
+    if (_connection == null || !_connection!.attached) return;
+    _connection!.setEditableSizeAndTransform(
+      const Size(9999, 9999),
+      Matrix4.identity(),
+    );
+  }
+
+  /// Updates the caret rectangle so the platform can position the IME
+  /// candidate window (e.g. NSTextInputContext on macOS) near the cursor.
+  /// [rect] must be in Flutter view logical pixel coordinates.
+  void updateCaretRect(Rect rect) {
+    _lastCaretRect = rect;
+    if (_connection == null || !_connection!.attached) return;
+    _connection!.setCaretRect(rect);
+    _connection!.setComposingRect(rect);
+  }
 
   /// Attaches the IME connection to the given document.
   void attachInput(FluentDocument document) {
@@ -74,6 +117,15 @@ class FluentTextInputHandler with DeltaTextInputClient {
       _attachConnection();
     }
     _connection?.show();
+    // Send transform then caret rect immediately after show() so macOS
+    // has everything it needs for firstRectForCharacterRange:.
+    final h = _lastViewHeight;
+    if (h != null) setViewHeight(h);
+    final rect = _lastCaretRect;
+    if (rect != null) {
+      _connection?.setCaretRect(rect);
+      _connection?.setComposingRect(rect);
+    }
   }
 
   /// Hides the keyboard.
@@ -256,6 +308,9 @@ class FluentTextInputHandler with DeltaTextInputClient {
         // Still has preedit content: just shrink the underline.
         _preeditText = value.text;
         _composingRange = value.composing;
+        _preeditCaretOffset = value.selection.isValid
+            ? value.selection.extentOffset.clamp(0, value.text.length)
+            : value.text.length;
         _invalidatePreeditRender();
         return;
       }
@@ -305,6 +360,9 @@ class FluentTextInputHandler with DeltaTextInputClient {
     doc.selectionManager.clear();
     _preeditText = value.text;
     _composingRange = value.composing;
+    _preeditCaretOffset = value.selection.isValid
+        ? value.selection.extentOffset.clamp(0, value.text.length)
+        : value.text.length;
     _invalidatePreeditRender();
   }
 
@@ -504,18 +562,34 @@ class FluentTextInputHandler with DeltaTextInputClient {
     _preeditFragmentId = '';
     _preeditLocalOffset = 0;
     _preeditContainerId = '';
+    _preeditCaretOffset = 0;
   }
 
   /// Invalidates paint on the paragraph render that hosts the preedit.
   void _invalidatePreeditRender() {
     if (_document == null || _preeditContainerId.isEmpty) return;
-    final render = _document!.paragraphRegistry.renderFor(_preeditContainerId);
+    final doc = _document!;
+    final render = doc.paragraphRegistry.renderFor(_preeditContainerId);
     if (render != null) {
       render.imePreeditText = _preeditText;
       render.imeComposingRange = _composingRange;
       render.imePreeditFragmentId = _preeditFragmentId;
       render.imePreeditLocalOffset = _preeditLocalOffset;
       render.markNeedsPaint();
+      // Update the caret rect so the IME candidate window follows the caret
+      // inside the marked text. Deferred to post-frame because setting the
+      // preedit text triggers markNeedsLayout: the painter must re-layout with
+      // the new preedit before we can query the caret position.
+      final caretOffset = _preeditCaretOffset;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!_isComposing) return;
+        final rect = render.getImePreeditCaretScreenRect(caretOffset);
+        if (rect != null) {
+          // The FlutterView on macOS is flipped (top-left origin).
+          // convertRect:toView:nil already handles top-left → bottom-left.
+          updateCaretRect(rect);
+        }
+      });
     }
   }
 
