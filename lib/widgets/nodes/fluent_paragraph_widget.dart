@@ -331,7 +331,7 @@ class FluentParagraphWidgetState<T extends FluentParagraphWidget> extends State<
           onTap: () {
             widget.document.requestEditorFocus();
             // Activate virtual keyboard on mobile (only for confirmed short-taps)
-            widget.document.requestMobileKeyboardFocus();
+            widget.document.requestMobileKeyboardFocus(context);
             // Tap completed inside an active selection: now collapse and move cursor.
             if (_savedSelection != null && _lastTapPosition != null && mounted) {
               final renderObject = _renderWidgetKey.currentContext?.findRenderObject();

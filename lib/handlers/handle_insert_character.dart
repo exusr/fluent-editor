@@ -5,6 +5,36 @@ import 'package:fluent_editor/utils/editor_utils.dart';
 import 'package:fluent_editor/utils/fragment_operations.dart';
 import 'package:fluent_editor/utils/node_operations.dart';
 
+/// Inserts text by iterating through grapheme clusters instead of UTF-16 code units.
+/// This ensures emoji and other multi-code-unit characters are inserted as single units.
+void executeHandleInsertText(String text, FluentDocument document) {
+  if (text.isEmpty) return;
+  
+  // Iterate through the text by UTF-16 code units, but preserve surrogate pairs
+  // by checking if we're in the middle of a surrogate pair
+  int i = 0;
+  while (i < text.length) {
+    int charCode = text.codeUnitAt(i);
+    
+    // Check if this is a high surrogate (start of emoji)
+    if (charCode >= 0xD800 && charCode <= 0xDBFF && i + 1 < text.length) {
+      int nextCharCode = text.codeUnitAt(i + 1);
+      // Check if next is a low surrogate
+      if (nextCharCode >= 0xDC00 && nextCharCode <= 0xDFFF) {
+        // This is a complete surrogate pair (emoji), insert as one character
+        final emoji = text.substring(i, i + 2);
+        executeHandleInsertCharacter(emoji, document);
+        i += 2;
+        continue;
+      }
+    }
+    
+    // Regular single code unit character
+    executeHandleInsertCharacter(text[i], document);
+    i++;
+  }
+}
+
 void executeHandleInsertCharacter(String character, FluentDocument document) {
   final node = getNodeAtCursor(document.eventHandler);
   bool inserted = false;
@@ -134,7 +164,13 @@ void executeHandleInsertCharacter(String character, FluentDocument document) {
   }
 
   if (inserted) {
-    if (needsForward) document.cursor.forward();
+    if (needsForward) {
+      // Advance cursor by the actual length of the inserted character
+      // (1 for regular chars, 2 for emoji/surrogate pairs)
+      final advanceAmount = character.length;
+      document.cursor.focusOffset += advanceAmount;
+      document.cursor.anchorOffset += advanceAmount;
+    }
     document.updateContent();
 
     // Notify comment system of the text mutation.

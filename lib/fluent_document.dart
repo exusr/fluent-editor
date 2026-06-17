@@ -429,7 +429,7 @@ class FluentDocument extends ChangeNotifier {
   void requestEditorFocus() => editorFocusNode.requestFocus();
 
   /// Opens the virtual keyboard via the IME handler.
-  void requestMobileKeyboardFocus() => imeHandler.showKeyboard();
+  void requestMobileKeyboardFocus(BuildContext context) => imeHandler.showKeyboard(context);
 
   final Map<String, GlobalKey> _nodeKeys = {};
   GlobalKey getKeyForNode(String nodeId) {
@@ -1196,7 +1196,7 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
     // Open the IME connection after the first frame so the OS registers
     // an active text-input context for physical CJK keyboards.
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      widget.document.imeHandler.showKeyboard();
+      widget.document.imeHandler.showKeyboard(context);
     });
     _initSpellCheck();
     DocumentLanguageController.instance.currentLanguage
@@ -1228,7 +1228,7 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
     if (widget.document.editorFocusNode.hasFocus) {
       // Activates NSTextInputContext on macOS (and the equivalent on other
       // desktop platforms) so physical CJK keyboards show the IME panel.
-      widget.document.imeHandler.showKeyboard();
+      widget.document.imeHandler.showKeyboard(context);
     } else {
       widget.document.imeHandler.commitIfComposing();
     }

@@ -16,6 +16,7 @@ import 'package:fluent_editor/factories.dart';
 import 'package:fluent_editor/fluent_document.dart';
 import 'package:fluent_editor/handlers/handle_insert_character.dart';
 import 'package:fluent_editor/handlers/handle_replace_selection.dart';
+import 'package:fluent_editor/utils/fragment_operations.dart';
 import 'package:fluent_editor/utils/node_operations.dart';
 import 'package:fluent_editor/utils/resolve_selection.dart';
 import 'package:flutter/services.dart';
@@ -264,8 +265,8 @@ Fragment? _mergeFragmentsIntoParagraph(
   if (splitFrag == null) return null;
 
   // Truncate splitFrag to the left of the cursor, save right text
-  final leftText = splitFrag.text.substring(0, splitOffset);
-  final rightText = splitFrag.text.substring(splitOffset);
+  final leftText = FragmentOperations.safeSubstring(splitFrag.text, 0, splitOffset);
+  final rightText = FragmentOperations.safeSubstring(splitFrag.text, splitOffset);
   splitFrag.text = leftText;
 
   // Inserts the source fragments AFTER splitFrag preserving structure
@@ -329,9 +330,7 @@ void _pastePlainText(String text, FluentDocument document) {
       _insertParagraphBreak(document);
     }
     if (lines[i].isNotEmpty) {
-      for (final rune in lines[i].runes) {
-        executeHandleInsertCharacter(String.fromCharCode(rune), document);
-      }
+      executeHandleInsertText(lines[i], document);
     }
   }
 
@@ -592,7 +591,7 @@ List<FNode> _cloneInlineChildren(
       final endOff   = child.id == endId
           ? selectedNode.endOffset
           : child.text.length;
-      final text = child.text.substring(startOff, endOff);
+      final text = FragmentOperations.safeSubstring(child.text, startOff, endOff);
       if (text.isNotEmpty) {
         plainText.write(text);
         result.add(_cloneFragment(child, text));

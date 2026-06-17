@@ -202,7 +202,7 @@ class _VirtualizedSelectableAreaState extends State<VirtualizedSelectableArea> {
       setState(() {});
       // Open keyboard after drag selection on mobile.
       if (_isMobilePlatform()) {
-        widget.document.requestMobileKeyboardFocus();
+        widget.document.requestMobileKeyboardFocus(context);
       }
     } else if (wasScrolling) {
       // After scroll, don't automatically reopen keyboard
@@ -230,7 +230,7 @@ class _VirtualizedSelectableAreaState extends State<VirtualizedSelectableArea> {
       widget.document.cursor.moveTo(result.fragmentId, result.localOffset);
       widget.document.cursorOnlyUpdate();
       if (_isMobilePlatform()) {
-        widget.document.requestMobileKeyboardFocus();
+        widget.document.requestMobileKeyboardFocus(context);
       }
     }
   }

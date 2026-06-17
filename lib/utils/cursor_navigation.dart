@@ -23,9 +23,7 @@
 // - Arrow Up on first paragraph: go to start of document.
 
 import 'package:fluent_editor/factories.dart';
-
-int _buildAllStopsCallCount = 0;
-int _buildAllLogicalLinesCallCount = 0;
+import 'package:fluent_editor/utils/fragment_operations.dart';
 
 // ─── Coordinate resolver type ─────────────────────────────────
 
@@ -96,7 +94,6 @@ class NavigationResult {
 /// Generates the flat list of ALL CaretStop in the document, in reading
 /// order. This is the "rail" on which Left/Right move.
 List<CaretStop> buildAllStops(Root root) {
-  _buildAllStopsCallCount++;
   final out = <CaretStop>[];
   for (final node in root.nodes) {
     _collectStopsRecursive(node, out);
@@ -147,7 +144,6 @@ void _collectStopsRecursive(FNode node, List<CaretStop> out) {
 
 /// Returns all LogicalLines of the document, in reading order.
 List<LogicalLine> buildAllLogicalLines(Root root) {
-  _buildAllLogicalLinesCallCount++;
   final out = <LogicalLine>[];
   for (final node in root.nodes) {
     _collectLogicalLines(node, out);
@@ -221,8 +217,18 @@ void _collectStopsInLine(FNode node, List<CaretStop> out) {
       out.add(CaretStop(node.id, 0));
       return;
     }
-    for (int i = 0; i <= len; i++) {
+    // Create stops only at grapheme cluster boundaries to handle emoji correctly
+    // Skip positions inside surrogate pairs
+    int i = 0;
+    while (i <= len) {
       out.add(CaretStop(node.id, i));
+      // Skip to the next grapheme cluster boundary
+      if (i < len) {
+        final graphemeLen = FragmentOperations.getGraphemeLengthAt(node.text, i);
+        i += graphemeLen;
+      } else {
+        i++;
+      }
     }
     return;
   }
@@ -249,8 +255,16 @@ void _collectStopsInLine(FNode node, List<CaretStop> out) {
         final len = child.text.length;
         final startI = afterImage ? 1 : 0;
         final endI   = (beforeImage || beforeFragment) ? len - 1 : len;
-        for (int i = startI; i <= endI; i++) {
+        // Create stops only at grapheme cluster boundaries
+        int i = startI;
+        while (i <= endI) {
           out.add(CaretStop(child.id, i));
+          if (i < endI) {
+            final graphemeLen = FragmentOperations.getGraphemeLengthAt(child.text, i);
+            i += graphemeLen;
+          } else {
+            i++;
+          }
         }
       } else {
         _collectStopsInLine(child, out);
@@ -285,8 +299,16 @@ void _collectStopsInLine(FNode node, List<CaretStop> out) {
         final len = child.text.length;
         final startI = (afterLink || afterImage) ? 1 : 0;
         final endI   = (beforeLink || beforeImage || beforeFragment) ? len - 1 : len;
-        for (int i = startI; i <= endI; i++) {
+        // Create stops only at grapheme cluster boundaries
+        int i = startI;
+        while (i <= endI) {
           out.add(CaretStop(child.id, i));
+          if (i < endI) {
+            final graphemeLen = FragmentOperations.getGraphemeLengthAt(child.text, i);
+            i += graphemeLen;
+          } else {
+            i++;
+          }
         }
       } else {
         _collectStopsInLine(child, out);

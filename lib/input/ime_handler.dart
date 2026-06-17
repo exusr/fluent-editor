@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -7,6 +9,7 @@ import 'package:fluent_editor/handlers/handle_insert_character.dart';
 import 'package:fluent_editor/handlers/handle_replace_selection.dart';
 import 'package:fluent_editor/handlers/handle_enter.dart';
 import 'package:fluent_editor/handlers/handle_backspace.dart';
+import 'package:fluent_editor/utils/fragment_operations.dart';
 
 /// Singleton IME handler that implements [TextInputClient] for Flutter's
 /// system text input channel. Preedit text is kept isolated from the document
@@ -20,12 +23,13 @@ class FluentTextInputHandler with DeltaTextInputClient {
   FluentDocument? _document;
 
   /// Platforms where the native text input system expects the IME buffer to
-  /// stay synchronised with the document text (iOS virtual keyboard and macOS
-  /// NSTextInputContext). When active the buffer mirrors the current fragment
+  /// stay synchronised with the document text (iOS virtual keyboard, macOS
+  /// NSTextInputContext, and Windows). When active the buffer mirrors the current fragment
   /// text so autocorrect, predictive text and CJK composition work correctly.
   bool get _shouldSyncBuffer =>
       !kIsWeb && (defaultTargetPlatform == TargetPlatform.iOS ||
-                  defaultTargetPlatform == TargetPlatform.macOS);
+                  defaultTargetPlatform == TargetPlatform.macOS ||
+                  defaultTargetPlatform == TargetPlatform.windows);
 
   /// Public accessor so the editor shell knows whether backspace is handled
   /// via deltas (buffer-sync) rather than raw KeyEvent.
@@ -73,6 +77,18 @@ class FluentTextInputHandler with DeltaTextInputClient {
   /// Last known Flutter view height in logical pixels.
   double? _lastViewHeight;
 
+  /// Retry mechanism for Windows "view ID is null" timing issue.
+  Timer? _connectionRetryTimer;
+  int _connectionRetryCount = 0;
+  static const int _maxConnectionRetries = 5;
+  static const List<Duration> _windowsRetryDelays = [
+    Duration(milliseconds: 50),
+    Duration(milliseconds: 100),
+    Duration(milliseconds: 200),
+    Duration(milliseconds: 400),
+    Duration(milliseconds: 800),
+  ];
+
   /// Call this whenever the Flutter view height is known (e.g. in
   /// _updateImeCaretRect). Stores the height and re-sends the transform
   /// so the macOS plugin can map caret rect → screen rect correctly.
@@ -110,6 +126,9 @@ class FluentTextInputHandler with DeltaTextInputClient {
   /// Detaches and closes the IME connection.
   void detachInput() {
     commitIfComposing();
+    _connectionRetryTimer?.cancel();
+    _connectionRetryTimer = null;
+    _connectionRetryCount = 0;
     _connection?.close();
     _connection = null;
     _document = null;
@@ -117,9 +136,12 @@ class FluentTextInputHandler with DeltaTextInputClient {
   }
 
   /// Opens the keyboard (requests focus from the platform text input).
-  void showKeyboard() {
+  void showKeyboard(BuildContext context) {
+    // Extract viewId from the current window using the context
+    final int viewId = View.of(context).viewId;
+
     if (_connection == null || !_connection!.attached) {
-      _attachConnection();
+      _attachConnection(viewId: viewId);
     }
     _connection?.show();
     // Send transform then caret rect immediately after show() so macOS
@@ -139,33 +161,73 @@ class FluentTextInputHandler with DeltaTextInputClient {
     _connection?.close();
   }
 
-  void _attachConnection() {
-    if (_document == null) return;
-    _connection = TextInput.attach(
-      this,
-      const TextInputConfiguration(
-        inputType: TextInputType.multiline,
-        textCapitalization: TextCapitalization.sentences,
-        inputAction: TextInputAction.newline,
-        // Required for updateEditingValueWithDeltas to actually be called.
-        // Without this, the platform sends only full TextEditingValue
-        // snapshots via updateEditingValue, which is ambiguous for
-        // detecting deletions against an intentionally-empty local buffer
-        // (a backspace with no composition active would be indistinguishable
-        // from "no change": both report text: '').
-        enableDeltaModel: true,
-      ),
-    );
-    // Initialise the IME with an EMPTY buffer (not whatever stale preedit
-    // state we might be holding). The platform's own composition buffer is
-    // always considered the source of truth for what's "in progress"; our
-    // _preeditText only mirrors it for rendering purposes.
-    _connection!.setEditingState(const TextEditingValue());
-    _connection!.show();
-    // On iOS/macOS prime the platform buffer with the current fragment text
-    // so the IME has context from the very first keystroke.
-    if (_shouldSyncBuffer) {
-      syncImeBufferToFragment();
+  bool _attachConnection({required int viewId}) {
+    if (_document == null) return false;
+
+    try {
+      _connection = TextInput.attach(
+        this,
+        TextInputConfiguration(
+          inputType: TextInputType.multiline,
+          textCapitalization: TextCapitalization.sentences,
+          inputAction: TextInputAction.newline,
+          // Required for updateEditingValueWithDeltas to actually be called.
+          // Without this, the platform sends only full TextEditingValue
+          // snapshots via updateEditingValue, which is ambiguous for
+          // detecting deletions against an intentionally-empty local buffer
+          // (a backspace with no composition active would be indistinguishable
+          // from "no change": both report text: '').
+          enableDeltaModel: true,
+          viewId: viewId, // Required for multi-window desktop support
+        ),
+      );
+
+      // Verify connection is actually active and exists
+      if (_connection == null || !_connection!.attached) {
+        return false;
+      }
+
+      // Initialise the IME with an EMPTY buffer (not whatever stale preedit
+      // state we might be holding). The platform's own composition buffer is
+      // always considered the source of truth for what's "in progress"; our
+      // _preeditText only mirrors it for rendering purposes.
+      _connection!.setEditingState(const TextEditingValue());
+      _connection!.show();
+      // On iOS/macOS/Windows prime the platform buffer with the current fragment text
+      // so the IME has context from the very first keystroke.
+      if (_shouldSyncBuffer) {
+        syncImeBufferToFragment();
+      }
+      // Reset retry count on successful attachment
+      _connectionRetryCount = 0;
+      _connectionRetryTimer?.cancel();
+      _connectionRetryTimer = null;
+      return true;
+    } on PlatformException catch (e) {
+      // Windows-specific retry for "view ID is null" timing issue
+      if (defaultTargetPlatform == TargetPlatform.windows &&
+          e.message?.contains('view ID is null') == true &&
+          _connectionRetryCount < _maxConnectionRetries) {
+        final delay = _windowsRetryDelays[_connectionRetryCount.clamp(0, _windowsRetryDelays.length - 1)];
+        _connectionRetryCount++;
+        debugPrint(
+          'FluentTextInputHandler: Windows view ID null, retry $_connectionRetryCount/${_maxConnectionRetries} '
+          'after ${delay.inMilliseconds}ms',
+        );
+        _connectionRetryTimer?.cancel();
+        _connectionRetryTimer = Timer(delay, () {
+          _connectionRetryTimer = null;
+          _attachConnection(viewId: viewId); // Retry with the same viewId
+        });
+        return false; // Return false to indicate not ready yet, WITHOUT crashing
+      }
+      // If error is different or we exhausted retries, log it
+      debugPrint(
+        'FluentTextInputHandler: Failed to attach text input definitively: '
+        '${e.code} - ${e.message}',
+      );
+      _connection = null; // Clean up state on total failure
+      return false;
     }
   }
 
@@ -183,9 +245,8 @@ class FluentTextInputHandler with DeltaTextInputClient {
         composing: _composingRange,
       );
     }
-    // iOS: sync buffer with current fragment text for proper IME behavior
-    // (autocorrect, predictive text, suggestions). The dummy " " workaround
-    // is removed — it breaks the IME for Latin-script languages.
+    // iOS/macOS/Windows: sync buffer with current fragment text for proper IME behavior
+    // (autocorrect, predictive text, suggestions).
     if (_shouldSyncBuffer) {
       final text = _getCurrentFragmentText();
       if (text != null) {
@@ -205,6 +266,23 @@ class FluentTextInputHandler with DeltaTextInputClient {
   void updateEditingValueWithDeltas(List<TextEditingDelta> deltas) {
     if (_updatingSelf) return;
     if (_document == null) return;
+
+    // Check if we're handling preedit/composing data - sanitize at source
+    if (deltas.any((d) => d.composing.isValid)) {
+      // Apply deltas to get the final value, then sanitize it
+      TextEditingValue value = currentTextEditingValue ?? const TextEditingValue();
+      for (final delta in deltas) {
+        value = delta.apply(value);
+      }
+      final cleanText = _sanitizeUtf16(value.text);
+      final cleanValue = TextEditingValue(
+        text: cleanText,
+        selection: value.selection,
+        composing: value.composing,
+      );
+      updateEditingValue(cleanValue);
+      return;
+    }
 
     // Our local buffer (currentTextEditingValue) is intentionally kept
     // EMPTY whenever there is no active composition — we apply finalized
@@ -230,16 +308,8 @@ class FluentTextInputHandler with DeltaTextInputClient {
     // proper TextEditingDeltaInsertion) keeps working — exactly the
     // reported symptom. We treat any TextEditingDeltaReplacement whose
     // replacementText is empty as a deletion too.
-    //
-    // iOS: when not composing we keep a dummy " " in the IME buffer so the
-    // platform always has something to delete. A backspace on already
-    // committed document text arrives here as a TextEditingDeltaDeletion
-    // (or an empty TextEditingDeltaReplacement) that removes the dummy
-    // space. Because iOS does NOT emit a hardware KeyEvent for the virtual
-    // keyboard, we MUST apply the deletion to the real document here and
-    // then re-arm the dummy string for the next backspace.
     if (!_isComposing) {
-      // iOS/macOS: buffer is synced with fragment text, apply deltas to document.
+      // iOS/macOS/Windows: buffer is synced with fragment text, apply deltas to document.
       if (_shouldSyncBuffer) {
         final _isMacOS = !kIsWeb && defaultTargetPlatform == TargetPlatform.macOS;
         TextEditingValue value = currentTextEditingValue ?? const TextEditingValue();
@@ -251,31 +321,74 @@ class FluentTextInputHandler with DeltaTextInputClient {
                   delta.replacementText.isEmpty))) {
             continue;
           }
+          
+          // Handle emoji deletion on Windows: if deleting at start of surrogate pair,
+          // expand deletion to include the complete emoji (2 code units)
+          if (!_isMacOS && (delta is TextEditingDeltaDeletion ||
+              (delta is TextEditingDeltaReplacement &&
+                  delta.replacementText.isEmpty))) {
+            final deletionRange = delta is TextEditingDeltaDeletion 
+                ? delta.deletedRange 
+                : (delta as TextEditingDeltaReplacement).replacedRange;
+            
+            // Check if we're deleting at the start of a surrogate pair (emoji)
+            final deletionLength = deletionRange.end - deletionRange.start;
+            if (deletionRange.isValid && deletionLength == 1) {
+              final textBefore = value.text;
+              final deleteStart = deletionRange.start.clamp(0, textBefore.length);
+              if (deleteStart < textBefore.length) {
+                final graphemeLen = FragmentOperations.getGraphemeLengthAt(textBefore, deleteStart);
+                if (graphemeLen == 2) {
+                  // This is an emoji - need to delete 2 code units
+                  // Create a modified delta with expanded range
+                  if (delta is TextEditingDeltaDeletion) {
+                    final expandedDelta = TextEditingDeltaDeletion(
+                      oldText: delta.oldText,
+                      deletedRange: TextRange(start: deleteStart, end: deleteStart + 2),
+                      selection: delta.selection,
+                      composing: delta.composing,
+                    );
+                    value = expandedDelta.apply(value);
+                  } else if (delta is TextEditingDeltaReplacement) {
+                    final expandedDelta = TextEditingDeltaReplacement(
+                      oldText: delta.oldText,
+                      replacementText: '',
+                      replacedRange: TextRange(start: deleteStart, end: deleteStart + 2),
+                      selection: delta.selection,
+                      composing: delta.composing,
+                    );
+                    value = expandedDelta.apply(value);
+                  }
+                  continue;
+                }
+              }
+            }
+          }
+          
           value = delta.apply(value);
         }
-        updateEditingValue(value);
-        return;
-      }
-      // Desktop: original dummy-string logic
-      final doc = _document!;
-      for (final delta in deltas) {
-        if (delta is TextEditingDeltaDeletion ||
-            (delta is TextEditingDeltaReplacement &&
-                delta.replacementText.isEmpty)) {
-          doc.saveState(description: 'Backspace', forceNewAction: false);
-          executeHandleBackspace(doc);
-          _resetPlatformBuffer();
-          return;
-        } else if (delta is TextEditingDeltaNonTextUpdate) {
-          continue;
-        } else {
-          TextEditingValue value = currentTextEditingValue ?? const TextEditingValue();
-          for (final d in deltas) {
-            value = d.apply(value);
+        // Pass the selection offset to position cursor correctly after emoji insertion
+        // If the selection would cut through a surrogate pair, use the end of text instead
+        int? cursorOffset;
+        if (value.selection.isValid) {
+          final selOffset = value.selection.extentOffset;
+          final textLen = value.text.length;
+          // Check if selection is in the middle of a surrogate pair
+          if (selOffset > 0 && selOffset < textLen) {
+            final prev = value.text.codeUnitAt(selOffset - 1);
+            final curr = value.text.codeUnitAt(selOffset);
+            if (prev >= 0xD800 && prev <= 0xDBFF && curr >= 0xDC00 && curr <= 0xDFFF) {
+              // Selection is in the middle of a surrogate pair, use end of text
+              cursorOffset = textLen;
+            } else {
+              cursorOffset = selOffset;
+            }
+          } else {
+            cursorOffset = selOffset;
           }
-          updateEditingValue(value);
-          return;
         }
+        updateEditingValue(value, cursorOffset: cursorOffset);
+        return;
       }
       return;
     }
@@ -290,7 +403,7 @@ class FluentTextInputHandler with DeltaTextInputClient {
   }
 
   @override
-  void updateEditingValue(TextEditingValue value) {
+  void updateEditingValue(TextEditingValue value, {int? cursorOffset}) {
     if (_updatingSelf) return;
     if (_document == null) return;
 
@@ -311,14 +424,35 @@ class FluentTextInputHandler with DeltaTextInputClient {
 
       // New composition started (CJK, emoji, etc.)
       if (value.composing.isValid) {
-        final preeditText = value.text.substring(value.composing.start, value.composing.end);
+        // Defensive extraction to avoid cutting through surrogate pairs (emoji)
+        final start = FragmentOperations.adjustIndex(value.text, value.composing.start.clamp(0, value.text.length));
+        final end = FragmentOperations.adjustIndex(value.text, value.composing.end.clamp(0, value.text.length));
+        final rawPreedit = value.text.substring(start, end);
+        final preeditText = _sanitizeUtf16(rawPreedit);
+        
+        final wholeCleanText = _sanitizeUtf16(value.text);
+        final currentFragText = _getCurrentFragmentText() ?? '';
+
+        if (wholeCleanText != currentFragText) {
+          _updatingSelf = true;
+          final node = doc.nodeById(cursor.focusId.isNotEmpty ? cursor.focusId : cursor.anchorId);
+          if (node is Fragment) {
+            // Replace fragment text but EXCLUDE the temporary preedit
+            // to avoid corrupting the actual rendered text
+            final textBefore = wholeCleanText.substring(0, start);
+            final textAfter = wholeCleanText.substring(end);
+            node.text = _sanitizeUtf16(textBefore + textAfter);
+          }
+          _updatingSelf = false;
+        }
+        
         if (!cursor.isCollapsed) {
           doc.saveState(description: 'Replace selection', forceNewAction: false);
           executeHandleReplaceSelection('', doc);
         }
         _isComposing = true;
         _preeditFragmentId = cursor.focusId.isNotEmpty ? cursor.focusId : cursor.anchorId;
-        _preeditLocalOffset = value.composing.start;
+        _preeditLocalOffset = start;
         _preeditContainerId = doc.findLogicalContainerId(_preeditFragmentId) ?? '';
         cursor.imeComposing = true;
         cursor.imeComposingStart = _preeditLocalOffset;
@@ -326,7 +460,7 @@ class FluentTextInputHandler with DeltaTextInputClient {
         _preeditText = preeditText;
         _composingRange = TextRange(start: 0, end: preeditText.length);
         _preeditCaretOffset = value.selection.isValid
-            ? (value.selection.extentOffset - value.composing.start).clamp(0, preeditText.length)
+            ? (value.selection.extentOffset - start).clamp(0, preeditText.length)
             : preeditText.length;
         _invalidatePreeditRender();
         return;
@@ -335,19 +469,22 @@ class FluentTextInputHandler with DeltaTextInputClient {
       final oldText = currentText;
       final newText = value.text;
 
-      // Single character insertion
-      if (newText.length == oldText.length + 1) {
+      // Single character insertion (including emoji which are 2 code units)
+      final lengthDiff = newText.length - oldText.length;
+      if (lengthDiff == 1 || lengthDiff == 2) {
         final diffIndex = _findDiffIndex(oldText, newText);
         if (diffIndex >= 0) {
-          final insertedChar = newText[diffIndex];
+          // Extract the inserted text (could be 1 or 2 code units for emoji)
+          final insertedText = newText.substring(diffIndex, diffIndex + lengthDiff);
           _moveCursorToFragmentOffset(diffIndex);
-          _insertFinalizedText(insertedChar);
+          _insertFinalizedText(insertedText);
           return;
         }
       }
 
-      // Single character deletion
-      if (newText.length == oldText.length - 1) {
+      // Single character deletion (including emoji which are 2 code units)
+      final deleteLengthDiff = oldText.length - newText.length;
+      if (deleteLengthDiff == 1 || deleteLengthDiff == 2) {
         final diffIndex = _findDiffIndex(newText, oldText);
         if (diffIndex >= 0) {
           _moveCursorToFragmentOffset(diffIndex + 1);
@@ -360,7 +497,7 @@ class FluentTextInputHandler with DeltaTextInputClient {
 
       // Text replacement (suggestion, paste, etc.)
       if (newText != oldText) {
-        _replaceFragmentText(newText);
+        _replaceFragmentText(newText, cursorOffset: cursorOffset);
         return;
       }
 
@@ -387,11 +524,14 @@ class FluentTextInputHandler with DeltaTextInputClient {
         }
         // Still has preedit content: extract it from the full buffer.
         if (_shouldSyncBuffer) {
-          final preeditText = value.text.substring(value.composing.start, value.composing.end);
+          final start = FragmentOperations.adjustIndex(value.text, value.composing.start.clamp(0, value.text.length));
+          final end = FragmentOperations.adjustIndex(value.text, value.composing.end.clamp(0, value.text.length));
+          final rawPreedit = value.text.substring(start, end);
+          final preeditText = _sanitizeUtf16(rawPreedit);
           _preeditText = preeditText;
           _composingRange = TextRange(start: 0, end: preeditText.length);
           _preeditCaretOffset = value.selection.isValid
-              ? (value.selection.extentOffset - value.composing.start).clamp(0, preeditText.length)
+              ? (value.selection.extentOffset - start).clamp(0, preeditText.length)
               : preeditText.length;
         } else {
           _preeditText = value.text;
@@ -424,8 +564,10 @@ class FluentTextInputHandler with DeltaTextInputClient {
         final fragId = doc.cursor.focusId.isNotEmpty ? doc.cursor.focusId : doc.cursor.anchorId;
         final node = doc.nodeById(fragId);
         if (node is Fragment) {
+          _updatingSelf = true; // Block platform echoes during document mutation
+          
           doc.saveState(description: 'Replace text', forceNewAction: false);
-          node.text = value.text;
+          node.text = _sanitizeUtf16(value.text);
           // Cursor position from the IME's selection after commit.
           final newCursorOffset = value.selection.isValid && value.selection.isCollapsed
               ? value.selection.extentOffset
@@ -434,7 +576,10 @@ class FluentTextInputHandler with DeltaTextInputClient {
           _resetComposition();
           doc.cursor.imeComposing = false;
           doc.updateContent();
-          syncImeBufferToFragment();
+          
+          _updatingSelf = false; // Unblock after document is updated
+          
+          syncImeBufferToFragment(); // Now safe to sync
         }
         return;
       }
@@ -450,7 +595,11 @@ class FluentTextInputHandler with DeltaTextInputClient {
     if (!value.composing.isValid) {
       // Caso 4: Testo confermato senza composizione
       _insertFinalizedText(value.text);
-      _resetToDummyString();
+      if (_shouldSyncBuffer) {
+        syncImeBufferToFragment();
+      } else {
+        _resetPlatformBuffer();
+      }
       return;
     }
 
@@ -473,33 +622,6 @@ class FluentTextInputHandler with DeltaTextInputClient {
         ? value.selection.extentOffset.clamp(0, value.text.length)
         : value.text.length;
     _invalidatePreeditRender();
-  }
-
-  /// Re-arm the platform IME buffer after applying text to the document.
-  /// On iOS this installs the dummy " " so the next backspace produces a
-  /// deletion delta; on every other platform it resets to an empty buffer
-  /// (the long-standing behavior, backspace handled via KeyEvent).
-  /// Resets the platform-side IME buffer. On buffer-sync platforms the buffer
-  /// is re-synchronised with the current fragment text; elsewhere it is cleared.
-  void _resetToDummyString() {
-    if (_connection == null || !_connection!.attached) return;
-    _updatingSelf = true;
-    if (_shouldSyncBuffer) {
-      final text = _getCurrentFragmentText();
-      if (text != null) {
-        final offset = _getCursorOffsetInFragment();
-        _connection!.setEditingState(TextEditingValue(
-          text: text,
-          selection: TextSelection.collapsed(offset: offset),
-          composing: TextRange.empty,
-        ));
-      } else {
-        _connection!.setEditingState(const TextEditingValue());
-      }
-    } else {
-      _connection!.setEditingState(const TextEditingValue());
-    }
-    _updatingSelf = false;
   }
 
   @override
@@ -604,12 +726,36 @@ class FluentTextInputHandler with DeltaTextInputClient {
 
     doc.saveState(description: 'Insert text', forceNewAction: false);
 
-    for (final char in text.characters) {
+    // Iterate through UTF-16 code units, but merge surrogate pairs into single characters
+    int i = 0;
+    while (i < text.length) {
+      int charCode = text.codeUnitAt(i);
+      
+      // Check if this is a high surrogate (start of emoji)
+      if (charCode >= 0xD800 && charCode <= 0xDBFF && i + 1 < text.length) {
+        int nextCharCode = text.codeUnitAt(i + 1);
+        // Check if next is a low surrogate
+        if (nextCharCode >= 0xDC00 && nextCharCode <= 0xDFFF) {
+          // This is a complete surrogate pair (emoji), insert as one character
+          final emoji = text.substring(i, i + 2);
+          if (!doc.cursor.isCollapsed) {
+            executeHandleReplaceSelection(emoji, doc);
+          } else {
+            executeHandleInsertCharacter(emoji, doc);
+          }
+          i += 2;
+          continue;
+        }
+      }
+      
+      // Regular single code unit character
+      final char = text[i];
       if (!doc.cursor.isCollapsed) {
         executeHandleReplaceSelection(char, doc);
       } else {
         executeHandleInsertCharacter(char, doc);
       }
+      i++;
     }
 
     if (_shouldSyncBuffer) {
@@ -628,6 +774,8 @@ class FluentTextInputHandler with DeltaTextInputClient {
     }
     final doc = _document!;
 
+    _updatingSelf = true; // Block platform echoes during character-by-character insertion
+
     // Save state once for the whole commit so undo removes the entire
     // committed word/phrase in one step, not character by character.
     doc.saveState(description: 'IME commit', forceNewAction: false);
@@ -640,15 +788,42 @@ class FluentTextInputHandler with DeltaTextInputClient {
 
     // Insert the committed text character by character using the existing
     // handlers so pending font/styles are respected.
-    for (final char in text.characters) {
+    // Iterate through UTF-16 code units, merging surrogate pairs
+    int i = 0;
+    while (i < text.length) {
+      int charCode = text.codeUnitAt(i);
+      
+      // Check if this is a high surrogate (start of emoji)
+      if (charCode >= 0xD800 && charCode <= 0xDBFF && i + 1 < text.length) {
+        int nextCharCode = text.codeUnitAt(i + 1);
+        // Check if next is a low surrogate
+        if (nextCharCode >= 0xDC00 && nextCharCode <= 0xDFFF) {
+          // This is a complete surrogate pair (emoji), insert as one character
+          final emoji = text.substring(i, i + 2);
+          if (!doc.cursor.isCollapsed) {
+            executeHandleReplaceSelection(emoji, doc);
+          } else {
+            executeHandleInsertCharacter(emoji, doc);
+          }
+          i += 2;
+          continue;
+        }
+      }
+      
+      // Regular single code unit character
+      final char = text[i];
       if (!doc.cursor.isCollapsed) {
         executeHandleReplaceSelection(char, doc);
       } else {
         executeHandleInsertCharacter(char, doc);
       }
+      i++;
     }
 
     _resetComposition();
+    
+    _updatingSelf = false; // Unblock after all characters are inserted
+    
     if (_shouldSyncBuffer) {
       syncImeBufferToFragment();
     } else {
@@ -680,7 +855,11 @@ class FluentTextInputHandler with DeltaTextInputClient {
   void _resetPlatformBuffer() {
     if (_connection == null || !_connection!.attached) return;
     _updatingSelf = true;
-    _connection!.setEditingState(const TextEditingValue());
+    try {
+      _connection!.setEditingState(const TextEditingValue());
+    } on PlatformException catch (e) {
+      debugPrint('FluentTextInputHandler: _resetPlatformBuffer failed: ${e.message}');
+    }
     _updatingSelf = false;
   }
 
@@ -732,7 +911,8 @@ class FluentTextInputHandler with DeltaTextInputClient {
   }
 
   /// Replaces the entire text of the current fragment with [newText].
-  void _replaceFragmentText(String newText) {
+  /// If [cursorOffset] is provided, positions the cursor at that offset instead of at the end.
+  void _replaceFragmentText(String newText, {int? cursorOffset}) {
     final doc = _document;
     if (doc == null) return;
     final fragId = doc.cursor.focusId.isNotEmpty ? doc.cursor.focusId : doc.cursor.anchorId;
@@ -740,8 +920,11 @@ class FluentTextInputHandler with DeltaTextInputClient {
     if (node is! Fragment) return;
 
     doc.saveState(description: 'Replace text', forceNewAction: false);
-    node.text = newText;
-    doc.cursor.moveTo(fragId, newText.length);
+    
+    final cleanText = _sanitizeUtf16(newText);
+    node.text = cleanText;
+    final finalOffset = cursorOffset ?? cleanText.length;
+    doc.cursor.moveTo(fragId, finalOffset);
     doc.updateContent();
     syncImeBufferToFragment();
   }
@@ -755,17 +938,23 @@ class FluentTextInputHandler with DeltaTextInputClient {
     if (text == null) return;
     final offset = _getCursorOffsetInFragment();
     _updatingSelf = true;
-    _connection!.setEditingState(TextEditingValue(
-      text: text,
-      selection: TextSelection.collapsed(offset: offset),
-      composing: TextRange.empty,
-    ));
+    try {
+      _connection!.setEditingState(TextEditingValue(
+        text: text,
+        selection: TextSelection.collapsed(offset: offset),
+        composing: TextRange.empty,
+      ));
+    } on PlatformException catch (e) {
+      debugPrint('FluentTextInputHandler: syncImeBufferToFragment failed: ${e.message}');
+    }
     _updatingSelf = false;
   }
 
   /// Invalidates paint on the paragraph render that hosts the preedit.
   void _invalidatePreeditRender() {
-    if (_document == null || _preeditContainerId.isEmpty) return;
+    if (_document == null || _preeditContainerId.isEmpty) {
+      return;
+    }
     final doc = _document!;
     final render = doc.paragraphRegistry.renderFor(_preeditContainerId);
     if (render != null) {
@@ -789,6 +978,37 @@ class FluentTextInputHandler with DeltaTextInputClient {
         }
       });
     }
+  }
+
+  /// Sanitizes a string to ensure it's well-formed UTF-16.
+  /// Replaces orphaned surrogate pairs with the Unicode replacement character (U+FFFD).
+  /// This prevents painting library crashes when malformed strings reach the native renderer.
+  String _sanitizeUtf16(String s) {
+    if (s.isEmpty) return s;
+    final codeUnits = s.codeUnits;
+    final cleanUnits = <int>[];
+
+    for (int i = 0; i < codeUnits.length; i++) {
+      int unit = codeUnits[i];
+      if (unit >= 0xD800 && unit <= 0xDBFF) {
+        // High surrogate: must be followed by a valid low surrogate
+        if (i + 1 < codeUnits.length && codeUnits[i + 1] >= 0xDC00 && codeUnits[i + 1] <= 0xDFFF) {
+          cleanUnits.add(unit);
+          cleanUnits.add(codeUnits[i + 1]);
+          i++; // Skip the low surrogate we just paired
+        } else {
+          // Orphaned high surrogate (malformed), replace it
+          cleanUnits.add(0xFFFD);
+        }
+      } else if (unit >= 0xDC00 && unit <= 0xDFFF) {
+        // Orphaned low surrogate (malformed)
+        cleanUnits.add(0xFFFD);
+      } else {
+        // Standard well-formed character
+        cleanUnits.add(unit);
+      }
+    }
+    return String.fromCharCodes(cleanUnits);
   }
 
   /// Returns true if the given container id is the one hosting the active preedit.

@@ -132,8 +132,10 @@ bool executeHandleBackspace(FluentDocument document, {bool ctrl = false, bool li
   }
 
   // Case 4: Normal character deletion
-  final newOffset = cursor.anchorOffset - 1;
-  FragmentOperations.deleteTextInFragment(currentFrag, newOffset, count: 1);
+  // Use grapheme-aware offset to handle emoji (surrogate pairs) correctly
+  final newOffset = FragmentOperations.getPreviousGraphemeOffset(currentFrag.text, cursor.anchorOffset);
+  final deleteCount = cursor.anchorOffset - newOffset;
+  FragmentOperations.deleteTextInFragment(currentFrag, newOffset, count: deleteCount);
 
   // If the fragment became empty, remove it (and any empty parent Links)
   // so it doesn't block future backspace navigation.
@@ -307,8 +309,10 @@ bool _handleBackspaceAtStart(
             continue;
           }
           // Delete the last character of the first non-empty predecessor.
-          final deletePos = candidate.text.length - 1;
-          FragmentOperations.deleteTextInFragment(candidate, deletePos, count: 1);
+          // Use grapheme-aware deletion to handle emoji correctly
+          final deletePos = FragmentOperations.getPreviousGraphemeOffset(candidate.text, candidate.text.length);
+          final deleteCount = candidate.text.length - deletePos;
+          FragmentOperations.deleteTextInFragment(candidate, deletePos, count: deleteCount);
 
           if (candidate.text.isEmpty) {
             // Find where to place the cursor AFTER removing the empty
