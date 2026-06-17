@@ -1052,6 +1052,20 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
           }
         }
 
+        // iOS virtual keyboard: backspace is handled via TextEditingDelta so the
+        // IME buffer stays in sync with the document. macOS physical keyboard:
+        // backspace is a hardware KeyEvent; the delta model is unreliable there,
+        // so we let the KeyEvent path handle it and re-sync the buffer afterwards.
+        final _isVirtualKeyboard = !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS;
+        if (_isVirtualKeyboard &&
+            widget.document.imeHandler.shouldUseBufferSync &&
+            widget.document.cursor.isCollapsed &&
+            !widget.document.imeHandler.isComposing &&
+            (event.logicalKey == LogicalKeyboardKey.backspace ||
+             event.logicalKey == LogicalKeyboardKey.delete)) {
+          return KeyEventResult.ignored;
+        }
+
         // All non-printable events (nav, backspace, enter, shortcuts).
         widget.document.manageEvent(event);
         return KeyEventResult.handled;
@@ -1115,6 +1129,7 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
 
   void _onDocumentChanged() {
     _updateImeCaretRect();
+    widget.document.imeHandler.syncImeBufferToFragment();
 
     if (widget.document.cursorOnlyChange) {
       // Cursor/selection-only change: the visible paragraphs already listen
@@ -1274,6 +1289,19 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
         return true;
       }
       return false; // Let IME consume everything else (incl. arrows)
+    }
+
+    // iOS virtual keyboard: backspace is handled via TextEditingDelta.
+    // macOS physical keyboard: backspace is a hardware KeyEvent; the delta
+    // model is unreliable there, so we let the KeyEvent path handle it.
+    final _isVirtualKeyboard = !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS;
+    if (_isVirtualKeyboard &&
+        doc.imeHandler.shouldUseBufferSync &&
+        doc.cursor.isCollapsed &&
+        !doc.imeHandler.isComposing &&
+        (key == LogicalKeyboardKey.backspace ||
+         key == LogicalKeyboardKey.delete)) {
+      return false;
     }
 
     // Shortcut combos (Ctrl/Meta + key)

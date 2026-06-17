@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:fluent_editor/fluent_document.dart';
+import 'package:fluent_editor/factories.dart' show Fragment;
 import 'package:fluent_editor/handlers/handle_insert_character.dart';
 import 'package:fluent_editor/handlers/handle_replace_selection.dart';
 import 'package:fluent_editor/handlers/handle_enter.dart';
@@ -18,13 +19,17 @@ class FluentTextInputHandler with DeltaTextInputClient {
   TextInputConnection? _connection;
   FluentDocument? _document;
 
-  /// iOS is the only platform where the on-screen keyboard backspace does not
-  /// surface as a hardware KeyEvent and does not reliably emit deletion deltas
-  /// against an empty buffer. The dummy-string workaround is therefore scoped
-  /// to iOS only, so desktop (which deletes via EventHandler/KeyEvent) and
-  /// Android (which emits proper deltas) are left untouched.
-  bool get _useDummyStringWorkaround =>
-      !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS;
+  /// Platforms where the native text input system expects the IME buffer to
+  /// stay synchronised with the document text (iOS virtual keyboard and macOS
+  /// NSTextInputContext). When active the buffer mirrors the current fragment
+  /// text so autocorrect, predictive text and CJK composition work correctly.
+  bool get _shouldSyncBuffer =>
+      !kIsWeb && (defaultTargetPlatform == TargetPlatform.iOS ||
+                  defaultTargetPlatform == TargetPlatform.macOS);
+
+  /// Public accessor so the editor shell knows whether backspace is handled
+  /// via deltas (buffer-sync) rather than raw KeyEvent.
+  bool get shouldUseBufferSync => _shouldSyncBuffer;
 
   /// Current preedit text displayed to the user but not yet committed.
   String _preeditText = '';
@@ -157,6 +162,11 @@ class FluentTextInputHandler with DeltaTextInputClient {
     // _preeditText only mirrors it for rendering purposes.
     _connection!.setEditingState(const TextEditingValue());
     _connection!.show();
+    // On iOS/macOS prime the platform buffer with the current fragment text
+    // so the IME has context from the very first keystroke.
+    if (_shouldSyncBuffer) {
+      syncImeBufferToFragment();
+    }
   }
 
   // ─── TextInputClient implementation ─────────────────────────────
@@ -173,15 +183,19 @@ class FluentTextInputHandler with DeltaTextInputClient {
         composing: _composingRange,
       );
     }
-    // iOS dummy string workaround: keep a single space in the IME buffer
-    // when not composing so the on-screen keyboard always has something to
-    // delete, allowing backspace to surface as a deletion delta.
-    if (_useDummyStringWorkaround) {
-      return const TextEditingValue(
-        text: ' ',
-        selection: TextSelection.collapsed(offset: 1),
-        composing: TextRange.empty,
-      );
+    // iOS: sync buffer with current fragment text for proper IME behavior
+    // (autocorrect, predictive text, suggestions). The dummy " " workaround
+    // is removed — it breaks the IME for Latin-script languages.
+    if (_shouldSyncBuffer) {
+      final text = _getCurrentFragmentText();
+      if (text != null) {
+        final offset = _getCursorOffsetInFragment();
+        return TextEditingValue(
+          text: text,
+          selection: TextSelection.collapsed(offset: offset),
+          composing: TextRange.empty,
+        );
+      }
     }
     // Other platforms keep an empty buffer (backspace handled via KeyEvent).
     return const TextEditingValue();
@@ -225,27 +239,36 @@ class FluentTextInputHandler with DeltaTextInputClient {
     // keyboard, we MUST apply the deletion to the real document here and
     // then re-arm the dummy string for the next backspace.
     if (!_isComposing) {
+      // iOS/macOS: buffer is synced with fragment text, apply deltas to document.
+      if (_shouldSyncBuffer) {
+        final _isMacOS = !kIsWeb && defaultTargetPlatform == TargetPlatform.macOS;
+        TextEditingValue value = currentTextEditingValue ?? const TextEditingValue();
+        for (final delta in deltas) {
+          // On macOS the physical keyboard sends a KeyEvent for backspace;
+          // handling the deletion delta as well would double-delete.
+          if (_isMacOS && (delta is TextEditingDeltaDeletion ||
+              (delta is TextEditingDeltaReplacement &&
+                  delta.replacementText.isEmpty))) {
+            continue;
+          }
+          value = delta.apply(value);
+        }
+        updateEditingValue(value);
+        return;
+      }
+      // Desktop: original dummy-string logic
       final doc = _document!;
       for (final delta in deltas) {
         if (delta is TextEditingDeltaDeletion ||
             (delta is TextEditingDeltaReplacement &&
                 delta.replacementText.isEmpty)) {
-          // Deletion of the dummy buffer => backspace on the document.
-          // Only on iOS: other platforms delete via KeyEvent/EventHandler,
-          // so applying it here too would double-delete.
-          if (_useDummyStringWorkaround) {
-            doc.saveState(description: 'Backspace', forceNewAction: false);
-            executeHandleBackspace(doc);
-            _resetToDummyString();
-          }
+          doc.saveState(description: 'Backspace', forceNewAction: false);
+          executeHandleBackspace(doc);
+          _resetPlatformBuffer();
           return;
         } else if (delta is TextEditingDeltaNonTextUpdate) {
-          // Selection/composing-only update with no text change: ignore.
           continue;
         } else {
-          // Insertion or non-empty replacement delta with no active
-          // composition: fall through to the normal value-based path below
-          // for this and any remaining deltas.
           TextEditingValue value = currentTextEditingValue ?? const TextEditingValue();
           for (final d in deltas) {
             value = d.apply(value);
@@ -274,22 +297,80 @@ class FluentTextInputHandler with DeltaTextInputClient {
     final doc = _document!;
     final cursor = doc.cursor;
 
-    // ─── iOS Dummy String Workaround ───────────────────────────────
-    if (_useDummyStringWorkaround) {
-      // Resting state: the dummy " " sitting in the buffer. Nothing to do.
-      if (value.text == ' ' && !value.composing.isValid) {
+    // ─── iOS Standard IME Buffer Sync (no dummy string) ──────────
+    if (_shouldSyncBuffer && !_isComposing) {
+      final currentText = _getCurrentFragmentText() ?? '';
+      final cursorOffset = _getCursorOffsetInFragment();
+
+      // Skip our own echo
+      if (value.text == currentText &&
+          value.selection.isCollapsed &&
+          value.selection.extentOffset == cursorOffset) {
         return;
       }
 
-      // Backspace consumed the dummy " " (or the document is already empty)
-      // with no active composition => delete one character from the document
-      // and re-arm the dummy buffer for the next backspace.
-      if (value.text.isEmpty && !_isComposing) {
-        doc.saveState(description: 'Backspace', forceNewAction: false);
-        executeHandleBackspace(doc);
-        _resetToDummyString();
+      // New composition started (CJK, emoji, etc.)
+      if (value.composing.isValid) {
+        final preeditText = value.text.substring(value.composing.start, value.composing.end);
+        if (!cursor.isCollapsed) {
+          doc.saveState(description: 'Replace selection', forceNewAction: false);
+          executeHandleReplaceSelection('', doc);
+        }
+        _isComposing = true;
+        _preeditFragmentId = cursor.focusId.isNotEmpty ? cursor.focusId : cursor.anchorId;
+        _preeditLocalOffset = value.composing.start;
+        _preeditContainerId = doc.findLogicalContainerId(_preeditFragmentId) ?? '';
+        cursor.imeComposing = true;
+        cursor.imeComposingStart = _preeditLocalOffset;
+        doc.selectionManager.clear();
+        _preeditText = preeditText;
+        _composingRange = TextRange(start: 0, end: preeditText.length);
+        _preeditCaretOffset = value.selection.isValid
+            ? (value.selection.extentOffset - value.composing.start).clamp(0, preeditText.length)
+            : preeditText.length;
+        _invalidatePreeditRender();
         return;
       }
+
+      final oldText = currentText;
+      final newText = value.text;
+
+      // Single character insertion
+      if (newText.length == oldText.length + 1) {
+        final diffIndex = _findDiffIndex(oldText, newText);
+        if (diffIndex >= 0) {
+          final insertedChar = newText[diffIndex];
+          _moveCursorToFragmentOffset(diffIndex);
+          _insertFinalizedText(insertedChar);
+          return;
+        }
+      }
+
+      // Single character deletion
+      if (newText.length == oldText.length - 1) {
+        final diffIndex = _findDiffIndex(newText, oldText);
+        if (diffIndex >= 0) {
+          _moveCursorToFragmentOffset(diffIndex + 1);
+          doc.saveState(description: 'Backspace', forceNewAction: false);
+          executeHandleBackspace(doc);
+          syncImeBufferToFragment();
+          return;
+        }
+      }
+
+      // Text replacement (suggestion, paste, etc.)
+      if (newText != oldText) {
+        _replaceFragmentText(newText);
+        return;
+      }
+
+      // Cursor moved without text change
+      if (newText == oldText && value.selection.isValid && value.selection.isCollapsed) {
+        _moveCursorToFragmentOffset(value.selection.extentOffset);
+        return;
+      }
+
+      return;
     }
 
     // ─── Active composition handling ────────────────────────────────
@@ -302,15 +383,23 @@ class FluentTextInputHandler with DeltaTextInputClient {
           // user typed — we must NOT also backspace the document, otherwise
           // the committed character before the preedit gets deleted too.
           _cancelPreedit();
-          _resetToDummyString();
           return;
         }
-        // Still has preedit content: just shrink the underline.
-        _preeditText = value.text;
-        _composingRange = value.composing;
-        _preeditCaretOffset = value.selection.isValid
-            ? value.selection.extentOffset.clamp(0, value.text.length)
-            : value.text.length;
+        // Still has preedit content: extract it from the full buffer.
+        if (_shouldSyncBuffer) {
+          final preeditText = value.text.substring(value.composing.start, value.composing.end);
+          _preeditText = preeditText;
+          _composingRange = TextRange(start: 0, end: preeditText.length);
+          _preeditCaretOffset = value.selection.isValid
+              ? (value.selection.extentOffset - value.composing.start).clamp(0, preeditText.length)
+              : preeditText.length;
+        } else {
+          _preeditText = value.text;
+          _composingRange = value.composing;
+          _preeditCaretOffset = value.selection.isValid
+              ? value.selection.extentOffset.clamp(0, value.text.length)
+              : value.text.length;
+        }
         _invalidatePreeditRender();
         return;
       }
@@ -326,12 +415,32 @@ class FluentTextInputHandler with DeltaTextInputClient {
         // Only cancel the preedit; do NOT backspace the document (the
         // preedit was never committed, so there is nothing extra to delete).
         _cancelPreedit();
-        _resetToDummyString();
+        return;
+      }
+
+      if (_shouldSyncBuffer) {
+        // Buffer-sync commit: the full buffer already contains the
+        // committed text merged with the surrounding fragment text.
+        final fragId = doc.cursor.focusId.isNotEmpty ? doc.cursor.focusId : doc.cursor.anchorId;
+        final node = doc.nodeById(fragId);
+        if (node is Fragment) {
+          doc.saveState(description: 'Replace text', forceNewAction: false);
+          node.text = value.text;
+          // Cursor position from the IME's selection after commit.
+          final newCursorOffset = value.selection.isValid && value.selection.isCollapsed
+              ? value.selection.extentOffset
+              : value.text.length;
+          doc.cursor.moveTo(fragId, newCursorOffset);
+          _resetComposition();
+          doc.cursor.imeComposing = false;
+          doc.updateContent();
+          syncImeBufferToFragment();
+        }
         return;
       }
 
       _commitPreedit(value.text);
-      _resetToDummyString();
+      _resetPlatformBuffer();
       return;
     }
 
@@ -370,18 +479,26 @@ class FluentTextInputHandler with DeltaTextInputClient {
   /// On iOS this installs the dummy " " so the next backspace produces a
   /// deletion delta; on every other platform it resets to an empty buffer
   /// (the long-standing behavior, backspace handled via KeyEvent).
+  /// Resets the platform-side IME buffer. On buffer-sync platforms the buffer
+  /// is re-synchronised with the current fragment text; elsewhere it is cleared.
   void _resetToDummyString() {
     if (_connection == null || !_connection!.attached) return;
     _updatingSelf = true;
-    _connection!.setEditingState(
-      _useDummyStringWorkaround
-          ? const TextEditingValue(
-              text: ' ',
-              selection: TextSelection.collapsed(offset: 1),
-              composing: TextRange.empty,
-            )
-          : const TextEditingValue(),
-    );
+    if (_shouldSyncBuffer) {
+      final text = _getCurrentFragmentText();
+      if (text != null) {
+        final offset = _getCursorOffsetInFragment();
+        _connection!.setEditingState(TextEditingValue(
+          text: text,
+          selection: TextSelection.collapsed(offset: offset),
+          composing: TextRange.empty,
+        ));
+      } else {
+        _connection!.setEditingState(const TextEditingValue());
+      }
+    } else {
+      _connection!.setEditingState(const TextEditingValue());
+    }
     _updatingSelf = false;
   }
 
@@ -495,7 +612,11 @@ class FluentTextInputHandler with DeltaTextInputClient {
       }
     }
 
-    _resetPlatformBuffer();
+    if (_shouldSyncBuffer) {
+      syncImeBufferToFragment();
+    } else {
+      _resetPlatformBuffer();
+    }
     doc.updateContent();
   }
 
@@ -528,7 +649,11 @@ class FluentTextInputHandler with DeltaTextInputClient {
     }
 
     _resetComposition();
-    _resetPlatformBuffer();
+    if (_shouldSyncBuffer) {
+      syncImeBufferToFragment();
+    } else {
+      _resetPlatformBuffer();
+    }
     doc.updateContent();
   }
 
@@ -538,7 +663,11 @@ class FluentTextInputHandler with DeltaTextInputClient {
     _resetComposition();
     if (doc != null) {
       doc.cursor.imeComposing = false;
-      _resetPlatformBuffer();
+      if (_shouldSyncBuffer) {
+        syncImeBufferToFragment();
+      } else {
+        _resetPlatformBuffer();
+      }
       // Trigger a cursor-only repaint so the preedit underline disappears.
       doc.cursorOnlyUpdate();
     }
@@ -563,6 +692,75 @@ class FluentTextInputHandler with DeltaTextInputClient {
     _preeditLocalOffset = 0;
     _preeditContainerId = '';
     _preeditCaretOffset = 0;
+  }
+
+  // ─── iOS Buffer Sync Helpers ─────────────────────────────────────
+
+  /// Returns the text of the fragment where the cursor currently sits.
+  String? _getCurrentFragmentText() {
+    final doc = _document;
+    if (doc == null) return null;
+    final fragId = doc.cursor.focusId.isNotEmpty ? doc.cursor.focusId : doc.cursor.anchorId;
+    final node = doc.nodeById(fragId);
+    if (node is Fragment) return node.text;
+    return null;
+  }
+
+  /// Returns the cursor offset within the current fragment text.
+  int _getCursorOffsetInFragment() {
+    final doc = _document;
+    if (doc == null) return 0;
+    return doc.cursor.focusId.isNotEmpty ? doc.cursor.focusOffset : doc.cursor.anchorOffset;
+  }
+
+  /// Finds the first index where [a] and [b] differ. Returns -1 if identical.
+  int _findDiffIndex(String a, String b) {
+    final minLen = a.length < b.length ? a.length : b.length;
+    for (var i = 0; i < minLen; i++) {
+      if (a[i] != b[i]) return i;
+    }
+    if (a.length != b.length) return minLen;
+    return -1;
+  }
+
+  /// Moves the cursor to the given [offset] within the current fragment.
+  void _moveCursorToFragmentOffset(int offset) {
+    final doc = _document;
+    if (doc == null) return;
+    final fragId = doc.cursor.focusId.isNotEmpty ? doc.cursor.focusId : doc.cursor.anchorId;
+    doc.cursor.moveTo(fragId, offset);
+  }
+
+  /// Replaces the entire text of the current fragment with [newText].
+  void _replaceFragmentText(String newText) {
+    final doc = _document;
+    if (doc == null) return;
+    final fragId = doc.cursor.focusId.isNotEmpty ? doc.cursor.focusId : doc.cursor.anchorId;
+    final node = doc.nodeById(fragId);
+    if (node is! Fragment) return;
+
+    doc.saveState(description: 'Replace text', forceNewAction: false);
+    node.text = newText;
+    doc.cursor.moveTo(fragId, newText.length);
+    doc.updateContent();
+    syncImeBufferToFragment();
+  }
+
+  /// Syncs the platform IME buffer with the current fragment text and cursor.
+  /// Call after any document mutation or cursor move.
+  void syncImeBufferToFragment() {
+    if (_connection == null || !_connection!.attached) return;
+    if (_isComposing) return;
+    final text = _getCurrentFragmentText();
+    if (text == null) return;
+    final offset = _getCursorOffsetInFragment();
+    _updatingSelf = true;
+    _connection!.setEditingState(TextEditingValue(
+      text: text,
+      selection: TextSelection.collapsed(offset: offset),
+      composing: TextRange.empty,
+    ));
+    _updatingSelf = false;
   }
 
   /// Invalidates paint on the paragraph render that hosts the preedit.
