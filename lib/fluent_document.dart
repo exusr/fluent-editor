@@ -139,9 +139,6 @@ class FluentDocument extends ChangeNotifier {
 
   /// Marks the id→node index as stale so it gets rebuilt on next lookup.
   void invalidateNodeIndex() {
-    if (_cachedStops != null) {
-      print('[INVALIDATE] caretStops invalidated, stack: ${StackTrace.current.toString().split('\n').take(5).join(' | ')}');
-    }
     _nodeIndexDirty = true;
     _nodePositionIndexDirty = true;
     _parentCacheDirty = true;
@@ -825,7 +822,6 @@ class FluentDocument extends ChangeNotifier {
   /// [cursorOnlyChange] (true for the duration of this synchronous call) and
   /// skip unnecessary work.
   void cursorOnlyUpdate() {
-    final sw = Stopwatch()..start();
     _cursorOnlyChange = true;
 
     // Pre-compute expensive lookups once before notifying 20+ widgets.
@@ -852,13 +848,7 @@ class FluentDocument extends ChangeNotifier {
     }
 
     cursor.notifyListeners();
-    sw.stop();
-    print('[CURSOR_ONLY] cursor.notifyListeners=${sw.elapsedMicroseconds}μs');
-    sw.reset();
-    sw.start();
     notifyListeners();
-    sw.stop();
-    print('[CURSOR_ONLY] doc.notifyListeners=${sw.elapsedMicroseconds}μs');
     _cursorOnlyChange = false;
   }
 

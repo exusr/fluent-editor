@@ -97,7 +97,6 @@ class NavigationResult {
 /// order. This is the "rail" on which Left/Right move.
 List<CaretStop> buildAllStops(Root root) {
   _buildAllStopsCallCount++;
-  print('[NAV_DEBUG] buildAllStops call #$_buildAllStopsCallCount');
   final out = <CaretStop>[];
   for (final node in root.nodes) {
     _collectStopsRecursive(node, out);
@@ -149,7 +148,6 @@ void _collectStopsRecursive(FNode node, List<CaretStop> out) {
 /// Returns all LogicalLines of the document, in reading order.
 List<LogicalLine> buildAllLogicalLines(Root root) {
   _buildAllLogicalLinesCallCount++;
-  print('[NAV_DEBUG] buildAllLogicalLines call #$_buildAllLogicalLinesCallCount');
   final out = <LogicalLine>[];
   for (final node in root.nodes) {
     _collectLogicalLines(node, out);
@@ -438,8 +436,6 @@ NavigationResult moveUp(
   final x = preferredX >= 0.0 ? preferredX : cachedX(current);
   final currentY = cachedY(current);
 
-  print('[MOVE_UP] current=${current.fragmentId}:${current.offset} x=$x currentY=$currentY');
-
   // Find the highest y that is strictly above the current line
   double? targetY;
   for (final stop in stops_) {
@@ -448,8 +444,6 @@ NavigationResult moveUp(
       if (targetY == null || y > targetY) targetY = y;
     }
   }
-
-  print('[MOVE_UP] targetY=$targetY');
 
   if (targetY == null) {
     // Use full document stop list for cross-node fallback so we are not
@@ -485,10 +479,7 @@ NavigationResult moveUp(
       .where((s) => (cachedY(s) - targetY!).abs() <= _kLineYTolerance)
       .toList();
 
-  print('[MOVE_UP] lineStops=${lineStops.map((s) => '${s.fragmentId}:${s.offset}').join(', ')}');
-
   final best = _stopNearestX(lineStops, x, cachedX);
-  print('[MOVE_UP] best=${best.fragmentId}:${best.offset}');
   return NavigationResult(position: best, preferredX: x);
 }
 
@@ -514,8 +505,6 @@ NavigationResult moveDown(
   final x = preferredX >= 0.0 ? preferredX : cachedX(current);
   final currentY = cachedY(current);
 
-  print('[MOVE_DOWN] current=${current.fragmentId}:${current.offset} x=$x currentY=$currentY');
-
   // Find the lowest y that is strictly below the current line
   double? targetY;
   for (final stop in stops_) {
@@ -524,8 +513,6 @@ NavigationResult moveDown(
       if (targetY == null || y < targetY) targetY = y;
     }
   }
-
-  print('[MOVE_DOWN] targetY=$targetY');
 
   if (targetY == null) {
     // Use full document stop list for cross-node fallback so we are not
@@ -560,10 +547,7 @@ NavigationResult moveDown(
       .where((s) => (cachedY(s) - targetY!).abs() <= _kLineYTolerance)
       .toList();
 
-  print('[MOVE_DOWN] lineStops=${lineStops.map((s) => '${s.fragmentId}:${s.offset}').join(', ')}');
-
   final best = _stopNearestX(lineStops, x, cachedX);
-  print('[MOVE_DOWN] best=${best.fragmentId}:${best.offset}');
   return NavigationResult(position: best, preferredX: x);
 }
 

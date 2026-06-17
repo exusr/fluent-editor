@@ -16,47 +16,19 @@ import 'package:fluent_editor/utils/cursor_navigation.dart';
 import 'package:fluent_editor/selection_manager.dart';
 import 'package:flutter/services.dart';
 
-/// Profiling counters for the arrow-key hot path.
-class _ArrowKeyProfile {
-  static int callCount = 0;
-  static int totalWordNavUs = 0;
-  static int totalSyncSelUs = 0;
-  static int totalCursorUpUs = 0;
-  static int totalTimeUs = 0;
-  static int maxWordNavUs = 0;
-  static int maxSyncSelUs = 0;
-  static int maxTotalUs = 0;
-
-  static void _maybeReport() {
-    print('[ARROW_PROFILE] calls=$callCount '
-        'total=${totalTimeUs ~/ callCount}μs '
-        'wordNav=${totalWordNavUs ~/ callCount}μs '
-        'syncSel=${totalSyncSelUs ~/ callCount}μs '
-        'cursorUp=${totalCursorUpUs ~/ callCount}μs '
-        'maxTotal=${maxTotalUs}μs maxWordNav=${maxWordNavUs}μs maxSyncSel=${maxSyncSelUs}μs');
-  }
-}
-
 bool executeHandleArrowKey(
   LogicalKeyboardKey key,
   FluentDocument document, {
   bool ctrl = false,
   bool shift = false,
 }) {
-  _ArrowKeyProfile.callCount++;
-  final swTotal = Stopwatch()..start();
-
   final cursor = document.cursor;
   final current = shift
       ? CaretStop(cursor.focusId, cursor.focusOffset)
       : CaretStop(cursor.anchorId, cursor.anchorOffset);
   final root = document.content;
 
-  // Measure caretStops getter (should be O(1) cached, but verify)
-  final swStops = Stopwatch()..start();
   final stops = document.caretStops;
-  swStops.stop();
-  print('[ARROW_DETAIL] caretStops=${swStops.elapsedMicroseconds}μs len=${stops.length}');
 
   late final NavigationResult result;
   late final bool isVertical;
@@ -101,24 +73,17 @@ bool executeHandleArrowKey(
     }
   }
 
-  final swWord = Stopwatch()..start();
   if (key == LogicalKeyboardKey.arrowLeft) {
-    final swMove = Stopwatch()..start();
     result = ctrl
         ? moveWordLeft(root, current,
             stops: stops, cachedLines: document.logicalLines)
         : moveLeft(root, current, stops: stops);
-    swMove.stop();
-    print('[ARROW_DETAIL] moveLeft=${swMove.elapsedMicroseconds}μs');
     isVertical = false;
   } else if (key == LogicalKeyboardKey.arrowRight) {
-    final swMove = Stopwatch()..start();
     result = ctrl
         ? moveWordRight(root, current,
             stops: stops, cachedLines: document.logicalLines)
         : moveRight(root, current, stops: stops);
-    swMove.stop();
-    print('[ARROW_DETAIL] moveRight=${swMove.elapsedMicroseconds}μs');
     isVertical = false;
   } else if (key == LogicalKeyboardKey.arrowUp ||
              key == LogicalKeyboardKey.arrowDown) {
@@ -155,7 +120,6 @@ bool executeHandleArrowKey(
     } else {
       // Vertical navigation: scan only the current container + neighbours
       // instead of every stop in the document. Reduces O(n_stops) → O(container).
-      final swVert = Stopwatch()..start();
       final currentContainerId = document.findLogicalContainerId(current.fragmentId);
       final containerOrder = document.containerOrder;
       final containerIdx = containerOrder.indexOf(currentContainerId ?? '');
@@ -287,7 +251,6 @@ bool executeHandleArrowKey(
               .expand<CaretStop>((id) => document.stopsByContainer[id] ?? [])
               .toList()
           : stops;
-      final swMove = Stopwatch()..start();
       final pref = _adjustPreferredXForBlockImage(document, current, cursor.preferredX);
       if (key == LogicalKeyboardKey.arrowUp) {
         result = moveUp(root, current, pref,
@@ -298,18 +261,10 @@ bool executeHandleArrowKey(
             document.resolveCaretX, document.resolveCaretY,
             stops: candidateStops, allStops: stops);
       }
-      swMove.stop();
-      swVert.stop();
-      print('[ARROW_DETAIL] vertSetup=${swVert.elapsedMicroseconds}μs move=${swMove.elapsedMicroseconds}μs');
       isVertical = true;
     }
   } else {
     return false;
-  }
-  swWord.stop();
-  _ArrowKeyProfile.totalWordNavUs += swWord.elapsedMicroseconds;
-  if (swWord.elapsedMicroseconds > _ArrowKeyProfile.maxWordNavUs) {
-    _ArrowKeyProfile.maxWordNavUs = swWord.elapsedMicroseconds;
   }
 
   final newPos = result.position;
@@ -329,27 +284,11 @@ bool executeHandleArrowKey(
   }
 
   // Keep SelectionManager always in sync with cursor anchor/focus
-  final swSync = Stopwatch()..start();
   _syncSelectionManager(document);
-  swSync.stop();
-  _ArrowKeyProfile.totalSyncSelUs += swSync.elapsedMicroseconds;
-  if (swSync.elapsedMicroseconds > _ArrowKeyProfile.maxSyncSelUs) {
-    _ArrowKeyProfile.maxSyncSelUs = swSync.elapsedMicroseconds;
-  }
 
   // Arrow navigation never mutates content: use the cursor-only notification
   // so the cached caret-stop rail and node index survive across key presses.
-  final swCursor = Stopwatch()..start();
   document.cursorOnlyUpdate();
-  swCursor.stop();
-  _ArrowKeyProfile.totalCursorUpUs += swCursor.elapsedMicroseconds;
-
-  swTotal.stop();
-  _ArrowKeyProfile.totalTimeUs += swTotal.elapsedMicroseconds;
-  if (swTotal.elapsedMicroseconds > _ArrowKeyProfile.maxTotalUs) {
-    _ArrowKeyProfile.maxTotalUs = swTotal.elapsedMicroseconds;
-  }
-  _ArrowKeyProfile._maybeReport();
 
   return true;
 }

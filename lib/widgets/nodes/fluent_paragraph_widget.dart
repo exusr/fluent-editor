@@ -159,8 +159,6 @@ class FluentParagraphWidgetState<T extends FluentParagraphWidget> extends State<
       _lastSelectionRange = selRange;
       _lastImePreeditText = preeditText;
       _lastImePreeditFragmentId = preeditFragId;
-      print('[PARA_SETSTATE] nodeId=$nodeId hasCursor=$hasCursor '
-          'hasSelection=$hasSelection cursorOff=$cursorOffset cursorFrag=$cursorFragmentId');
       setState(() {});
     }
   }

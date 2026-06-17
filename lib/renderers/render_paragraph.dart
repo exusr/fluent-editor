@@ -1238,30 +1238,11 @@ class RenderFluentParagraph extends RenderFluentNode
     return null;
   }
 
-  // ─── Profiling counters for selection paint ───────────────────────
-  static int _paintSelCalls = 0;
-  static int _paintSelCacheHits = 0;
-  static int _paintSelCacheMisses = 0;
-  static int _paintSelTotalUs = 0;
-
-  static void reportSelectionPaintProfile() {
-    if (_paintSelCalls == 0) return;
-    print('[RENDER_PROFILE] _paintSelection calls=$_paintSelCalls '
-        'hits=$_paintSelCacheHits misses=$_paintSelCacheMisses '
-        'avg=${_paintSelTotalUs ~/ _paintSelCalls}μs');
-    _paintSelCalls = _paintSelCacheHits = _paintSelCacheMisses = _paintSelTotalUs = 0;
-  }
-
   void _paintSelection(Canvas canvas, Offset offset) {
-    _paintSelCalls++;
-    final sw = Stopwatch()..start();
-
     if (_selAnchorFragmentId == null ||
         _selAnchorLocalOffset == null ||
         _selFocusFragmentId == null ||
         _selFocusLocalOffset == null) {
-      sw.stop();
-      _paintSelTotalUs += sw.elapsedMicroseconds;
       return;
     }
 
@@ -1278,8 +1259,6 @@ class RenderFluentParagraph extends RenderFluentNode
         : _fragmentOffsetToGlobal(_selFocusFragmentId!, _selFocusLocalOffset!);
 
     if (baseGlobal == null || extentGlobal == null) {
-      sw.stop();
-      _paintSelTotalUs += sw.elapsedMicroseconds;
       return;
     }
 
@@ -1289,13 +1268,10 @@ class RenderFluentParagraph extends RenderFluentNode
     final key = (aFrag: _selAnchorFragmentId, aOff: _selAnchorLocalOffset,
                  fFrag: _selFocusFragmentId, fOff: _selFocusLocalOffset);
     if (_cachedSelectionBoxes == null || _lastSelectionKey != key) {
-      _paintSelCacheMisses++;
       _lastSelectionKey = key;
       _cachedSelectionBoxes = _painter.getBoxesForSelection(
         TextSelection(baseOffset: start, extentOffset: end),
       );
-    } else {
-      _paintSelCacheHits++;
     }
 
     final selectionPaint = Paint()..color = selectionColor;
