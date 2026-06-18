@@ -1056,7 +1056,7 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
         // IME buffer stays in sync with the document. macOS physical keyboard:
         // backspace is a hardware KeyEvent; the delta model is unreliable there,
         // so we let the KeyEvent path handle it and re-sync the buffer afterwards.
-        final _isVirtualKeyboard = !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS;
+        final _isVirtualKeyboard = !kIsWeb && (defaultTargetPlatform == TargetPlatform.iOS || defaultTargetPlatform == TargetPlatform.android);
         if (_isVirtualKeyboard &&
             widget.document.imeHandler.shouldUseBufferSync &&
             widget.document.cursor.isCollapsed &&
@@ -1294,7 +1294,7 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
     // iOS virtual keyboard: backspace is handled via TextEditingDelta.
     // macOS physical keyboard: backspace is a hardware KeyEvent; the delta
     // model is unreliable there, so we let the KeyEvent path handle it.
-    final _isVirtualKeyboard = !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS;
+    final _isVirtualKeyboard = !kIsWeb && (defaultTargetPlatform == TargetPlatform.iOS || defaultTargetPlatform == TargetPlatform.android);
     if (_isVirtualKeyboard &&
         doc.imeHandler.shouldUseBufferSync &&
         doc.cursor.isCollapsed &&

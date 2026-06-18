@@ -68,6 +68,12 @@ class FluentTextInputHandler with DeltaTextInputClient {
   /// platform echo is not misinterpreted as new user input.
   bool _updatingSelf = false;
 
+  /// On Android (_shouldSyncBuffer == false) we keep the IME buffer alive
+  /// while the user types in the same fragment so suggestions/autocorrect
+  /// have the correct context. We only reset the buffer when the cursor
+  /// moves to a different fragment.
+  String _lastSyncedFragmentId = '';
+
   /// Whether the platform TextInput connection is currently open.
   bool get isConnectionActive => _connection != null && _connection!.attached;
 
@@ -121,6 +127,7 @@ class FluentTextInputHandler with DeltaTextInputClient {
   /// Attaches the IME connection to the given document.
   void attachInput(FluentDocument document) {
     _document = document;
+    _lastSyncedFragmentId = '';
   }
 
   /// Detaches and closes the IME connection.
@@ -133,6 +140,7 @@ class FluentTextInputHandler with DeltaTextInputClient {
     _connection = null;
     _document = null;
     _resetComposition();
+    _lastSyncedFragmentId = '';
   }
 
   /// Opens the keyboard (requests focus from the platform text input).
@@ -407,6 +415,118 @@ class FluentTextInputHandler with DeltaTextInputClient {
         updateEditingValue(value, cursorOffset: cursorOffset);
         return;
       }
+      
+      // ─── Android & Desktop: buffer NOT synced, process deltas directly ──
+      // IMPORTANT: If any delta contains a valid composing range, we should NOT
+      // process the deltas here. Instead, we should let them be handled by the
+      // composition branch below (line 479+) which knows how to handle preedit.
+      final hasComposing = deltas.any((d) => d.composing.isValid);
+      if (hasComposing) {
+        // A composition is starting/active - handle via updateEditingValue
+        TextEditingValue value = currentTextEditingValue ?? const TextEditingValue();
+        for (final delta in deltas) {
+          value = delta.apply(value);
+        }
+        updateEditingValue(value);
+        return;
+      }
+      
+      final doc = _document!;
+      for (final delta in deltas) {
+        if (delta is TextEditingDeltaDeletion ||
+            (delta is TextEditingDeltaReplacement &&
+                delta.replacementText.isEmpty)) {
+          // Backspace/Delete operation
+          doc.saveState(description: 'Delete', forceNewAction: false);
+          
+          // Handle emoji deletion: expand single-unit deletion to 2 if it's an emoji
+          int deleteCount = 1;
+          final deletionRange = delta is TextEditingDeltaDeletion 
+              ? delta.deletedRange 
+              : (delta as TextEditingDeltaReplacement).replacedRange;
+          
+          if (deletionRange.isValid && (deletionRange.end - deletionRange.start) == 1) {
+            final oldText = delta.oldText;
+            final deletePos = deletionRange.start.clamp(0, oldText.length);
+            if (deletePos < oldText.length) {
+              final graphemeLen = FragmentOperations.getGraphemeLengthAt(oldText, deletePos);
+              if (graphemeLen == 2) {
+                deleteCount = 2; // Emoji needs 2 code units
+              }
+            }
+          }
+          
+          // Execute multiple backspaces if needed for emoji
+          for (int i = 0; i < deleteCount; i++) {
+            executeHandleBackspace(doc);
+          }
+        } else if (delta is TextEditingDeltaNonTextUpdate) {
+          // Selection or composing range changed without text mutation.
+          // At this point we've already checked that composing.isValid is false
+          // for all deltas, so this is just a selection change.
+          // No action needed - selection changes don't affect document content.
+        } else if (delta is TextEditingDeltaInsertion) {
+          // Text insertion (regular character or emoji input)
+          doc.saveState(description: 'Insert text', forceNewAction: false);
+          final insertedText = delta.textInserted;
+          
+          for (final char in insertedText.characters) {
+            if (!doc.cursor.isCollapsed) {
+              executeHandleReplaceSelection(char, doc);
+            } else {
+              executeHandleInsertCharacter(char, doc);
+            }
+          }
+        } else if (delta is TextEditingDeltaReplacement) {
+          // Text replacement (selection replaced with new text)
+          // This handles autocorrect, suggestion acceptance, etc.
+          doc.saveState(description: 'Replace text', forceNewAction: false);
+          
+          final replacedRange = delta.replacedRange;
+          final replacementText = delta.replacementText;
+          final oldText = delta.oldText;
+          
+          if (replacedRange.isValid && replacedRange.start != replacedRange.end) {
+            final fragId = doc.cursor.focusId.isNotEmpty ? doc.cursor.focusId : doc.cursor.anchorId;
+            final currentOffset = doc.cursor.focusOffset;
+            
+            // On Android the buffer is empty before typing, so oldText contains
+            // only what was typed in this session and was inserted sequentially.
+            final typedGraphemeCount = oldText.characters.length;
+            final bufferStartInDoc = currentOffset - typedGraphemeCount;
+            
+            // Convert buffer code-unit offsets to grapheme offsets
+            final beforeReplace = oldText.substring(0, replacedRange.start.clamp(0, oldText.length));
+            final replaceStartGraphemes = beforeReplace.characters.length;
+            
+            final upToReplaceEnd = oldText.substring(0, replacedRange.end.clamp(0, oldText.length));
+            final replaceEndGraphemes = upToReplaceEnd.characters.length;
+            
+            final docStart = bufferStartInDoc + replaceStartGraphemes;
+            final docEnd = bufferStartInDoc + replaceEndGraphemes;
+            
+            // Select the exact range to replace
+            doc.cursor.batchUpdate(() {
+              doc.cursor.anchorId = fragId;
+              doc.cursor.anchorOffset = docStart;
+              doc.cursor.focusId = fragId;
+              doc.cursor.focusOffset = docEnd;
+            });
+            executeHandleReplaceSelection(replacementText, doc);
+          } else {
+            // No existing text to replace; just insert the new text
+            for (final char in replacementText.characters) {
+              if (!doc.cursor.isCollapsed) {
+                executeHandleReplaceSelection(char, doc);
+              } else {
+                executeHandleInsertCharacter(char, doc);
+              }
+            }
+          }
+          _resetPlatformBuffer();
+        }
+      }
+      doc.updateContent();
       return;
     }
 
@@ -551,11 +671,15 @@ class FluentTextInputHandler with DeltaTextInputClient {
               ? (value.selection.extentOffset - start).clamp(0, preeditText.length)
               : preeditText.length;
         } else {
-          _preeditText = value.text;
-          _composingRange = value.composing;
+          final start = value.composing.start.clamp(0, value.text.length);
+          final end = value.composing.end.clamp(0, value.text.length);
+          final rawPreedit = value.text.substring(start, end);
+          final preeditText = _sanitizeUtf16(rawPreedit);
+          _preeditText = preeditText;
+          _composingRange = TextRange(start: 0, end: preeditText.length);
           _preeditCaretOffset = value.selection.isValid
-              ? value.selection.extentOffset.clamp(0, value.text.length)
-              : value.text.length;
+              ? (value.selection.extentOffset - start).clamp(0, preeditText.length)
+              : preeditText.length;
         }
         _invalidatePreeditRender();
         return;
@@ -601,7 +725,18 @@ class FluentTextInputHandler with DeltaTextInputClient {
         return;
       }
 
-      _commitPreedit(value.text);
+      // ─── Android: Composition confirmation ──────────────────────
+      // IMPORTANT: On Android, the buffer is NOT synced with the document.
+      // When composition ends, value.text contains the finalized text (e.g., CJK ideograph).
+      if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+        // If the buffer text has changed from the previous preedit, it means
+        // the user selected a replacement suggestion (e.g. CJK).
+        final finalizedText = value.text.isNotEmpty ? value.text : _preeditText;
+        _commitPreedit(finalizedText);
+      } else {
+        _commitPreedit(_preeditText);
+      }
+
       _resetPlatformBuffer();
       return;
     }
@@ -633,11 +768,15 @@ class FluentTextInputHandler with DeltaTextInputClient {
     cursor.imeComposing = true;
     cursor.imeComposingStart = _preeditLocalOffset;
     doc.selectionManager.clear();
-    _preeditText = value.text;
-    _composingRange = value.composing;
+    final compStart = value.composing.start.clamp(0, value.text.length);
+    final compEnd = value.composing.end.clamp(0, value.text.length);
+    final rawPreedit = value.text.substring(compStart, compEnd);
+    final preeditText = _sanitizeUtf16(rawPreedit);
+    _preeditText = preeditText;
+    _composingRange = TextRange(start: 0, end: preeditText.length);
     _preeditCaretOffset = value.selection.isValid
-        ? value.selection.extentOffset.clamp(0, value.text.length)
-        : value.text.length;
+        ? (value.selection.extentOffset - compStart).clamp(0, preeditText.length)
+        : preeditText.length;
     _invalidatePreeditRender();
   }
 
@@ -890,7 +1029,40 @@ class FluentTextInputHandler with DeltaTextInputClient {
     _preeditCaretOffset = 0;
   }
 
-  // ─── iOS Buffer Sync Helpers ─────────────────────────────────────
+  /// Handles composing range changes on Android when composition starts/changes.
+  /// Called when the platform reports a new composing range without text change.
+  void _handleComposingRangeChange(TextRange composing, int cursorOffset) {
+    if (!composing.isValid) {
+      if (_isComposing) {
+        // Composition ended
+        _cancelPreedit();
+      }
+      return;
+    }
+
+    // Composition range is valid
+    if (!_isComposing) {
+      // Starting new composition: lock cursor to current fragment
+      final doc = _document;
+      if (doc == null) return;
+
+      final fragId = doc.cursor.focusId.isNotEmpty ? doc.cursor.focusId : doc.cursor.anchorId;
+      _preeditFragmentId = fragId;
+      _preeditLocalOffset = doc.cursor.focusId.isNotEmpty ? doc.cursor.focusOffset : doc.cursor.anchorOffset;
+      _preeditContainerId = doc.findLogicalContainerId(_preeditFragmentId) ?? '';
+
+      doc.cursor.imeComposing = true;
+      _isComposing = true;
+      _preeditText = '';
+      _composingRange = TextRange.empty;
+    }
+
+    // Update composing range
+    _composingRange = composing;
+    _preeditCaretOffset = cursorOffset;
+
+    _invalidatePreeditRender();
+  }
 
   /// Returns the text of the fragment where the cursor currently sits.
   String? _getCurrentFragmentText() {
@@ -951,6 +1123,23 @@ class FluentTextInputHandler with DeltaTextInputClient {
   void syncImeBufferToFragment() {
     if (_connection == null || !_connection!.attached) return;
     if (_isComposing) return;
+
+    final doc = _document;
+    if (doc == null) return;
+    final currentFragId = doc.cursor.focusId.isNotEmpty ? doc.cursor.focusId : doc.cursor.anchorId;
+
+    if (!_shouldSyncBuffer) {
+      // Android: only reset the buffer when the cursor moves to a different
+      // fragment. If we're still in the same fragment, leave the buffer alone
+      // so the IME can keep its suggestion context.
+      if (currentFragId != _lastSyncedFragmentId) {
+        _resetPlatformBuffer();
+      }
+      _lastSyncedFragmentId = currentFragId;
+      return;
+    }
+
+    _lastSyncedFragmentId = currentFragId;
     final text = _getCurrentFragmentText();
     if (text == null) return;
     final offset = _getCursorOffsetInFragment();
