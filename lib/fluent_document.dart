@@ -1075,12 +1075,20 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
             !widget.document.imeHandler.isComposing &&
             (event.logicalKey == LogicalKeyboardKey.backspace ||
              event.logicalKey == LogicalKeyboardKey.delete)) {
+          // iOS virtual keyboard does not generate KeyUp/KeyRepeat events —
+          // only physical keyboards do. Swallow KeyUp and KeyRepeat to
+          // prevent the IME from generating a stale deletion delta echo
+          // that would cascade into a backspace loop.
+          if (event is! KeyDownEvent) {
+            return KeyEventResult.handled;
+          }
           // When the cursor is at the very start of the current fragment the
           // platform IME buffer has no text before the cursor, so iOS will
           // not emit a deletion delta. We must handle the structural backspace
           // (merge with previous node) ourselves.
           if (widget.document.imeHandler.cursorIsAtFragmentStart) {
             widget.document.manageEvent(event);
+            widget.document.imeHandler.markBackspaceHandledViaKeyEvent();
             return KeyEventResult.handled;
           }
           return KeyEventResult.ignored;

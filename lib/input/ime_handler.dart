@@ -42,6 +42,20 @@ class FluentTextInputHandler with DeltaTextInputClient {
   /// via deltas (buffer-sync) rather than raw KeyEvent.
   bool get shouldUseBufferSync => _shouldSyncBuffer;
 
+  /// Called by the editor shell after a structural backspace is handled
+  /// via the KeyEvent path (iOS physical keyboard, cursor at fragment
+  /// start). Starts the structural-change grace period so that IME
+  /// deltas echoing the platform's stale buffer are ignored, then
+  /// re-syncs the buffer with the new fragment text.
+  void markBackspaceHandledViaKeyEvent() {
+    _structuralChangeInProgress = true;
+    _structuralChangeTimer?.cancel();
+    _structuralChangeTimer = Timer(_structuralChangeGracePeriod, () {
+      _structuralChangeInProgress = false;
+    });
+    syncImeBufferToFragment();
+  }
+
   /// Current preedit text displayed to the user but not yet committed.
   String _preeditText = '';
   String get preeditText => _preeditText;
@@ -298,7 +312,7 @@ class FluentTextInputHandler with DeltaTextInputClient {
       final text = _getCurrentFragmentText();
       if (text != null) {
         final offset = _getCursorOffsetInFragment().clamp(0, text.length);
-        if (_isIOS && offset == 0) {
+        if (_isIOS && offset == 0 && !text.startsWith(_emptyFragmentPlaceholder)) {
           // See _emptyFragmentPlaceholder: when the cursor sits at the very
           // start of a fragment (offset 0), UIKit's Backspace has nothing
           // before the cursor to delete and silently swallows the keystroke.
@@ -1534,7 +1548,7 @@ class FluentTextInputHandler with DeltaTextInputClient {
     final text = _getCurrentFragmentText();
     if (text == null) return;
     final offset = _getCursorOffsetInFragment();
-    final bool usePlaceholder = _isIOS && offset == 0;
+    final bool usePlaceholder = _isIOS && offset == 0 && !text.startsWith(_emptyFragmentPlaceholder);
     final syncedText = usePlaceholder ? '$_emptyFragmentPlaceholder$text' : text;
     final syncedOffset = usePlaceholder ? 1 : offset.clamp(0, syncedText.length);
     _updatingSelf = true;
