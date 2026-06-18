@@ -706,8 +706,23 @@ class FluentTextInputHandler with DeltaTextInputClient {
         final node = doc.nodeById(fragId);
         if (node is Fragment) {
           _updatingSelf = true; // Block platform echoes during document mutation
-          
+
           doc.saveState(description: 'Replace text', forceNewAction: false);
+
+          // FIX macOS: When the committed text is shorter than the previous
+          // preedit, we must explicitly clear the old preedit from the editor
+          // before applying the final buffer string to avoid ghost fragments.
+          if (!kIsWeb && defaultTargetPlatform == TargetPlatform.macOS) {
+            final oldText = node.text;
+            final preeditLen = _preeditText.length;
+            final startOffset = _preeditLocalOffset.clamp(0, oldText.length);
+
+            // If the previous composition occupied space, remove it cleanly
+            if (preeditLen > 0 && startOffset + preeditLen <= oldText.length) {
+              node.text = oldText.substring(0, startOffset) + oldText.substring(startOffset + preeditLen);
+            }
+          }
+
           node.text = _sanitizeUtf16(value.text);
           // Cursor position from the IME's selection after commit.
           final newCursorOffset = value.selection.isValid && value.selection.isCollapsed
@@ -717,9 +732,9 @@ class FluentTextInputHandler with DeltaTextInputClient {
           _resetComposition();
           doc.cursor.imeComposing = false;
           doc.updateContent();
-          
+
           _updatingSelf = false; // Unblock after document is updated
-          
+
           syncImeBufferToFragment(); // Now safe to sync
         }
         return;

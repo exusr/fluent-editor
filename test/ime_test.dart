@@ -289,6 +289,41 @@ void main() {
       expect(restoredFrag.text, 'Hello world');
     });
 
+    test('macOS buffer-sync commit with shorter suggestion clears ghost preedit', () {
+      final para = doc.content.nodes.first as Paragraph;
+      final frag = para.fragments.first as Fragment;
+      doc.cursor.moveTo(frag.id, 5);
+
+      debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+      addTearDown(() => debugDefaultTargetPlatformOverride = null);
+
+      // Start composition on macOS: the full buffer is the fragment text
+      // merged with the preedit. Cursor is at position 5 (after "Hello").
+      handler.updateEditingValue(
+        const TextEditingValue(
+          text: 'Hello nyuuryokuworld',
+          composing: TextRange(start: 6, end: 15),
+        ),
+      );
+      expect(handler.isComposing, isTrue);
+      expect(handler.preeditText, 'nyuuryoku');
+
+      // Commit with a shorter suggestion (e.g. predictive text corrected
+      // "nyuuryoku" to "nyuryoku"). The full buffer now contains the
+      // committed text merged with surrounding fragment text.
+      handler.updateEditingValue(
+        const TextEditingValue(
+          text: 'Hello nyuryokuworld',
+          composing: TextRange.empty,
+        ),
+      );
+
+      expect(handler.isComposing, isFalse);
+      // The fragment must contain exactly the committed text with no
+      // trailing ghost characters from the longer preedit.
+      expect(frag.text, 'Hello nyuryokuworld');
+    });
+
     test('Perform action newline commits preedit and inserts paragraph', () {
       final para = doc.content.nodes.first as Paragraph;
       final frag = para.fragments.first as Fragment;
