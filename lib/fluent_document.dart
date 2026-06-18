@@ -1013,6 +1013,18 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
       focusNode: widget.document.editorFocusNode,
       autofocus: true,
       onKeyEvent: (node, event) {
+        // TEMP DIAGNOSTIC — remove once the start-of-paragraph backspace bug
+        // is confirmed fixed. Confirms whether onKeyEvent fires at all for
+        // backspace from the iOS software keyboard.
+        if (event.logicalKey == LogicalKeyboardKey.backspace) {
+          debugPrint(
+            'FluentDocument[DIAG]: onKeyEvent backspace, '
+            'cursorIsAtFragmentStart=${widget.document.imeHandler.cursorIsAtFragmentStart}, '
+            'isComposing=${widget.document.imeHandler.isComposing}, '
+            'eventType=${event.runtimeType}',
+          );
+        }
+
         // During IME composition, let the IME handle navigation and character
         // keys. Arrow keys are routed to the IME (KeyEventResult.ignored) so
         // the user can navigate within the marked text to edit portions of the
@@ -1063,6 +1075,14 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
             !widget.document.imeHandler.isComposing &&
             (event.logicalKey == LogicalKeyboardKey.backspace ||
              event.logicalKey == LogicalKeyboardKey.delete)) {
+          // When the cursor is at the very start of the current fragment the
+          // platform IME buffer has no text before the cursor, so iOS will
+          // not emit a deletion delta. We must handle the structural backspace
+          // (merge with previous node) ourselves.
+          if (widget.document.imeHandler.cursorIsAtFragmentStart) {
+            widget.document.manageEvent(event);
+            return KeyEventResult.handled;
+          }
           return KeyEventResult.ignored;
         }
 

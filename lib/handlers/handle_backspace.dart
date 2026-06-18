@@ -178,6 +178,29 @@ bool executeHandleBackspace(FluentDocument document, {bool ctrl = false, bool li
           cursor.moveTo(next.id, 0);
         }
       }
+      // Fallback: if the cursor still points to the removed fragment,
+      // use moveLeft/moveRight to find the nearest valid caret stop.
+      if (cursor.anchorId == currentFrag.id) {
+        final fallbackStop = moveLeft(
+          root,
+          CaretStop(cursor.anchorId, cursor.anchorOffset),
+          stops: document.caretStops,
+          cachedLines: document.logicalLines,
+        );
+        if (fallbackStop.position != null) {
+          cursor.moveTo(fallbackStop.position!.fragmentId, fallbackStop.position!.offset);
+        } else {
+          final rightStop = moveRight(
+            root,
+            CaretStop(cursor.anchorId, cursor.anchorOffset),
+            stops: document.caretStops,
+            cachedLines: document.logicalLines,
+          );
+          if (rightStop.position != null) {
+            cursor.moveTo(rightStop.position!.fragmentId, rightStop.position!.offset);
+          }
+        }
+      }
       document.updateContent();
       return true;
     }
@@ -245,8 +268,71 @@ bool _handleBackspaceAtStart(
           return true;
         }
       }
+      // Fallback: if the cursor still points to the removed fragment,
+      // use moveLeft/moveRight to find the nearest valid caret stop.
+      if (cursor.anchorId == currentFrag.id) {
+        final fallbackStop = moveLeft(
+          root,
+          CaretStop(cursor.anchorId, cursor.anchorOffset),
+          stops: document.caretStops,
+          cachedLines: document.logicalLines,
+        );
+        if (fallbackStop.position != null) {
+          cursor.moveTo(fallbackStop.position!.fragmentId, fallbackStop.position!.offset);
+        } else {
+          final rightStop = moveRight(
+            root,
+            CaretStop(cursor.anchorId, cursor.anchorOffset),
+            stops: document.caretStops,
+            cachedLines: document.logicalLines,
+          );
+          if (rightStop.position != null) {
+            cursor.moveTo(rightStop.position!.fragmentId, rightStop.position!.offset);
+          }
+        }
+      }
       document.updateContent();
       return true;
+    }
+
+    // Sole empty fragment: the container is effectively empty.
+    // Remove the fragment so _mergeContainers sees an empty container,
+    // find the previous logical stop, and perform the structural merge.
+    if (flat.length == 1) {
+      final prevStop = moveLeft(
+        root,
+        CaretStop(cursor.anchorId, cursor.anchorOffset),
+        stops: document.caretStops,
+        cachedLines: document.logicalLines,
+      );
+      if (prevStop.position == null) {
+        // Start of document: just clean up the empty fragment.
+        final parent = findParent(root, currentFrag);
+        removeNode(root, currentFrag);
+        _cleanupEmptyInlineParents(root, parent);
+        document.updateContent();
+        return true;
+      }
+      final prevFrag = document.nodeById(prevStop.position!.fragmentId) as Fragment?;
+      if (prevFrag == null) {
+        final parent = findParent(root, currentFrag);
+        removeNode(root, currentFrag);
+        _cleanupEmptyInlineParents(root, parent);
+        document.updateContent();
+        return true;
+      }
+      final prevContainer = findLogicalContainer(root, prevStop.position!.fragmentId);
+      if (prevContainer == null) {
+        final parent = findParent(root, currentFrag);
+        removeNode(root, currentFrag);
+        _cleanupEmptyInlineParents(root, parent);
+        document.updateContent();
+        return true;
+      }
+      final parent = findParent(root, currentFrag);
+      removeNode(root, currentFrag);
+      _cleanupEmptyInlineParents(root, parent);
+      return _mergeContainers(document, prevContainer, container, prevFrag, currentFrag);
     }
   }
 

@@ -9,6 +9,7 @@ import 'package:fluent_editor/handlers/handle_insert_character.dart';
 import 'package:fluent_editor/handlers/handle_replace_selection.dart';
 import 'package:fluent_editor/handlers/handle_enter.dart';
 import 'package:fluent_editor/handlers/handle_backspace.dart';
+import 'package:fluent_editor/utils/cursor_navigation.dart';
 import 'package:fluent_editor/utils/fragment_operations.dart';
 
 /// Singleton IME handler that implements [TextInputClient] for Flutter's
@@ -30,6 +31,12 @@ class FluentTextInputHandler with DeltaTextInputClient {
       !kIsWeb && (defaultTargetPlatform == TargetPlatform.iOS ||
                   defaultTargetPlatform == TargetPlatform.macOS ||
                   defaultTargetPlatform == TargetPlatform.windows);
+
+  /// True on iOS specifically. Used to scope the empty-fragment placeholder
+  /// (see [_emptyFragmentPlaceholder]) and other iOS-only quirks, since
+  /// macOS handles Backspace via the hardware KeyEvent path and Windows has
+  /// not exhibited the empty-buffer symptom.
+  bool get _isIOS => !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS;
 
   /// Public accessor so the editor shell knows whether backspace is handled
   /// via deltas (buffer-sync) rather than raw KeyEvent.
@@ -290,7 +297,21 @@ class FluentTextInputHandler with DeltaTextInputClient {
     if (_shouldSyncBuffer) {
       final text = _getCurrentFragmentText();
       if (text != null) {
-        final offset = _getCursorOffsetInFragment();
+        final offset = _getCursorOffsetInFragment().clamp(0, text.length);
+        if (_isIOS && offset == 0) {
+          // See _emptyFragmentPlaceholder: when the cursor sits at the very
+          // start of a fragment (offset 0), UIKit's Backspace has nothing
+          // before the cursor to delete and silently swallows the keystroke.
+          // We prepend a single zero-width placeholder character so Backspace
+          // always has something to act on. The placeholder never reaches the
+          // document model — it is intercepted in updateEditingValueWithDeltas
+          // and translated into a structural backspace (merge with prev node).
+          return TextEditingValue(
+            text: '$_emptyFragmentPlaceholder$text',
+            selection: const TextSelection.collapsed(offset: 1),
+            composing: TextRange.empty,
+          );
+        }
         return TextEditingValue(
           text: text,
           selection: TextSelection.collapsed(offset: offset),
@@ -353,6 +374,80 @@ class FluentTextInputHandler with DeltaTextInputClient {
       // iOS/macOS/Windows: buffer is synced with fragment text, apply deltas to document.
       if (_shouldSyncBuffer) {
         final _isMacOS = !kIsWeb && defaultTargetPlatform == TargetPlatform.macOS;
+
+        // PLATFORM QUIRK (iOS, empty paragraph): UIKit treats a completely
+        // empty text buffer as having nothing for Backspace to act on —
+        // pressing Backspace with text: '' produces NO callback at all (no
+        // delta, no KeyEvent); UIKit swallows the keystroke before it ever
+        // reaches Flutter. Since the current fragment's real text is ''
+        // whenever the paragraph is empty, we mirror a single zero-width
+        // placeholder character to UIKit instead (see
+        // _emptyFragmentPlaceholder / syncImeBufferToFragment /
+        // currentTextEditingValue) so Backspace has something real to
+        // delete. When the user backspaces it, UIKit now sends a normal
+        // deletion/replacement delta shrinking the placeholder buffer from
+        // length 1 to 0. We intercept that exact signature here and treat
+        // it as a structural backspace (merge with the previous node)
+        // instead of letting it fall through and try to write the
+        // placeholder into the document.
+        if (_isIOS && cursorIsAtFragmentStart) {
+          // On iOS we prepend a zero-width placeholder (\u200B) to the IME
+          // buffer whenever the cursor is at offset 0 — whether the fragment
+          // is empty or not — so Backspace always has something to delete.
+          // Detect that placeholder deletion here and treat it as a
+          // structural backspace (merge with the previous node).
+          final deletedPlaceholder = deltas.any((d) {
+            if (d is TextEditingDeltaDeletion) {
+              return d.oldText.startsWith(_emptyFragmentPlaceholder) &&
+                  d.deletedRange.start == 0 &&
+                  d.deletedRange.end == _emptyFragmentPlaceholder.length;
+            }
+            if (d is TextEditingDeltaReplacement) {
+              return d.oldText.startsWith(_emptyFragmentPlaceholder) &&
+                  d.replacementText.isEmpty &&
+                  d.replacedRange.start == 0 &&
+                  d.replacedRange.end == _emptyFragmentPlaceholder.length;
+            }
+            return false;
+          });
+          if (deletedPlaceholder) {
+            _document!.saveState(description: 'Backspace', forceNewAction: false);
+            executeHandleBackspace(_document!);
+            syncImeBufferToFragment();
+            return;
+          }
+        }
+
+        // PLATFORM QUIRK (iOS, non-empty fragment at offset 0): as a
+        // residual safety net, also catch the case where the fragment text
+        // is NOT empty (so the placeholder above does not apply) but UIKit
+        // still reports a zero-content delete attempt — e.g. a batch of
+        // only TextEditingDeltaNonTextUpdate entries, or a
+        // Deletion/Replacement whose range is already collapsed
+        // (start == end). The normal length-diff detection further below
+        // only fires on an actual 1/2 character shrink, so this signature
+        // would otherwise fall through to updateEditingValue() and be
+        // swallowed by the "skip our own echo" guard.
+        if (_isIOS && cursorIsAtFragmentStart && deltas.isNotEmpty) {
+          final isZeroContentDeleteAttempt = deltas.every((d) {
+            if (d is TextEditingDeltaNonTextUpdate) return true;
+            if (d is TextEditingDeltaDeletion) {
+              return d.deletedRange.start == d.deletedRange.end;
+            }
+            if (d is TextEditingDeltaReplacement) {
+              return d.replacementText.isEmpty &&
+                  d.replacedRange.start == d.replacedRange.end;
+            }
+            return false;
+          });
+          if (isZeroContentDeleteAttempt) {
+            _document!.saveState(description: 'Backspace', forceNewAction: false);
+            executeHandleBackspace(_document!);
+            syncImeBufferToFragment();
+            return;
+          }
+        }
+
         TextEditingValue value = currentTextEditingValue ?? const TextEditingValue();
         for (final delta in deltas) {
           // Intercept newline insertion from iOS virtual keyboard.
@@ -403,21 +498,44 @@ class FluentTextInputHandler with DeltaTextInputClient {
                 ? delta.deletedRange 
                 : (delta as TextEditingDeltaReplacement).replacedRange;
             
-            // Check if we're deleting at the start of a surrogate pair (emoji)
+            // Check if we're deleting inside a surrogate pair (emoji)
             final deletionLength = deletionRange.end - deletionRange.start;
             if (deletionRange.isValid && deletionLength == 1) {
               final textBefore = value.text;
               final deleteStart = deletionRange.start.clamp(0, textBefore.length);
-              if (deleteStart < textBefore.length) {
-                final graphemeLen = FragmentOperations.getGraphemeLengthAt(textBefore, deleteStart);
+              var effectiveDeleteStart = deleteStart;
+              if (deleteStart > 0 && deleteStart < textBefore.length) {
+                final prev = textBefore.codeUnitAt(deleteStart - 1);
+                final curr = textBefore.codeUnitAt(deleteStart);
+                if (prev >= 0xD800 && prev <= 0xDBFF &&
+                    curr >= 0xDC00 && curr <= 0xDFFF) {
+                  // Deleting the low surrogate: expand to cover the whole pair
+                  effectiveDeleteStart = deleteStart - 1;
+                }
+              }
+              if (effectiveDeleteStart < textBefore.length) {
+                final graphemeLen = FragmentOperations.getGraphemeLengthAt(textBefore, effectiveDeleteStart);
                 if (graphemeLen == 2) {
                   // This is an emoji - need to delete 2 code units
+                  // Adjust selection if we expanded backwards so the delta stays valid.
+                  var adjustedSelection = delta.selection;
+                  if (effectiveDeleteStart < deleteStart) {
+                    final shift = deleteStart - effectiveDeleteStart;
+                    adjustedSelection = delta.selection.copyWith(
+                      baseOffset: delta.selection.baseOffset >= deleteStart
+                          ? delta.selection.baseOffset - shift
+                          : delta.selection.baseOffset,
+                      extentOffset: delta.selection.extentOffset >= deleteStart
+                          ? delta.selection.extentOffset - shift
+                          : delta.selection.extentOffset,
+                    );
+                  }
                   // Create a modified delta with expanded range
                   if (delta is TextEditingDeltaDeletion) {
                     final expandedDelta = TextEditingDeltaDeletion(
                       oldText: delta.oldText,
-                      deletedRange: TextRange(start: deleteStart, end: deleteStart + 2),
-                      selection: delta.selection,
+                      deletedRange: TextRange(start: effectiveDeleteStart, end: effectiveDeleteStart + 2),
+                      selection: adjustedSelection,
                       composing: delta.composing,
                     );
                     value = expandedDelta.apply(value);
@@ -425,8 +543,8 @@ class FluentTextInputHandler with DeltaTextInputClient {
                     final expandedDelta = TextEditingDeltaReplacement(
                       oldText: delta.oldText,
                       replacementText: '',
-                      replacedRange: TextRange(start: deleteStart, end: deleteStart + 2),
-                      selection: delta.selection,
+                      replacedRange: TextRange(start: effectiveDeleteStart, end: effectiveDeleteStart + 2),
+                      selection: adjustedSelection,
                       composing: delta.composing,
                     );
                     value = expandedDelta.apply(value);
@@ -485,27 +603,31 @@ class FluentTextInputHandler with DeltaTextInputClient {
                 delta.replacementText.isEmpty)) {
           // Backspace/Delete operation
           doc.saveState(description: 'Delete', forceNewAction: false);
-          
-          // Handle emoji deletion: expand single-unit deletion to 2 if it's an emoji
-          int deleteCount = 1;
-          final deletionRange = delta is TextEditingDeltaDeletion 
-              ? delta.deletedRange 
+
+          final deletionRange = delta is TextEditingDeltaDeletion
+              ? delta.deletedRange
               : (delta as TextEditingDeltaReplacement).replacedRange;
-          
-          if (deletionRange.isValid && (deletionRange.end - deletionRange.start) == 1) {
+
+          if (deletionRange.isValid && deletionRange.start < deletionRange.end) {
             final oldText = delta.oldText;
-            final deletePos = deletionRange.start.clamp(0, oldText.length);
-            if (deletePos < oldText.length) {
-              final graphemeLen = FragmentOperations.getGraphemeLengthAt(oldText, deletePos);
-              if (graphemeLen == 2) {
-                deleteCount = 2; // Emoji needs 2 code units
-              }
+            final deleteStart = deletionRange.start.clamp(0, oldText.length);
+            final deleteEnd = deletionRange.end.clamp(0, oldText.length);
+            final deletedText = oldText.substring(deleteStart, deleteEnd);
+            // executeHandleBackspace is grapheme-aware, so call it once per
+            // grapheme cluster rather than per UTF-16 code unit.
+            final graphemeCount = deletedText.characters.length;
+            for (int i = 0; i < graphemeCount; i++) {
+              executeHandleBackspace(doc);
             }
-          }
-          
-          // Execute multiple backspaces if needed for emoji
-          for (int i = 0; i < deleteCount; i++) {
-            executeHandleBackspace(doc);
+          } else if (deletionRange.isValid && deletionRange.start == deletionRange.end) {
+            // Zero-length deletion on Android: the IME buffer is empty but
+            // the user pressed backspace. If the cursor is on an empty
+            // fragment or at the start of a fragment, treat this as a
+            // structural backspace so the cursor can enter the adjacent node.
+            final currentFragText = _getCurrentFragmentText() ?? '';
+            if (currentFragText.isEmpty || _getCursorOffsetInFragment() == 0) {
+              executeHandleBackspace(doc);
+            }
           }
         } else if (delta is TextEditingDeltaNonTextUpdate) {
           // Selection or composing range changed without text mutation.
@@ -573,6 +695,15 @@ class FluentTextInputHandler with DeltaTextInputClient {
           _resetPlatformBuffer();
         }
       }
+      // On Android, if deletion left the current fragment empty, reset the
+      // platform buffer so the IME starts from a clean slate on the next
+      // keystroke and doesn't compute deltas against stale text.
+      if (!_shouldSyncBuffer) {
+        final currentFragText = _getCurrentFragmentText();
+        if (currentFragText != null && currentFragText.isEmpty) {
+          _resetPlatformBuffer();
+        }
+      }
       doc.updateContent();
       return;
     }
@@ -595,15 +726,87 @@ class FluentTextInputHandler with DeltaTextInputClient {
     final doc = _document!;
     final cursor = doc.cursor;
 
+    // Safety net: if the cursor points to a fragment that was removed (e.g.
+    // after rapid backspace on a virtual keyboard), snap it to the nearest
+    // valid caret stop so subsequent delta logic operates on a real node.
+    final currentFragId = cursor.focusId.isNotEmpty ? cursor.focusId : cursor.anchorId;
+    if (doc.nodeById(currentFragId) == null) {
+      final fallback = moveLeft(
+        doc.content,
+        CaretStop(cursor.anchorId, cursor.anchorOffset),
+        stops: doc.caretStops,
+        cachedLines: doc.logicalLines,
+      );
+      if (fallback.position != null) {
+        cursor.moveTo(fallback.position!.fragmentId, fallback.position!.offset);
+      } else {
+        final right = moveRight(
+          doc.content,
+          CaretStop(cursor.anchorId, cursor.anchorOffset),
+          stops: doc.caretStops,
+          cachedLines: doc.logicalLines,
+        );
+        if (right.position != null) {
+          cursor.moveTo(right.position!.fragmentId, right.position!.offset);
+        } else if (doc.caretStops.isNotEmpty) {
+          final first = doc.caretStops.first;
+          cursor.moveTo(first.fragmentId, first.offset);
+        }
+      }
+    }
+
     // ─── iOS Standard IME Buffer Sync (no dummy string) ──────────
     if (_shouldSyncBuffer && !_isComposing) {
       final currentText = _getCurrentFragmentText() ?? '';
       final cursorOffset = _getCursorOffsetInFragment();
 
+      // If the real fragment is empty, we mirrored a zero-width placeholder
+      // to UIKit (see _emptyFragmentPlaceholder) so Backspace would have
+      // something to act on. Pure placeholder deletion is already handled
+      // earlier in updateEditingValueWithDeltas as a structural backspace,
+      // so if we reach this point with the placeholder still present at the
+      // very start of the incoming text, it means the user typed something
+      // new into the empty paragraph (insertion/replacement) rather than
+      // deleting — strip the placeholder from both sides of the comparison
+      // so the rest of this method behaves exactly as if the fragment had
+      // started genuinely empty.
+      if (_isIOS &&
+          cursorOffset == 0 &&
+          value.text.startsWith(_emptyFragmentPlaceholder)) {
+        final placeholderLen = _emptyFragmentPlaceholder.length;
+        final strippedText = value.text.substring(placeholderLen);
+        final strippedBase = (value.selection.baseOffset - placeholderLen).clamp(0, strippedText.length);
+        final strippedExtent = (value.selection.extentOffset - placeholderLen).clamp(0, strippedText.length);
+        final strippedComposing = value.composing.isValid
+            ? TextRange(
+                start: (value.composing.start - placeholderLen).clamp(0, strippedText.length),
+                end: (value.composing.end - placeholderLen).clamp(0, strippedText.length),
+              )
+            : value.composing;
+        value = TextEditingValue(
+          text: strippedText,
+          selection: value.selection.copyWith(
+            baseOffset: strippedBase,
+            extentOffset: strippedExtent,
+          ),
+          composing: strippedComposing,
+        );
+      }
+
       // Skip our own echo
       if (value.text == currentText &&
           value.selection.isCollapsed &&
           value.selection.extentOffset == cursorOffset) {
+        // iOS virtual keyboard: when the fragment is already empty and the
+        // IME sends a deletion delta on the zero-width placeholder, the
+        // result is empty text with the cursor at offset 0 — exactly the
+        // same signature as our own echo. We must still trigger structural
+        // backspace so the empty paragraph is merged with the previous one.
+        if (_isIOS && _shouldSyncBuffer && currentText.isEmpty && cursorOffset == 0) {
+          doc.saveState(description: 'Backspace', forceNewAction: false);
+          executeHandleBackspace(doc);
+          syncImeBufferToFragment();
+        }
         return;
       }
 
@@ -672,6 +875,17 @@ class FluentTextInputHandler with DeltaTextInputClient {
       if (deleteLengthDiff == 1 || deleteLengthDiff == 2) {
         final diffIndex = _findDiffIndex(newText, oldText);
         if (diffIndex >= 0) {
+          final cursorOffset = _getCursorOffsetInFragment();
+          if (cursorOffset == 0 && diffIndex == 0) {
+            // The cursor was at the start of the fragment but the platform sent
+            // a deletion of the first character. Treat this as a structural
+            // backspace (merge with previous node) instead of deleting the
+            // character.
+            doc.saveState(description: 'Backspace', forceNewAction: false);
+            executeHandleBackspace(doc);
+            syncImeBufferToFragment();
+            return;
+          }
           _moveCursorToFragmentOffset(diffIndex + 1);
           doc.saveState(description: 'Backspace', forceNewAction: false);
           executeHandleBackspace(doc);
@@ -682,6 +896,24 @@ class FluentTextInputHandler with DeltaTextInputClient {
 
       // Text replacement (suggestion, paste, etc.)
       if (newText != oldText) {
+        // When the replacement completely empties the fragment (common on
+        // iOS virtual keyboard when the user holds backspace), we must not
+        // leave a zombie empty fragment that traps the cursor. Empty the
+        // fragment and let the structural backspace path handle container
+        // merging just like the physical keyboard does.
+        if (newText.isEmpty && oldText.isNotEmpty) {
+          final fragId = doc.cursor.focusId.isNotEmpty ? doc.cursor.focusId : doc.cursor.anchorId;
+          final node = doc.nodeById(fragId);
+          if (node is Fragment) {
+            doc.saveState(description: 'Backspace', forceNewAction: false);
+            node.text = '';
+            doc.cursor.moveTo(fragId, 0);
+            doc.updateContent();
+            executeHandleBackspace(doc);
+            syncImeBufferToFragment();
+            return;
+          }
+        }
         _replaceFragmentText(newText, cursorOffset: cursorOffset);
         return;
       }
@@ -1152,6 +1384,22 @@ class FluentTextInputHandler with DeltaTextInputClient {
     _invalidatePreeditRender();
   }
 
+  /// On buffer-sync platforms (iOS) UIKit treats a completely empty text
+  /// buffer as having nothing for Backspace to act on: pressing Backspace
+  /// while `text: ''` produces NO callback whatsoever (no delta, no
+  /// KeyEvent) — the keystroke is silently swallowed by UIKit itself before
+  /// it ever reaches Flutter. This breaks Backspace at the start of an
+  /// empty paragraph, since the current fragment's text is '' and that is
+  /// exactly what we hand to setEditingState.
+  ///
+  /// To give UIKit something to delete, we mirror a single zero-width space
+  /// in the platform buffer whenever the real fragment text is empty. This
+  /// placeholder NEVER touches the document model (node.text stays '') —
+  /// it exists purely in the platform's copy of the text so Backspace
+  /// generates a real, observable delta we can intercept and translate into
+  /// a structural backspace (merge with the previous node).
+  static const String _emptyFragmentPlaceholder = '\u200B';
+
   /// Returns the text of the fragment where the cursor currently sits.
   String? _getCurrentFragmentText() {
     final doc = _document;
@@ -1168,6 +1416,12 @@ class FluentTextInputHandler with DeltaTextInputClient {
     if (doc == null) return 0;
     return doc.cursor.focusId.isNotEmpty ? doc.cursor.focusOffset : doc.cursor.anchorOffset;
   }
+
+  /// True when the cursor is at the very start of the current fragment.
+  /// On buffer-sync platforms (iOS virtual keyboard) the IME has no text
+  /// before the cursor in its internal buffer, so a backspace will not emit
+  /// a deletion delta and must be handled structurally by the editor.
+  bool get cursorIsAtFragmentStart => _getCursorOffsetInFragment() == 0;
 
   /// Finds the first index where [a] and [b] differ. Returns -1 if identical.
   int _findDiffIndex(String a, String b) {
@@ -1231,11 +1485,14 @@ class FluentTextInputHandler with DeltaTextInputClient {
     final text = _getCurrentFragmentText();
     if (text == null) return;
     final offset = _getCursorOffsetInFragment();
+    final bool usePlaceholder = _isIOS && offset == 0;
+    final syncedText = usePlaceholder ? '$_emptyFragmentPlaceholder$text' : text;
+    final syncedOffset = usePlaceholder ? 1 : offset.clamp(0, syncedText.length);
     _updatingSelf = true;
     try {
       _connection!.setEditingState(TextEditingValue(
-        text: text,
-        selection: TextSelection.collapsed(offset: offset),
+        text: syncedText,
+        selection: TextSelection.collapsed(offset: syncedOffset),
         composing: TextRange.empty,
       ));
     } on PlatformException catch (e) {
