@@ -467,13 +467,14 @@ class FluentTextInputHandler with DeltaTextInputClient {
             executeHandleEnter(_document!);
             _justHandledEnter = true;
 
-            // Reset the IME buffer to EMPTY so iOS/macOS lose every
-            // reference to the old text and compute subsequent deltas
-            // against a clean slate.
-            _resetPlatformBuffer();
+            // Sync the IME buffer with the NEW fragment text so the platform
+            // computes subsequent deltas against the correct content. On iOS
+            // this also injects the zero-width placeholder when the cursor is
+            // at offset 0, preventing Backspace from being swallowed.
             _lastSyncedFragmentId = _document!.cursor.focusId.isNotEmpty
                 ? _document!.cursor.focusId
                 : _document!.cursor.anchorId;
+            syncImeBufferToFragment();
 
             _structuralChangeTimer = Timer(_structuralChangeGracePeriod, () {
               _structuralChangeInProgress = false;
@@ -488,7 +489,35 @@ class FluentTextInputHandler with DeltaTextInputClient {
                   delta.replacementText.isEmpty))) {
             continue;
           }
-          
+
+          // Race-condition guard for rapid backspace on buffer-sync platforms
+          // (iOS/Windows). When the user backspaces quickly, the platform may
+          // compute this delta against its stale internal buffer (our previous
+          // syncImeBufferToFragment / setEditingState hasn't been processed
+          // yet). Applying such a delta to our already-updated buffer produces
+          // a wrong result and causes the wrong character to be deleted.
+          // Instead, detect the mismatch and call executeHandleBackspace
+          // directly — the cursor is already at the correct position from the
+          // previous operation, so this deletes exactly the right character.
+          if (delta.oldText != value.text &&
+              (delta is TextEditingDeltaDeletion ||
+               (delta is TextEditingDeltaReplacement &&
+                delta.replacementText.isEmpty))) {
+            final deletionRange = delta is TextEditingDeltaDeletion
+                ? delta.deletedRange
+                : (delta as TextEditingDeltaReplacement).replacedRange;
+            final deleteStart = deletionRange.start.clamp(0, delta.oldText.length);
+            final deleteEnd = deletionRange.end.clamp(0, delta.oldText.length);
+            final deletedText = delta.oldText.substring(deleteStart, deleteEnd);
+            final graphemeCount = deletedText.characters.length;
+            _document!.saveState(description: 'Backspace', forceNewAction: false);
+            for (int i = 0; i < graphemeCount; i++) {
+              executeHandleBackspace(_document!);
+            }
+            syncImeBufferToFragment();
+            return;
+          }
+
           // Handle emoji deletion on Windows: if deleting at start of surrogate pair,
           // expand deletion to include the complete emoji (2 code units)
           if (!_isMacOS && (delta is TextEditingDeltaDeletion ||
@@ -873,25 +902,44 @@ class FluentTextInputHandler with DeltaTextInputClient {
       // Single character deletion (including emoji which are 2 code units)
       final deleteLengthDiff = oldText.length - newText.length;
       if (deleteLengthDiff == 1 || deleteLengthDiff == 2) {
-        final diffIndex = _findDiffIndex(newText, oldText);
-        if (diffIndex >= 0) {
-          final cursorOffset = _getCursorOffsetInFragment();
-          if (cursorOffset == 0 && diffIndex == 0) {
-            // The cursor was at the start of the fragment but the platform sent
-            // a deletion of the first character. Treat this as a structural
-            // backspace (merge with previous node) instead of deleting the
-            // character.
-            doc.saveState(description: 'Backspace', forceNewAction: false);
-            executeHandleBackspace(doc);
-            syncImeBufferToFragment();
-            return;
-          }
-          _moveCursorToFragmentOffset(diffIndex + 1);
+        final cursorOffset = _getCursorOffsetInFragment();
+        if (cursorOffset == 0) {
+          // Cursor at start of fragment: structural backspace (merge with
+          // previous node) regardless of where the platform thinks the
+          // deletion happened.
           doc.saveState(description: 'Backspace', forceNewAction: false);
           executeHandleBackspace(doc);
           syncImeBufferToFragment();
           return;
         }
+        // Normal backspace: delete relative to the DOCUMENT cursor position,
+        // not the text-diff position. The platform may have computed the
+        // deletion against a stale buffer with a different cursor offset
+        // (e.g. after a rapid cursor move or preceding rapid backspace).
+        // Using _findDiffIndex in that case moves the cursor to the wrong
+        // position and executeHandleBackspace deletes the wrong character
+        // — typically the one right after the intended cursor position.
+        doc.saveState(description: 'Backspace', forceNewAction: false);
+        if (deleteLengthDiff == 2) {
+          // Could be an emoji (1 grapheme = 2 code units) or two separate
+          // characters batched into one delta (rapid double backspace).
+          // executeHandleBackspace is grapheme-aware, so one call handles
+          // emoji. For two separate characters, call it twice.
+          final diffIndex = _findDiffIndex(newText, oldText);
+          if (diffIndex >= 0) {
+            final deletedText = oldText.substring(diffIndex, diffIndex + 2);
+            final graphemeCount = deletedText.characters.length;
+            for (int i = 0; i < graphemeCount; i++) {
+              executeHandleBackspace(doc);
+            }
+          } else {
+            executeHandleBackspace(doc);
+          }
+        } else {
+          executeHandleBackspace(doc);
+        }
+        syncImeBufferToFragment();
+        return;
       }
 
       // Text replacement (suggestion, paste, etc.)
@@ -1098,13 +1146,14 @@ class FluentTextInputHandler with DeltaTextInputClient {
         _document!.saveState(description: 'Enter', forceNewAction: true);
         executeHandleEnter(_document!);
 
-        // Reset the IME buffer to EMPTY so iOS/macOS lose every
-        // reference to the old text and compute subsequent deltas
-        // against a clean slate.
-        _resetPlatformBuffer();
+        // Sync the IME buffer with the NEW fragment text so the platform
+        // computes subsequent deltas against the correct content. On iOS
+        // this also injects the zero-width placeholder when the cursor is
+        // at offset 0, preventing Backspace from being swallowed.
         _lastSyncedFragmentId = _document!.cursor.focusId.isNotEmpty
             ? _document!.cursor.focusId
             : _document!.cursor.anchorId;
+        syncImeBufferToFragment();
 
         _structuralChangeTimer = Timer(_structuralChangeGracePeriod, () {
           _structuralChangeInProgress = false;
