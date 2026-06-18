@@ -68,6 +68,10 @@ class FluentTextInputHandler with DeltaTextInputClient {
   /// platform echo is not misinterpreted as new user input.
   bool _updatingSelf = false;
 
+  /// True when we just handled an enter via delta, so performAction(newline)
+  /// can be safely ignored to avoid double-splitting the paragraph.
+  bool _justHandledEnter = false;
+
   /// On Android (_shouldSyncBuffer == false) we keep the IME buffer alive
   /// while the user types in the same fragment so suggestions/autocorrect
   /// have the correct context. We only reset the buffer when the cursor
@@ -94,6 +98,14 @@ class FluentTextInputHandler with DeltaTextInputClient {
     Duration(milliseconds: 400),
     Duration(milliseconds: 800),
   ];
+
+  /// True after a structural document change (e.g. paragraph split via
+  /// Enter) so that platform echoes still referring to the old buffer
+  /// are ignored for a short grace period.
+  bool _structuralChangeInProgress = false;
+  Timer? _structuralChangeTimer;
+  static const Duration _structuralChangeGracePeriod =
+      Duration(milliseconds: 300);
 
   /// Call this whenever the Flutter view height is known (e.g. in
   /// _updateImeCaretRect). Stores the height and re-sends the transform
@@ -136,6 +148,9 @@ class FluentTextInputHandler with DeltaTextInputClient {
     _connectionRetryTimer?.cancel();
     _connectionRetryTimer = null;
     _connectionRetryCount = 0;
+    _structuralChangeTimer?.cancel();
+    _structuralChangeTimer = null;
+    _structuralChangeInProgress = false;
     _connection?.close();
     _connection = null;
     _document = null;
@@ -290,6 +305,7 @@ class FluentTextInputHandler with DeltaTextInputClient {
   @override
   void updateEditingValueWithDeltas(List<TextEditingDelta> deltas) {
     if (_updatingSelf) return;
+    if (_structuralChangeInProgress) return;
     if (_document == null) return;
 
     // Check if we're handling preedit/composing data - sanitize at source
@@ -339,6 +355,37 @@ class FluentTextInputHandler with DeltaTextInputClient {
         final _isMacOS = !kIsWeb && defaultTargetPlatform == TargetPlatform.macOS;
         TextEditingValue value = currentTextEditingValue ?? const TextEditingValue();
         for (final delta in deltas) {
+          // Intercept newline insertion from iOS virtual keyboard.
+          // On buffer-sync platforms the OS may send the enter as a delta
+          // instead of (or in addition to) performAction(newline).
+          // If we apply the '\n' to the buffer and then pass it to
+          // updateEditingValue, the text ends up duplicated in the new
+          // paragraph because the buffer still holds the old fragment text.
+          if ((delta is TextEditingDeltaInsertion && delta.textInserted.contains('\n')) ||
+              (delta is TextEditingDeltaReplacement && delta.replacementText.contains('\n'))) {
+            // Start grace period BEFORE the structural change so any delta
+            // echo that arrives during the split is ignored.
+            _structuralChangeInProgress = true;
+            _structuralChangeTimer?.cancel();
+
+            _document!.saveState(description: 'Enter', forceNewAction: true);
+            executeHandleEnter(_document!);
+            _justHandledEnter = true;
+
+            // Reset the IME buffer to EMPTY so iOS/macOS lose every
+            // reference to the old text and compute subsequent deltas
+            // against a clean slate.
+            _resetPlatformBuffer();
+            _lastSyncedFragmentId = _document!.cursor.focusId.isNotEmpty
+                ? _document!.cursor.focusId
+                : _document!.cursor.anchorId;
+
+            _structuralChangeTimer = Timer(_structuralChangeGracePeriod, () {
+              _structuralChangeInProgress = false;
+            });
+            return;
+          }
+
           // On macOS the physical keyboard sends a KeyEvent for backspace;
           // handling the deletion delta as well would double-delete.
           if (_isMacOS && (delta is TextEditingDeltaDeletion ||
@@ -542,6 +589,7 @@ class FluentTextInputHandler with DeltaTextInputClient {
   @override
   void updateEditingValue(TextEditingValue value, {int? cursorOffset}) {
     if (_updatingSelf) return;
+    if (_structuralChangeInProgress) return;
     if (_document == null) return;
 
     final doc = _document!;
@@ -800,17 +848,35 @@ class FluentTextInputHandler with DeltaTextInputClient {
     if (_document == null) return;
     switch (action) {
       case TextInputAction.newline:
+        // If the newline was already handled via delta (iOS virtual
+        // keyboard often sends both a delta and a performAction),
+        // skip the second enter to avoid double-splitting.
+        if (_justHandledEnter) {
+          _justHandledEnter = false;
+          break;
+        }
+
+        // Start grace period BEFORE the structural change so any platform
+        // echo that arrives during the split is ignored.
+        _structuralChangeInProgress = true;
+        _structuralChangeTimer?.cancel();
+
         // Commit any pending preedit first, then handle enter.
         commitIfComposing();
         _document!.saveState(description: 'Enter', forceNewAction: true);
         executeHandleEnter(_document!);
 
-        // Immediately sync the IME buffer with the new empty fragment so the
-        // native text input system (iOS/macOS/Windows) resets its predictive
-        // context and does not echo stale characters onto the new line.
-        if (_shouldSyncBuffer) {
-          syncImeBufferToFragment();
-        }
+        // Reset the IME buffer to EMPTY so iOS/macOS lose every
+        // reference to the old text and compute subsequent deltas
+        // against a clean slate.
+        _resetPlatformBuffer();
+        _lastSyncedFragmentId = _document!.cursor.focusId.isNotEmpty
+            ? _document!.cursor.focusId
+            : _document!.cursor.anchorId;
+
+        _structuralChangeTimer = Timer(_structuralChangeGracePeriod, () {
+          _structuralChangeInProgress = false;
+        });
         break;
       case TextInputAction.go:
       case TextInputAction.send:

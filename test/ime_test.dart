@@ -289,6 +289,40 @@ void main() {
       expect(restoredFrag.text, 'Hello world');
     });
 
+    test('macOS buffer-sync preedit shrinks during active composition syncs fragment', () {
+      final para = doc.content.nodes.first as Paragraph;
+      final frag = para.fragments.first as Fragment;
+      doc.cursor.moveTo(frag.id, 5);
+
+      debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+      addTearDown(() => debugDefaultTargetPlatformOverride = null);
+
+      // Start composition on macOS: the fragment mirrors the full buffer
+      // (preedit included) because the OS draws its own composition underline.
+      handler.updateEditingValue(
+        const TextEditingValue(
+          text: 'Hello nyuuryokuworld',
+          composing: TextRange(start: 6, end: 15),
+        ),
+      );
+      expect(handler.isComposing, isTrue);
+      expect(handler.preeditText, 'nyuuryoku');
+      expect(frag.text, 'Hello nyuuryokuworld');
+
+      // While still composing, macOS sends a shorter suggestion.
+      handler.updateEditingValue(
+        const TextEditingValue(
+          text: 'Hello nyuryokuworld',
+          composing: TextRange(start: 6, end: 14),
+        ),
+      );
+
+      expect(handler.isComposing, isTrue);
+      expect(handler.preeditText, 'nyuryoku');
+      // No stale characters remain.
+      expect(frag.text, 'Hello nyuryokuworld');
+    });
+
     test('macOS buffer-sync commit with shorter suggestion clears ghost preedit', () {
       final para = doc.content.nodes.first as Paragraph;
       final frag = para.fragments.first as Fragment;
@@ -340,6 +374,39 @@ void main() {
       handler.performAction(TextInputAction.newline);
       expect(handler.isComposing, isFalse);
       expect(doc.content.nodes.length, 2);
+    });
+
+    test('iOS newline during composition does not duplicate text in new paragraph', () {
+      final para = doc.content.nodes.first as Paragraph;
+      final frag = para.fragments.first as Fragment;
+      doc.cursor.moveTo(frag.id, 5);
+
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      addTearDown(() => debugDefaultTargetPlatformOverride = null);
+
+      // Start composition on iOS: full buffer is "Hello preworld"
+      handler.updateEditingValue(
+        const TextEditingValue(
+          text: 'Hello preworld',
+          composing: TextRange(start: 6, end: 9),
+        ),
+      );
+      expect(handler.isComposing, isTrue);
+
+      handler.performAction(TextInputAction.newline);
+
+      expect(handler.isComposing, isFalse);
+      expect(doc.content.nodes.length, 2);
+
+      // After commit, first paragraph contains "Hello pre"
+      final firstPara = doc.content.nodes[0] as Paragraph;
+      final firstFrag = firstPara.fragments.first as Fragment;
+      expect(firstFrag.text, 'Hello pre');
+
+      // Second paragraph should contain only "world", not duplicated text
+      final secondPara = doc.content.nodes[1] as Paragraph;
+      final secondFrag = secondPara.fragments.first as Fragment;
+      expect(secondFrag.text, 'world');
     });
   });
 }
