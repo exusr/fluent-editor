@@ -804,6 +804,13 @@ class FluentTextInputHandler with DeltaTextInputClient {
         commitIfComposing();
         _document!.saveState(description: 'Enter', forceNewAction: true);
         executeHandleEnter(_document!);
+
+        // Immediately sync the IME buffer with the new empty fragment so the
+        // native text input system (iOS/macOS/Windows) resets its predictive
+        // context and does not echo stale characters onto the new line.
+        if (_shouldSyncBuffer) {
+          syncImeBufferToFragment();
+        }
         break;
       case TextInputAction.go:
       case TextInputAction.send:
