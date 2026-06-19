@@ -358,6 +358,81 @@ void main() {
       expect(frag.text, 'Hello nyuryokuworld');
     });
 
+    test('macOS buffer-sync commit with active selection does not include old selected text', () {
+      final para = doc.content.nodes.first as Paragraph;
+      final frag = para.fragments.first as Fragment;
+      // Select "lo " (offsets 3..6) within "Hello world"
+      doc.cursor.anchorId = frag.id;
+      doc.cursor.anchorOffset = 3;
+      doc.cursor.focusId = frag.id;
+      doc.cursor.focusOffset = 6;
+
+      debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+      addTearDown(() => debugDefaultTargetPlatformOverride = null);
+
+      // Start composition: the platform replaces the selection "lo " with
+      // the preedit "中". The buffer becomes "Hel中world".
+      handler.updateEditingValue(
+        const TextEditingValue(
+          text: 'Hel中world',
+          composing: TextRange(start: 3, end: 4),
+        ),
+      );
+      expect(handler.isComposing, isTrue);
+      expect(handler.preeditText, '中');
+      // Selection should be cleared, fragment text should NOT include preedit
+      expect(frag.text, 'Helworld');
+
+      // Commit: the platform sends the final buffer with committed text.
+      handler.updateEditingValue(
+        const TextEditingValue(
+          text: 'Hel中world',
+          composing: TextRange.empty,
+        ),
+      );
+
+      expect(handler.isComposing, isFalse);
+      // The committed text "中" should replace the old selection "lo ".
+      // No extra text from the old selection should appear.
+      expect(frag.text, 'Hel中world');
+    });
+
+    test('Windows buffer-sync commit with active selection and different committed text', () {
+      final para = doc.content.nodes.first as Paragraph;
+      final frag = para.fragments.first as Fragment;
+      // Select "lo " (offsets 3..6) within "Hello world"
+      doc.cursor.anchorId = frag.id;
+      doc.cursor.anchorOffset = 3;
+      doc.cursor.focusId = frag.id;
+      doc.cursor.focusOffset = 6;
+
+      debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+      addTearDown(() => debugDefaultTargetPlatformOverride = null);
+
+      // Start composition: platform replaces selection with preedit "abc"
+      handler.updateEditingValue(
+        const TextEditingValue(
+          text: 'Helabcworld',
+          composing: TextRange(start: 3, end: 6),
+        ),
+      );
+      expect(handler.isComposing, isTrue);
+      expect(handler.preeditText, 'abc');
+      expect(frag.text, 'Helworld');
+
+      // Commit with a different suggestion "XYZ"
+      handler.updateEditingValue(
+        const TextEditingValue(
+          text: 'HelXYZworld',
+          composing: TextRange.empty,
+        ),
+      );
+
+      expect(handler.isComposing, isFalse);
+      // "XYZ" should replace the old selection "lo ", not include extra text
+      expect(frag.text, 'HelXYZworld');
+    });
+
     test('Perform action newline commits preedit and inserts paragraph', () {
       final para = doc.content.nodes.first as Paragraph;
       final frag = para.fragments.first as Fragment;

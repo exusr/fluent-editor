@@ -1437,24 +1437,6 @@ class FluentTextInputHandler with DeltaTextInputClient {
 
           doc.saveState(description: 'Replace text', forceNewAction: false);
 
-          // FIX macOS & Linux: When the committed text is shorter than the
-          // previous preedit, we must explicitly clear the old preedit from
-          // the editor before applying the final buffer string to avoid
-          // ghost fragments. On web the preedit is NOT stored in node.text
-          // (it's rendered as an overlay via imePreeditText), so this
-          // cleanup must not run.
-          if (!kIsWeb && (defaultTargetPlatform == TargetPlatform.macOS ||
-              defaultTargetPlatform == TargetPlatform.linux)) {
-            final oldText = node.text;
-            final preeditLen = _preeditText.length;
-            final startOffset = _preeditLocalOffset.clamp(0, oldText.length);
-
-            // If the previous composition occupied space, remove it cleanly
-            if (preeditLen > 0 && startOffset + preeditLen <= oldText.length) {
-              node.text = oldText.substring(0, startOffset) + oldText.substring(startOffset + preeditLen);
-            }
-          }
-
           // Reconstruct the fragment text by inserting the committed text
           // at _preeditLocalOffset. We cannot use value.text directly
           // because on web the browser's buffer may still contain stale
@@ -1485,12 +1467,14 @@ class FluentTextInputHandler with DeltaTextInputClient {
             committedText = _sanitizeUtf16(_preeditText);
           }
           node.text = _sanitizeUtf16(prefix + committedText + suffix);
-          // On Linux, use the platform's selection to position the cursor
-          // when valid, since value.selection.extentOffset reflects the
+          // On Linux & Windows, use the platform's selection to position the
+          // cursor when valid, since value.selection.extentOffset reflects the
           // actual cursor position after commit. Other platforms use the
           // computed offset.
-          final _isLinux = !kIsWeb && defaultTargetPlatform == TargetPlatform.linux;
-          final newCursorOffset = (_isLinux &&
+          final _isLinuxOrWindows = !kIsWeb &&
+              (defaultTargetPlatform == TargetPlatform.linux ||
+               defaultTargetPlatform == TargetPlatform.windows);
+          final newCursorOffset = (_isLinuxOrWindows &&
                   value.selection.isValid &&
                   value.selection.isCollapsed &&
                   value.selection.extentOffset >= prefix.length &&
