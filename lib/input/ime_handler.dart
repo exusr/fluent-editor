@@ -85,10 +85,12 @@ class FluentTextInputHandler with DeltaTextInputClient {
   /// moves to a different fragment.
   String _lastSyncedFragmentId = '';
 
-  /// Tracks the length of the last text sent to the platform via
-  /// setEditingState. On web, if the new text is shorter, we must reset
-  /// to empty first to avoid the engine's inferDeltaState assertion.
-  int _lastSyncedTextLength = 0;
+  /// Tracks the last text sent to the platform via setEditingState. On web,
+  /// if the new text is shorter, we must first clear the browser's composing
+  /// range with the old text before setting the new text, otherwise the
+  /// browser reports a stale composing range that exceeds the new text
+  /// length, triggering an assertion in TextEditingDelta.fromJSON.
+  String _lastSyncedText = '';
 
   /// Tracks the previous selection state so syncImeBufferToFragment can
   /// detect when a selection change requires resetting the platform IME's
@@ -281,7 +283,7 @@ class FluentTextInputHandler with DeltaTextInputClient {
   void attachInput(FluentDocument document) {
     _document = document;
     _lastSyncedFragmentId = '';
-    _lastSyncedTextLength = 0;
+    _lastSyncedText = '';
     _prevSelectionKey = '';
   }
 
@@ -299,7 +301,7 @@ class FluentTextInputHandler with DeltaTextInputClient {
     _document = null;
     _resetComposition();
     _lastSyncedFragmentId = '';
-    _lastSyncedTextLength = 0;
+    _lastSyncedText = '';
     _prevSelectionKey = '';
   }
 
@@ -1143,6 +1145,16 @@ class FluentTextInputHandler with DeltaTextInputClient {
         final rawPreedit = value.text.substring(start, end);
         final preeditText = _sanitizeUtf16(rawPreedit);
 
+        // Set _isComposing BEFORE clearing the selection so that
+        // syncImeBufferToFragment (called via document.updateContent()
+        // inside executeHandleReplaceSelection) returns early and does
+        // not sync the buffer with the shorter text while the browser's
+        // composition is still active. Otherwise the browser retains a
+        // stale composingText and later sends a delta with an
+        // out-of-bounds composing range (assertion failure in
+        // TextEditingDelta.fromJSON).
+        _isComposing = true;
+
         // When a selection is active, clear it FIRST so the fragment text
         // reflects the post-deletion state. The preedit offset must then be
         // the cursor position after clearing, not the buffer-relative
@@ -1189,7 +1201,6 @@ class FluentTextInputHandler with DeltaTextInputClient {
           preeditOffset = start;
         }
 
-        _isComposing = true;
         _preeditFragmentId = cursor.focusId.isNotEmpty ? cursor.focusId : cursor.anchorId;
         _preeditLocalOffset = preeditOffset;
         _preeditContainerId = doc.findLogicalContainerId(_preeditFragmentId) ?? '';
@@ -1438,29 +1449,38 @@ class FluentTextInputHandler with DeltaTextInputClient {
             }
           }
 
-          if (_isIOS) {
-            // FIX iOS: value.text can be stale/hybrid when iOS hasn't fully
-            // processed the buffer reset between compositions. Reconstruct
-            // the fragment text from the local source of truth: insert
-            // _preeditText at _preeditLocalOffset in the current fragment.
-            final currentFragText = node.text;
-            final insertOffset = _preeditLocalOffset.clamp(0, currentFragText.length);
-            final committedText = _sanitizeUtf16(_preeditText);
-            node.text = _sanitizeUtf16(
-              currentFragText.substring(0, insertOffset) +
-              committedText +
-              currentFragText.substring(insertOffset),
+          // Reconstruct the fragment text by inserting the committed text
+          // at _preeditLocalOffset. We cannot use value.text directly
+          // because on web the browser's buffer may still contain stale
+          // text from before the selection was cleared (we skip
+          // syncImeBufferToFragment during composition to avoid disrupting
+          // the platform's composition state). On iOS, value.text can also
+          // be stale/hybrid.
+          //
+          // The committed text is extracted from value.text by removing the
+          // fragment's prefix and suffix around the preedit position. This
+          // handles both stale selection text (browser didn't update the
+          // buffer after selection clearing) and predictive text correction
+          // (committed text differs from the last preedit).
+          final currentFragText = node.text;
+          final insertOffset = _preeditLocalOffset.clamp(0, currentFragText.length);
+          final prefix = currentFragText.substring(0, insertOffset);
+          final suffix = currentFragText.substring(insertOffset);
+          String committedText;
+          if (value.text.length >= prefix.length + suffix.length &&
+              value.text.startsWith(prefix) &&
+              value.text.endsWith(suffix)) {
+            committedText = _sanitizeUtf16(
+              value.text.substring(prefix.length, value.text.length - suffix.length),
             );
-            final newCursorOffset = insertOffset + committedText.length;
-            doc.cursor.moveTo(fragId, newCursorOffset);
           } else {
-            node.text = _sanitizeUtf16(value.text);
-            // Cursor position from the IME's selection after commit.
-            final newCursorOffset = value.selection.isValid && value.selection.isCollapsed
-                ? value.selection.extentOffset
-                : value.text.length;
-            doc.cursor.moveTo(fragId, newCursorOffset);
+            // Fallback: use _preeditText if value.text doesn't match the
+            // expected structure (e.g., iOS stale buffer).
+            committedText = _sanitizeUtf16(_preeditText);
           }
+          node.text = _sanitizeUtf16(prefix + committedText + suffix);
+          final newCursorOffset = insertOffset + committedText.length;
+          doc.cursor.moveTo(fragId, newCursorOffset);
           _resetComposition();
           doc.cursor.imeComposing = false;
           doc.updateContent();
@@ -1502,6 +1522,13 @@ class FluentTextInputHandler with DeltaTextInputClient {
       return;
     }
 
+    // Set _isComposing BEFORE clearing the selection so that
+    // syncImeBufferToFragment (called via document.updateContent()
+    // inside executeHandleReplaceSelection) returns early and does
+    // not sync the buffer with the shorter text while the browser's
+    // composition is still active.
+    _isComposing = true;
+
     // Start new composition
     if (!cursor.isCollapsed) {
       // Guard against stale cursor offsets (see the same guard in the
@@ -1525,7 +1552,6 @@ class FluentTextInputHandler with DeltaTextInputClient {
       }
     }
 
-    _isComposing = true;
     _preeditFragmentId = cursor.focusId.isNotEmpty ? cursor.focusId : cursor.anchorId;
     _preeditLocalOffset = cursor.focusId.isNotEmpty ? cursor.focusOffset : cursor.anchorOffset;
     _preeditContainerId = doc.findLogicalContainerId(_preeditFragmentId) ?? '';
@@ -1789,7 +1815,7 @@ class FluentTextInputHandler with DeltaTextInputClient {
     _updatingSelf = true;
     try {
       _connection!.setEditingState(const TextEditingValue());
-      _lastSyncedTextLength = 0;
+      _lastSyncedText = '';
     } on PlatformException catch (e) {
       debugPrint('FluentTextInputHandler: _resetPlatformBuffer failed: ${e.message}');
     }
@@ -1967,14 +1993,13 @@ class FluentTextInputHandler with DeltaTextInputClient {
 
     _updatingSelf = true;
     try {
-      // On web, the Flutter engine's inferDeltaState asserts that
-      // replacedRange <= originalText.length. If we set a shorter text while
-      // the browser's <textarea> still holds the old (longer) text, the engine
-      // infers a replacement delta whose range exceeds the old text length,
-      // triggering an assertion failure. Resetting to empty first forces the
-      // engine to treat the subsequent setEditingState as a fresh insertion
-      // rather than a replacement, avoiding the assertion.
-      if (kIsWeb && syncedText.length < _lastSyncedTextLength) {
+      // On web, if the new text is shorter than what the browser currently
+      // holds, the browser sends a delta with a stale composing range that
+      // exceeds the new text length, triggering an assertion in
+      // TextEditingDelta.fromJSON. Resetting to empty first (same approach
+      // as iOS) forces the browser to treat the next setEditingState as a
+      // fresh insertion with no stale composition state.
+      if (kIsWeb && syncedText.length < _lastSyncedText.length) {
         _connection!.setEditingState(const TextEditingValue());
       }
       if (_isIOS && selectionChanged) {
@@ -1985,7 +2010,7 @@ class FluentTextInputHandler with DeltaTextInputClient {
         selection: syncedSelection,
         composing: TextRange.empty,
       ));
-      _lastSyncedTextLength = syncedText.length;
+      _lastSyncedText = syncedText;
     } on PlatformException catch (e) {
       debugPrint('FluentTextInputHandler: syncImeBufferToFragment failed: ${e.message}');
     }
