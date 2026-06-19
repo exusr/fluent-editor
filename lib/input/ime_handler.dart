@@ -1407,7 +1407,13 @@ class FluentTextInputHandler with DeltaTextInputClient {
       }
 
       // Composing became invalid (text confirmed / space pressed).
-      if (value.text == _preeditText) {
+      // On non-buffer-sync platforms (Android), the buffer is just the
+      // preedit. If the platform echoes it back with no composing range,
+      // it's a spurious echo. On buffer-sync platforms (web, iOS, macOS),
+      // the buffer includes the fragment text, so value.text == _preeditText
+      // only happens when the fragment is empty and the committed text
+      // equals the preedit — which is a real commit, not an echo.
+      if (!_shouldSyncBuffer && value.text == _preeditText) {
         // Spurious echo, keep composing
         return;
       }
@@ -1433,6 +1439,8 @@ class FluentTextInputHandler with DeltaTextInputClient {
           // FIX macOS: When the committed text is shorter than the previous
           // preedit, we must explicitly clear the old preedit from the editor
           // before applying the final buffer string to avoid ghost fragments.
+          // On web the preedit is NOT stored in node.text (it's rendered as
+          // an overlay via imePreeditText), so this cleanup must not run.
           if (!kIsWeb && defaultTargetPlatform == TargetPlatform.macOS) {
             final oldText = node.text;
             final preeditLen = _preeditText.length;

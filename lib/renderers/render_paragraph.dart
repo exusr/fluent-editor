@@ -336,17 +336,32 @@ class RenderFluentParagraph extends RenderFluentNode
        _imeCompositionColor = imeCompositionColor,
        super(node: container as FNode);
 
+  // ─── System fonts changed (web CanvasKit fallback loading) ────────
+  // CanvasKit loads browser fallback fonts asynchronously. When a CJK
+  // character is first shaped, the font may not be ready yet, producing
+  // tofu glyphs. Once the font loads, PaintingBinding fires the systemFonts
+  // notification. We register/unregister in attach/detach so only live
+  // render objects get notified.
+  void _handleSystemFontsChanged() {
+    _painter.markNeedsLayout();
+    _cachedTextPicture?.dispose();
+    _cachedTextPicture = null;
+    markNeedsLayout();
+  }
+
   // ─── Lifecycle: automatic registration ──────────────────────────
 
   @override
   void attach(PipelineOwner owner) {
     super.attach(owner);
     registry.register((_container as FNode).id, this);
+    PaintingBinding.instance.systemFonts.addListener(_handleSystemFontsChanged);
   }
 
   @override
   void detach() {
     registry.unregister((_container as FNode).id, this);
+    PaintingBinding.instance.systemFonts.removeListener(_handleSystemFontsChanged);
     super.detach();
   }
 
