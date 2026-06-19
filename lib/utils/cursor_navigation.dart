@@ -201,6 +201,47 @@ List<FNode> _filterEmptyFragments(List<FNode> raw) {
   return raw.where((c) => !(c is Fragment && c.text.isEmpty)).toList();
 }
 
+/// Returns true if the code unit at [offset] in [text] is a zero-width
+/// space (U+200B) that sits between two CJK characters. In that case the
+/// ZWS should not produce a visible caret stop — the cursor should glide
+/// from one CJK character to the next without stopping on the invisible
+/// separator.
+bool isZwsBetweenCjk(String text, int offset) {
+  if (offset < 0 || offset >= text.length) return false;
+  if (text.codeUnitAt(offset) != 0x200B) return false;
+  // Check the previous character (skip surrogate pairs)
+  int prev = offset - 1;
+  if (prev < 0) return false;
+  // If prev is a low surrogate, step back one more to the high surrogate
+  if ((text.codeUnitAt(prev) & 0xFC00) == 0xDC00) prev--;
+  if (prev < 0) return false;
+  // Check the next character (skip surrogate pairs)
+  int next = offset + 1;
+  if (next >= text.length) return false;
+  // If next is a high surrogate, step forward one more to include the pair
+  if ((text.codeUnitAt(next) & 0xFC00) == 0xD800) next++;
+  if (next >= text.length) return false;
+  return isCjk(text.codeUnitAt(prev)) && isCjk(text.codeUnitAt(next));
+}
+
+/// Returns true if [codeUnit] belongs to a CJK script
+/// (Han, Hiragana, Katakana, Hangul).
+bool isCjk(int codeUnit) {
+  // CJK Unified Ideographs + Extensions A/B
+  if (codeUnit >= 0x4E00 && codeUnit <= 0x9FFF) return true;
+  if (codeUnit >= 0x3400 && codeUnit <= 0x4DBF) return true;
+  if (codeUnit >= 0x20000 && codeUnit <= 0x2A6DF) return true;
+  // Hiragana
+  if (codeUnit >= 0x3040 && codeUnit <= 0x309F) return true;
+  // Katakana
+  if (codeUnit >= 0x30A0 && codeUnit <= 0x30FF) return true;
+  // Hangul Syllables
+  if (codeUnit >= 0xAC00 && codeUnit <= 0xD7AF) return true;
+  // CJK Compatibility Ideographs
+  if (codeUnit >= 0xF900 && codeUnit <= 0xFAFF) return true;
+  return false;
+}
+
 /// Collects the stops of a single LogicalLine (without descending into sublists).
 void _collectStopsInLine(FNode node, List<CaretStop> out) {
   if (node is FluentImage || node is HorizontalRule) {
@@ -218,9 +259,14 @@ void _collectStopsInLine(FNode node, List<CaretStop> out) {
       return;
     }
     // Create stops only at grapheme cluster boundaries to handle emoji correctly
-    // Skip positions inside surrogate pairs
+    // Skip positions inside surrogate pairs and ZWS between CJK characters
     int i = 0;
     while (i <= len) {
+      // Skip ZWS that sits between two CJK characters (e.g. "月\u200Bあ")
+      if (i > 0 && i < len && isZwsBetweenCjk(node.text, i)) {
+        i++;
+        continue;
+      }
       out.add(CaretStop(node.id, i));
       // Skip to the next grapheme cluster boundary
       if (i < len) {
@@ -255,9 +301,13 @@ void _collectStopsInLine(FNode node, List<CaretStop> out) {
         final len = child.text.length;
         final startI = afterImage ? 1 : 0;
         final endI   = (beforeImage || beforeFragment) ? len - 1 : len;
-        // Create stops only at grapheme cluster boundaries
+        // Create stops only at grapheme cluster boundaries, skipping ZWS between CJK
         int i = startI;
         while (i <= endI) {
+          if (i > 0 && i < len && isZwsBetweenCjk(child.text, i)) {
+            i++;
+            continue;
+          }
           out.add(CaretStop(child.id, i));
           if (i < endI) {
             final graphemeLen = FragmentOperations.getGraphemeLengthAt(child.text, i);
@@ -299,9 +349,13 @@ void _collectStopsInLine(FNode node, List<CaretStop> out) {
         final len = child.text.length;
         final startI = (afterLink || afterImage) ? 1 : 0;
         final endI   = (beforeLink || beforeImage || beforeFragment) ? len - 1 : len;
-        // Create stops only at grapheme cluster boundaries
+        // Create stops only at grapheme cluster boundaries, skipping ZWS between CJK
         int i = startI;
         while (i <= endI) {
+          if (i > 0 && i < len && isZwsBetweenCjk(child.text, i)) {
+            i++;
+            continue;
+          }
           out.add(CaretStop(child.id, i));
           if (i < endI) {
             final graphemeLen = FragmentOperations.getGraphemeLengthAt(child.text, i);

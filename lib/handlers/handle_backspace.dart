@@ -92,7 +92,10 @@ bool executeHandleBackspace(FluentDocument document, {bool ctrl = false, bool li
 
   // Special case: cursor is inside an empty paragraph.
   // Remove the paragraph and move the cursor to the end of the previous one.
-  if (container is Paragraph && container.text.isEmpty) {
+  // But not if the paragraph is inside a table cell — empty cells must keep
+  // their paragraph to remain navigable.
+  if (container is Paragraph && container.text.isEmpty &&
+      _findAncestorCell(root, container as FNode) == null) {
     final prevStop = _findPreviousStop(
       root, cursor.anchorId, 0,
       cachedStops: document.caretStops,
@@ -125,6 +128,16 @@ bool executeHandleBackspace(FluentDocument document, {bool ctrl = false, bool li
     return true;
   }
 
+  // Guard: if the fragment is inside a table cell and contains only ZWS,
+  // backspace is a no-op — the ZWS must be preserved to keep the cell
+  // navigable. This catches both offset 0 (would enter Case 3) and
+  // offset 1 (would enter Case 4).
+  if (_findAncestorCell(root, currentFrag) != null &&
+      currentFrag.text.isNotEmpty &&
+      currentFrag.text.replaceAll('\u200B', '').isEmpty) {
+    return true;
+  }
+
   // Case 3: If we're at the start of the container (offset == 0)
   // handle the merge with the previous node or outdent for lists
   if (cursor.anchorOffset == 0) {
@@ -133,9 +146,31 @@ bool executeHandleBackspace(FluentDocument document, {bool ctrl = false, bool li
 
   // Case 4: Normal character deletion
   // Use grapheme-aware offset to handle emoji (surrogate pairs) correctly
-  final newOffset = FragmentOperations.getPreviousGraphemeOffset(currentFrag.text, cursor.anchorOffset);
+  // If the character before the cursor is a ZWS and the fragment has visible
+  // content, skip the ZWS and delete the visible character before it.
+  // ZWS is invisible — backspace should delete the visible character, not the
+  // invisible marker. If the fragment is all-ZWS, preserve original behavior.
+  int newOffset = FragmentOperations.getPreviousGraphemeOffset(currentFrag.text, cursor.anchorOffset);
+  if (newOffset >= 0 && newOffset < currentFrag.text.length &&
+      currentFrag.text.codeUnitAt(newOffset) == 0x200B &&
+      currentFrag.text.replaceAll('\u200B', '').isNotEmpty) {
+    final skipOffset = FragmentOperations.getPreviousGraphemeOffset(currentFrag.text, newOffset);
+    if (skipOffset < newOffset) newOffset = skipOffset;
+  }
   final deleteCount = cursor.anchorOffset - newOffset;
+
+  final cellParent = _findAncestorCell(root, currentFrag);
+
   FragmentOperations.deleteTextInFragment(currentFrag, newOffset, count: deleteCount);
+
+  // If the fragment is inside a table cell and became empty after deletion,
+  // re-insert a ZWS so the cell remains navigable.
+  if (cellParent != null && currentFrag.text.isEmpty) {
+    currentFrag.text = '\u200B';
+    cursor.moveTo(currentFrag.id, 0);
+    document.updateContent();
+    return true;
+  }
 
   // If the fragment became empty, remove it (and any empty parent Links)
   // so it doesn't block future backspace navigation.
@@ -296,9 +331,12 @@ bool _handleBackspaceAtStart(
     }
 
     // Sole empty fragment: the container is effectively empty.
-    // Remove the fragment so _mergeContainers sees an empty container,
-    // find the previous logical stop, and perform the structural merge.
+    // If the container is inside a table cell, keep the fragment so the
+    // cell remains navigable — do not merge or remove.
     if (flat.length == 1) {
+      if (_findAncestorCell(root, container as FNode) != null) {
+        return true;
+      }
       final prevStop = moveLeft(
         root,
         CaretStop(cursor.anchorId, cursor.anchorOffset),
@@ -396,7 +434,14 @@ bool _handleBackspaceAtStart(
           }
           // Delete the last character of the first non-empty predecessor.
           // Use grapheme-aware deletion to handle emoji correctly
-          final deletePos = FragmentOperations.getPreviousGraphemeOffset(candidate.text, candidate.text.length);
+          // Skip ZWS so backspace deletes the visible character, not the invisible marker
+          int deletePos = FragmentOperations.getPreviousGraphemeOffset(candidate.text, candidate.text.length);
+          if (deletePos >= 0 && deletePos < candidate.text.length &&
+              candidate.text.codeUnitAt(deletePos) == 0x200B &&
+              candidate.text.replaceAll('\u200B', '').isNotEmpty) {
+            final skipOffset = FragmentOperations.getPreviousGraphemeOffset(candidate.text, deletePos);
+            if (skipOffset < deletePos) deletePos = skipOffset;
+          }
           final deleteCount = candidate.text.length - deletePos;
           FragmentOperations.deleteTextInFragment(candidate, deletePos, count: deleteCount);
 
@@ -453,6 +498,16 @@ ListItem? _findAncestorListItem(Root root, FNode node) {
   FNode? current = node;
   while (current != null) {
     if (current is ListItem) return current;
+    current = findParent(root, current);
+  }
+  return null;
+}
+
+/// Climbs up looking for a FluentCell ancestor.
+FluentCell? _findAncestorCell(Root root, FNode node) {
+  FNode? current = node;
+  while (current != null) {
+    if (current is FluentCell) return current;
     current = findParent(root, current);
   }
   return null;

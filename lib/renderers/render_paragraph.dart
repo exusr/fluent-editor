@@ -649,7 +649,12 @@ class RenderFluentParagraph extends RenderFluentNode
     }
 
     final width = _shrinkWrap ? _painter.width : constraints.maxWidth;
-    size = constraints.constrain(Size(width, _painter.height));
+    // Ensure empty paragraphs have at least one line of height so they
+    // remain clickable (e.g. empty table cells with a single empty fragment).
+    final height = _painter.height > 0
+        ? _painter.height
+        : _painter.preferredLineHeight;
+    size = constraints.constrain(Size(width, height));
   }
 
   /// Builds a TextSpan for the IME preedit text, styled with a blue dashed
@@ -1094,6 +1099,12 @@ class RenderFluentParagraph extends RenderFluentNode
 
     if (bestFragmentId != null) {
       return (fragmentId: bestFragmentId, localOffset: bestLocalOffset);
+    }
+
+    // Fallback for empty paragraphs (e.g. empty table cells): return the
+    // first fragment at offset 0 so taps still place the cursor.
+    if (_fragmentPositions.isNotEmpty) {
+      return (fragmentId: _fragmentPositions.first.id, localOffset: 0);
     }
 
     return null;
