@@ -1371,6 +1371,16 @@ class FluentTextInputHandler with DeltaTextInputClient {
           final fragId = doc.cursor.focusId.isNotEmpty ? doc.cursor.focusId : doc.cursor.anchorId;
           final node = doc.nodeById(fragId);
           if (node is Fragment) {
+            // If the fragment is inside a table cell, re-insert ZWS to keep
+            // the cell navigable instead of triggering structural backspace.
+            final cellParent = findAncestorCell(doc.content, node);
+            if (cellParent != null) {
+              node.text = '\u200B';
+              doc.cursor.moveTo(fragId, 0);
+              doc.updateContent();
+              syncImeBufferToFragment();
+              return;
+            }
             doc.saveState(description: 'Backspace', forceNewAction: false);
             node.text = '';
             doc.cursor.moveTo(fragId, 0);

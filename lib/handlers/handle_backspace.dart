@@ -95,7 +95,7 @@ bool executeHandleBackspace(FluentDocument document, {bool ctrl = false, bool li
   // But not if the paragraph is inside a table cell — empty cells must keep
   // their paragraph to remain navigable.
   if (container is Paragraph && container.text.isEmpty &&
-      _findAncestorCell(root, container as FNode) == null) {
+      findAncestorCell(root, container as FNode) == null) {
     final prevStop = _findPreviousStop(
       root, cursor.anchorId, 0,
       cachedStops: document.caretStops,
@@ -132,7 +132,7 @@ bool executeHandleBackspace(FluentDocument document, {bool ctrl = false, bool li
   // backspace is a no-op — the ZWS must be preserved to keep the cell
   // navigable. This catches both offset 0 (would enter Case 3) and
   // offset 1 (would enter Case 4).
-  if (_findAncestorCell(root, currentFrag) != null &&
+  if (findAncestorCell(root, currentFrag) != null &&
       currentFrag.text.isNotEmpty &&
       currentFrag.text.replaceAll('\u200B', '').isEmpty) {
     return true;
@@ -159,7 +159,7 @@ bool executeHandleBackspace(FluentDocument document, {bool ctrl = false, bool li
   }
   final deleteCount = cursor.anchorOffset - newOffset;
 
-  final cellParent = _findAncestorCell(root, currentFrag);
+  final cellParent = findAncestorCell(root, currentFrag);
 
   FragmentOperations.deleteTextInFragment(currentFrag, newOffset, count: deleteCount);
 
@@ -334,7 +334,7 @@ bool _handleBackspaceAtStart(
     // If the container is inside a table cell, keep the fragment so the
     // cell remains navigable — do not merge or remove.
     if (flat.length == 1) {
-      if (_findAncestorCell(root, container as FNode) != null) {
+      if (findAncestorCell(root, container as FNode) != null) {
         return true;
       }
       final prevStop = moveLeft(
@@ -504,7 +504,7 @@ ListItem? _findAncestorListItem(Root root, FNode node) {
 }
 
 /// Climbs up looking for a FluentCell ancestor.
-FluentCell? _findAncestorCell(Root root, FNode node) {
+FluentCell? findAncestorCell(Root root, FNode node) {
   FNode? current = node;
   while (current != null) {
     if (current is FluentCell) return current;
