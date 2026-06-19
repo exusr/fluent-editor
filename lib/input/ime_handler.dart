@@ -85,6 +85,11 @@ class FluentTextInputHandler with DeltaTextInputClient {
   /// moves to a different fragment.
   String _lastSyncedFragmentId = '';
 
+  /// Tracks the length of the last text sent to the platform via
+  /// setEditingState. On web, if the new text is shorter, we must reset
+  /// to empty first to avoid the engine's inferDeltaState assertion.
+  int _lastSyncedTextLength = 0;
+
   /// Tracks the previous selection state so syncImeBufferToFragment can
   /// detect when a selection change requires resetting the platform IME's
   /// autocorrect/predictive text context (iOS).
@@ -276,6 +281,7 @@ class FluentTextInputHandler with DeltaTextInputClient {
   void attachInput(FluentDocument document) {
     _document = document;
     _lastSyncedFragmentId = '';
+    _lastSyncedTextLength = 0;
     _prevSelectionKey = '';
   }
 
@@ -293,6 +299,7 @@ class FluentTextInputHandler with DeltaTextInputClient {
     _document = null;
     _resetComposition();
     _lastSyncedFragmentId = '';
+    _lastSyncedTextLength = 0;
     _prevSelectionKey = '';
   }
 
@@ -469,7 +476,7 @@ class FluentTextInputHandler with DeltaTextInputClient {
   }
 
   /// Returns true if the delta's text-modification ranges are within the
-  /// bounds of [textLength] and do not cut through UTF-16 surrogate pairs
+  /// bounds of the text length and do not cut through UTF-16 surrogate pairs
   /// (e.g., emoji). Malformed deltas from the platform (especially web
   /// browsers) can have ranges that exceed oldText.length, which would
   /// trigger an assertion inside `delta.apply()`. Ranges that split a
@@ -520,6 +527,45 @@ class FluentTextInputHandler with DeltaTextInputClient {
     return true;
   }
 
+  /// Safely applies [delta] to [value], clamping the resulting selection and
+  /// composing ranges to the new text length. This replaces [delta.apply()]
+  /// which can trigger an assertion failure when the replacement text is
+  /// shorter than the original (e.g. autocorrect suggestion) because the
+  /// delta's selection/composing offsets still reference the old (longer) text.
+  TextEditingValue _safeApplyDelta(TextEditingDelta delta, TextEditingValue value) {
+    final String newText;
+    if (delta is TextEditingDeltaInsertion) {
+      newText = value.text.replaceRange(
+          delta.insertionOffset, delta.insertionOffset, delta.textInserted);
+    } else if (delta is TextEditingDeltaDeletion) {
+      newText = value.text.replaceRange(
+          delta.deletedRange.start, delta.deletedRange.end, '');
+    } else if (delta is TextEditingDeltaReplacement) {
+      newText = value.text.replaceRange(
+          delta.replacedRange.start, delta.replacedRange.end, delta.replacementText);
+    } else {
+      return TextEditingValue(
+        text: delta.oldText,
+        selection: delta.selection,
+        composing: delta.composing,
+      );
+    }
+    final len = newText.length;
+    return TextEditingValue(
+      text: newText,
+      selection: TextSelection(
+        baseOffset: delta.selection.baseOffset.clamp(0, len),
+        extentOffset: delta.selection.extentOffset.clamp(0, len),
+      ),
+      composing: delta.composing.isValid
+          ? TextRange(
+              start: delta.composing.start.clamp(0, len),
+              end: delta.composing.end.clamp(0, len),
+            )
+          : TextRange.empty,
+    );
+  }
+
   /// Applies a list of [deltas] sequentially to [initialValue], syncing the
   /// value to each delta's oldText before applying to avoid TextRange
   /// assertion failures when the buffer doesn't match the platform's text.
@@ -548,7 +594,7 @@ class FluentTextInputHandler with DeltaTextInputClient {
         );
         continue;
       }
-      value = delta.apply(value);
+      value = _safeApplyDelta(delta, value);
     }
     return value;
   }
@@ -804,7 +850,7 @@ class FluentTextInputHandler with DeltaTextInputClient {
                       );
                     }
                     if (_isDeltaRangeValid(expandedDelta, value.text)) {
-                      value = expandedDelta.apply(value);
+                      value = _safeApplyDelta(expandedDelta, value);
                     }
                   } else if (delta is TextEditingDeltaReplacement) {
                     final expandedDelta = TextEditingDeltaReplacement(
@@ -822,7 +868,7 @@ class FluentTextInputHandler with DeltaTextInputClient {
                       );
                     }
                     if (_isDeltaRangeValid(expandedDelta, value.text)) {
-                      value = expandedDelta.apply(value);
+                      value = _safeApplyDelta(expandedDelta, value);
                     }
                   }
                   continue;
@@ -839,7 +885,7 @@ class FluentTextInputHandler with DeltaTextInputClient {
             );
           }
           if (_isDeltaRangeValid(delta, value.text)) {
-            value = delta.apply(value);
+            value = _safeApplyDelta(delta, value);
           } else {
             debugPrint('FluentTextInputHandler: skipping malformed delta '
                 '(range exceeds oldText length ${value.text.length}): $delta');
@@ -1743,6 +1789,7 @@ class FluentTextInputHandler with DeltaTextInputClient {
     _updatingSelf = true;
     try {
       _connection!.setEditingState(const TextEditingValue());
+      _lastSyncedTextLength = 0;
     } on PlatformException catch (e) {
       debugPrint('FluentTextInputHandler: _resetPlatformBuffer failed: ${e.message}');
     }
@@ -1920,6 +1967,16 @@ class FluentTextInputHandler with DeltaTextInputClient {
 
     _updatingSelf = true;
     try {
+      // On web, the Flutter engine's inferDeltaState asserts that
+      // replacedRange <= originalText.length. If we set a shorter text while
+      // the browser's <textarea> still holds the old (longer) text, the engine
+      // infers a replacement delta whose range exceeds the old text length,
+      // triggering an assertion failure. Resetting to empty first forces the
+      // engine to treat the subsequent setEditingState as a fresh insertion
+      // rather than a replacement, avoiding the assertion.
+      if (kIsWeb && syncedText.length < _lastSyncedTextLength) {
+        _connection!.setEditingState(const TextEditingValue());
+      }
       if (_isIOS && selectionChanged) {
         _connection!.setEditingState(const TextEditingValue());
       }
@@ -1928,10 +1985,17 @@ class FluentTextInputHandler with DeltaTextInputClient {
         selection: syncedSelection,
         composing: TextRange.empty,
       ));
+      _lastSyncedTextLength = syncedText.length;
     } on PlatformException catch (e) {
       debugPrint('FluentTextInputHandler: syncImeBufferToFragment failed: ${e.message}');
     }
     _updatingSelf = false;
+    // On web, reposition the hidden <textarea> so the IME popup follows
+    // the cursor after the buffer content changed (e.g. after accepting a
+    // suggestion). Without this the popup stays at the old position.
+    if (kIsWeb) {
+      _updateWebImePosition();
+    }
   }
 
   /// Invalidates paint on the paragraph render that hosts the preedit.

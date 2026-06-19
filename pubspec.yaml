@@ -40,6 +40,31 @@ flutter:
   # Local Google Fonts bundled for offline use on web
   # These fonts are loaded via TextStyle(fontFamily: ...) without network requests
   fonts:
+    - family: DejaVu Sans
+      fonts:
+        - asset: assets/fonts/DejaVuSans.ttf
+        - asset: assets/fonts/DejaVuSans-Oblique.ttf
+          style: italic
+        - asset: assets/fonts/DejaVuSans-Bold.ttf
+          weight: 700
+        - asset: assets/fonts/DejaVuSans-BoldOblique.ttf
+          weight: 700
+          style: italic
+    - family: DejaVu Sans Mono
+      fonts:
+        - asset: assets/fonts/DejaVuSansMono.ttf
+        - asset: assets/fonts/DejaVuSansMono-Bold.ttf
+          weight: 700
+    - family: DejaVu Serif
+      fonts:
+        - asset: assets/fonts/DejaVuSerif.ttf
+        - asset: assets/fonts/DejaVuSerif-Italic.ttf
+          style: italic
+        - asset: assets/fonts/DejaVuSerif-Bold.ttf
+          weight: 700
+        - asset: assets/fonts/DejaVuSerif-BoldItalic.ttf
+          weight: 700
+          style: italic
     - family: Crimson Text
       fonts:
         - asset: assets/google_fonts/CrimsonText-Regular.ttf

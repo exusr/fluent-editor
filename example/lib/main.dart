@@ -7,12 +7,24 @@ import 'package:fluent_editor/fluent_document.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  
+
+  // Forward all Flutter framework errors to the console (visible on web debug)
+  FlutterError.onError = (FlutterErrorDetails details) {
+    FlutterError.presentError(details);
+    debugPrint('FlutterError: ${details.exceptionAsString()}\n${details.stack}');
+  };
+
+  // Catch async errors that escape the framework (zone-level)
+  PlatformDispatcher.instance.onError = (error, stack) {
+    debugPrint('PlatformError: $error\n$stack');
+    return true;
+  };
+
   // Load bundled Google Fonts on web platform
   if (kIsWeb) {
     await _loadBundledFonts();
   }
-  
+
   runApp(const MyApp());
 }
 
