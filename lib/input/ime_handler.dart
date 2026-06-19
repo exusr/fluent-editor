@@ -462,6 +462,20 @@ class FluentTextInputHandler with DeltaTextInputClient {
             composing: TextRange.empty,
           );
         }
+        // Multi-fragment selection: use a full selection in the buffer so
+        // the platform can delete or replace the entire buffer content,
+        // which triggers the correct document-level selection
+        // deletion/replacement.
+        if (!cursor.isCollapsed) {
+          return TextEditingValue(
+            text: text,
+            selection: TextSelection(
+              baseOffset: 0,
+              extentOffset: text.length,
+            ),
+            composing: TextRange.empty,
+          );
+        }
         return TextEditingValue(
           text: text,
           selection: TextSelection.collapsed(offset: offset),
@@ -784,8 +798,15 @@ class FluentTextInputHandler with DeltaTextInputClient {
             final deletedText = delta.oldText.substring(deleteStart, deleteEnd);
             final graphemeCount = deletedText.characters.length;
             _document!.saveState(description: 'Backspace', forceNewAction: false);
-            for (int i = 0; i < graphemeCount; i++) {
+            if (!_document!.cursor.isCollapsed) {
+              // Active selection: delete it in one shot. Iterating
+              // per-grapheme would over-delete after the first call
+              // collapses the selection.
               executeHandleBackspace(_document!);
+            } else {
+              for (int i = 0; i < graphemeCount; i++) {
+                executeHandleBackspace(_document!);
+              }
             }
             syncImeBufferToFragment();
             return;
@@ -817,8 +838,9 @@ class FluentTextInputHandler with DeltaTextInputClient {
               }
               if (effectiveDeleteStart < textBefore.length) {
                 final graphemeLen = FragmentOperations.getGraphemeLengthAt(textBefore, effectiveDeleteStart);
-                if (graphemeLen == 2) {
-                  // This is an emoji - need to delete 2 code units
+                if (graphemeLen > 1) {
+                  // Multi-code-unit grapheme cluster (emoji, CJK + variation
+                  // selector, etc.) — need to delete all code units together.
                   // Adjust selection if we expanded backwards so the delta stays valid.
                   var adjustedSelection = delta.selection;
                   if (effectiveDeleteStart < deleteStart) {
@@ -836,7 +858,7 @@ class FluentTextInputHandler with DeltaTextInputClient {
                   if (delta is TextEditingDeltaDeletion) {
                     final expandedDelta = TextEditingDeltaDeletion(
                       oldText: delta.oldText,
-                      deletedRange: TextRange(start: effectiveDeleteStart, end: effectiveDeleteStart + 2),
+                      deletedRange: TextRange(start: effectiveDeleteStart, end: effectiveDeleteStart + graphemeLen),
                       selection: adjustedSelection,
                       composing: delta.composing,
                     );
@@ -854,7 +876,7 @@ class FluentTextInputHandler with DeltaTextInputClient {
                     final expandedDelta = TextEditingDeltaReplacement(
                       oldText: delta.oldText,
                       replacementText: '',
-                      replacedRange: TextRange(start: effectiveDeleteStart, end: effectiveDeleteStart + 2),
+                      replacedRange: TextRange(start: effectiveDeleteStart, end: effectiveDeleteStart + graphemeLen),
                       selection: adjustedSelection,
                       composing: delta.composing,
                     );
@@ -940,6 +962,16 @@ class FluentTextInputHandler with DeltaTextInputClient {
                 delta.replacementText.isEmpty)) {
           // Backspace/Delete operation
           doc.saveState(description: 'Delete', forceNewAction: false);
+
+          // If there's an active selection, delete it in one shot instead
+          // of iterating per-grapheme (which would over-delete or delete
+          // from the wrong position since the buffer doesn't reflect the
+          // full selection on non-sync platforms like Android).
+          if (!doc.cursor.isCollapsed) {
+            executeHandleBackspace(doc);
+            _resetPlatformBuffer();
+            return;
+          }
 
           final deletionRange = delta is TextEditingDeltaDeletion
               ? delta.deletedRange
@@ -1253,8 +1285,12 @@ class FluentTextInputHandler with DeltaTextInputClient {
               insertedText = _computeInsertedText(oldText, newText);
             }
           } else {
-            // Multi-fragment selection: fall back to diff-based extraction.
-            insertedText = _computeInsertedText(oldText, newText);
+            // Multi-fragment selection: the buffer has a full selection
+            // (0..text.length), so whatever text remains after the
+            // platform operation is what was inserted. If newText is
+            // empty, the user pressed Backspace; if it contains text,
+            // the user typed to replace the selection.
+            insertedText = newText;
           }
           doc.saveState(description: 'Replace selection', forceNewAction: false);
           if (insertedText.isNotEmpty) {
@@ -1349,9 +1385,15 @@ class FluentTextInputHandler with DeltaTextInputClient {
         // This correctly handles multi-node selections, matching the
         // physical-keyboard path in EventHandler.handleCharacterInput.
         if (!cursor.isCollapsed) {
-          final insertedText = _computeInsertedText(oldText, newText);
+          // The buffer has a full selection for multi-fragment selections,
+          // so whatever text remains is what was inserted.
+          final insertedText = newText;
           doc.saveState(description: 'Replace selection', forceNewAction: false);
-          _insertTextOrReplaceSelection(insertedText, doc);
+          if (insertedText.isNotEmpty) {
+            _insertTextOrReplaceSelection(insertedText, doc);
+          } else {
+            executeHandleReplaceSelection('', doc);
+          }
           syncImeBufferToFragment();
           doc.updateContent();
           return;
@@ -1982,6 +2024,8 @@ class FluentTextInputHandler with DeltaTextInputClient {
     final cursor = doc.cursor;
     final isSingleFragSelection =
         !cursor.isCollapsed && cursor.anchorId == cursor.focusId;
+    final isMultiFragSelection =
+        !cursor.isCollapsed && cursor.anchorId != cursor.focusId;
     final offset = _getCursorOffsetInFragment();
     final bool usePlaceholder = _isIOS &&
         cursor.isCollapsed &&
@@ -1994,6 +2038,14 @@ class FluentTextInputHandler with DeltaTextInputClient {
       syncedSelection = TextSelection(
         baseOffset: cursor.anchorOffset.clamp(0, syncedText.length),
         extentOffset: cursor.focusOffset.clamp(0, syncedText.length),
+      );
+    } else if (isMultiFragSelection && !usePlaceholder) {
+      // Multi-fragment selection: select the entire buffer so the
+      // platform can delete or replace it, triggering the document-
+      // level selection deletion/replacement.
+      syncedSelection = TextSelection(
+        baseOffset: 0,
+        extentOffset: syncedText.length,
       );
     } else {
       syncedSelection = TextSelection.collapsed(offset: syncedOffset);

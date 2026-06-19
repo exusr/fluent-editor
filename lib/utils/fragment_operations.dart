@@ -1,3 +1,4 @@
+import 'package:characters/characters.dart';
 import 'package:fluent_editor/factories.dart';
 import 'package:fluent_editor/fluent_document.dart';
 
@@ -109,57 +110,76 @@ class FragmentOperations {
     return s.substring(adjustedStart, adjustedEnd);
   }
 
-  /// Adjusts an index to avoid cutting through a surrogate pair (e.g., emoji).
-  /// If the index falls in the middle of a high+low surrogate pair, moves it back.
+  /// Adjusts an index to avoid cutting through a grapheme cluster
+  /// (e.g., emoji surrogate pairs, CJK variation selectors, combining marks).
+  /// If the index falls inside a multi-code-unit grapheme cluster, moves it
+  /// back to the start of that cluster.
   static int adjustIndex(String s, int index) {
     if (index <= 0 || index >= s.length) return index;
+    // Fast path: check surrogate pair (most common case)
     final prev = s.codeUnitAt(index - 1);
     final curr = s.codeUnitAt(index);
     if (prev >= 0xD800 && prev <= 0xDBFF && curr >= 0xDC00 && curr <= 0xDFFF) {
       return index - 1;
     }
-    return index;
+    // General path: check if index falls inside any grapheme cluster
+    return _snapToGraphemeStart(s, index);
   }
 
   /// Calculates the previous grapheme cluster offset in a string.
-  /// Returns the offset before the current position, handling surrogate pairs correctly.
-  /// If the character at [currentOffset - 1] is a low surrogate, it means we're
-  /// at the end of a surrogate pair, so we skip back 2 positions to delete the whole emoji.
+  /// Returns the start offset of the grapheme cluster that ends at
+  /// [currentOffset], handling surrogate pairs, CJK variation selectors,
+  /// combining marks, and ZWJ sequences correctly.
   static int getPreviousGraphemeOffset(String s, int currentOffset) {
     if (currentOffset <= 0) return 0;
     if (currentOffset > s.length) return s.length;
-    
-    // Check if the character before currentOffset is a low surrogate
-    // (meaning we're at the end of a surrogate pair)
-    if (currentOffset >= 2) {
-      final prev = s.codeUnitAt(currentOffset - 1);
-      final prevPrev = s.codeUnitAt(currentOffset - 2);
-      if (prev >= 0xDC00 && prev <= 0xDFFF && 
-          prevPrev >= 0xD800 && prevPrev <= 0xDBFF) {
-        // This is a complete surrogate pair, skip back 2
-        return currentOffset - 2;
+    // Walk the grapheme clusters and find the one whose end == currentOffset
+    int pos = 0;
+    for (final grapheme in s.characters) {
+      final nextPos = pos + grapheme.length;
+      if (nextPos >= currentOffset) {
+        return pos;
       }
+      pos = nextPos;
     }
-    
-    // Regular character, skip back 1
     return currentOffset - 1;
   }
 
   /// Calculates the number of UTF-16 code units to delete starting from [offset]
   /// to delete one complete grapheme cluster. Returns 1 for regular characters,
-  /// 2 for surrogate pairs (emoji).
+  /// 2 for surrogate pairs (emoji), and potentially more for complex clusters
+  /// (e.g., CJK + variation selector, ZWJ sequences).
   static int getGraphemeLengthAt(String s, int offset) {
     if (offset < 0 || offset >= s.length) return 1;
-    
-    // Check if this is a high surrogate (start of emoji)
-    final charCode = s.codeUnitAt(offset);
-    if (charCode >= 0xD800 && charCode <= 0xDBFF && offset + 1 < s.length) {
-      final nextCharCode = s.codeUnitAt(offset + 1);
-      if (nextCharCode >= 0xDC00 && nextCharCode <= 0xDFFF) {
-        return 2; // Complete surrogate pair
+    // Walk the grapheme clusters to find the one starting at [offset]
+    int pos = 0;
+    for (final grapheme in s.characters) {
+      if (pos == offset) {
+        return grapheme.length;
+      }
+      pos += grapheme.length;
+      if (pos > offset) {
+        // offset falls inside a grapheme cluster — return the remaining length
+        return pos - offset;
       }
     }
-    
-    return 1; // Regular character
+    return 1;
+  }
+
+  /// Snaps [index] back to the start of the grapheme cluster it falls into.
+  /// If [index] is already at a cluster boundary, it is returned unchanged.
+  static int _snapToGraphemeStart(String s, int index) {
+    int pos = 0;
+    for (final grapheme in s.characters) {
+      final nextPos = pos + grapheme.length;
+      if (index > pos && index < nextPos) {
+        return pos;
+      }
+      if (index == nextPos) {
+        return index; // Already at a boundary
+      }
+      pos = nextPos;
+    }
+    return index;
   }
 }
