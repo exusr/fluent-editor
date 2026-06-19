@@ -243,12 +243,7 @@ class FluentTextInputHandler with DeltaTextInputClient {
     // Fonts declared in pubspec.yaml's fonts: section — available as web
     // fonts to the browser. Append a generic fallback just in case.
     const webFontFamilies = {
-      'Crimson Text', 'Fira Sans', 'Inter', 'Lato', 'Libre Baskerville',
-      'Literata', 'Lora', 'Merriweather', 'Montserrat', 'Noto Sans',
-      'Noto Serif', 'Nunito', 'Open Sans', 'Oswald', 'PT Sans',
-      'Playfair Display', 'Poppins', 'Quicksand', 'Raleway', 'Roboto',
-      'Roboto Slab', 'Source Sans Pro', 'Titillium Web', 'Ubuntu',
-      'Work Sans',
+      'Crimson Text', 'Fira Sans', 'Lato', 'Poppins', 'Titillium Web',
       'DejaVu Sans', 'DejaVu Sans Mono', 'DejaVu Serif',
     };
 

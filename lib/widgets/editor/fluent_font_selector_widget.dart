@@ -20,8 +20,8 @@ const _fallbackFonts = <String>[
   'Georgia',
   'Helvetica',
   'Impact',
-  'Inter',
-  'Roboto',
+  'Lato',
+  'Poppins',
   'Tahoma',
   'Times New Roman',
   'Trebuchet MS',
@@ -34,29 +34,9 @@ const _fallbackFonts = <String>[
 const _googleFontsForWeb = <String>[
   'Crimson Text',
   'Fira Sans',
-  'Inter',
   'Lato',
-  'Libre Baskerville',
-  'Literata',
-  'Lora',
-  'Merriweather',
-  'Montserrat',
-  'Noto Sans',
-  'Noto Serif',
-  'Nunito',
-  'Open Sans',
-  'Oswald',
-  'PT Sans',
-  'Playfair Display',
   'Poppins',
-  'Quicksand',
-  'Raleway',
-  'Roboto',
-  'Roboto Slab',
-  'Source Sans Pro',
   'Titillium Web',
-  'Ubuntu',
-  'Work Sans',
 ];
 
 // ─── Font names to exclude (symbols, icons, internal system fonts) ──────
@@ -345,7 +325,7 @@ class _FluentFontSelectorWidgetState extends State<FluentFontSelectorWidget> {
 
   _FluentFontSelectorWidgetState() {
     if (kIsWeb) {
-      _currentFont = 'Roboto';
+      _currentFont = 'Lato';
       _availableFonts = _googleFontsForWeb;
     }
   }

@@ -16,41 +16,13 @@ echo ""
 
 # Array of font families to download (format: "folder_name|FontName")
 declare -a FONTS=(
-    "ofl/roboto|Roboto"
-    "ofl/opensans|Open Sans"
     "ofl/lato|Lato"
-    "ofl/montserrat|Montserrat"
     "ofl/poppins|Poppins"
-    "ofl/inter|Inter"
-    "ofl/nunito|Nunito"
-    "ofl/merriweather|Merriweather"
-    "ofl/playfairdisplay|Playfair Display"
-    "ofl/sourcesanspro|Source Sans Pro"
-    "ofl/oswald|Oswald"
-    "ofl/raleway|Raleway"
-    "ofl/ubuntu|Ubuntu"
-    "ofl/ptsans|PT Sans"
-    "ofl/notosans|Noto Sans"
-    "ofl/notoserif|Noto Serif"
-    "ofl/lora|Lora"
     "ofl/crimsontext|Crimson Text"
-    "ofl/worksans|Work Sans"
-    "ofl/quicksand|Quicksand"
     "ofl/titilliumweb|Titillium Web"
     "ofl/firasans|Fira Sans"
-    "ofl/librebaskerville|Libre Baskerville"
-    "ofl/robotoslab|Roboto Slab"
-    "ofl/literata|Literata"
-    "ofl/spacegrotesk|Space Grotesk"
-    "ofl/dmsans|DM Sans"
-    "ofl/mulish|Mulish"
-    "ofl/karla|Karla"
     "ofl/barlow|Barlow"
-    "ofl/manrope|Manrope"
     "ofl/spacemono|Space Mono"
-    "ofl/firacode|Fira Code"
-    "ofl/jetbrainsmono|JetBrains Mono"
-    "ofl/inconsolata|Inconsolata"
 )
 
 download_font() {
@@ -64,12 +36,20 @@ download_font() {
     echo -n "Downloading $target_name... "
     
     if curl -sL -o "$output" "$url" 2>/dev/null; then
-        if [ -s "$output" ]; then
+        if [ ! -s "$output" ]; then
+            rm -f "$output"
+            echo "✗ (empty file)"
+            return 1
+        fi
+        # Validate that the file is a real font (TTF magic: 00010000, OTF magic: OTTO)
+        local magic
+        magic=$(head -c 4 "$output" | xxd -p)
+        if [ "$magic" = "00010000" ] || [ "$magic" = "4f54544f" ]; then
             echo "✓"
             return 0
         else
             rm -f "$output"
-            echo "✗ (empty file)"
+            echo "✗ (not a valid font file)"
             return 1
         fi
     else
@@ -87,9 +67,19 @@ for font_info in "${FONTS[@]}"; do
     file_base="${font_name// /}"
     
     # Try to download Regular variant first
-    if [ -f "$ASSETS_DIR/${file_base}-Regular.ttf" ] || [ -f "$ASSETS_DIR/${file_base}-Regular.otf" ]; then
-        echo "Skipping $font_name (already exists)"
-        continue
+    # Skip only if a valid font file already exists
+    existing=""
+    if [ -f "$ASSETS_DIR/${file_base}-Regular.ttf" ]; then existing="$ASSETS_DIR/${file_base}-Regular.ttf"; fi
+    if [ -z "$existing" ] && [ -f "$ASSETS_DIR/${file_base}-Regular.otf" ]; then existing="$ASSETS_DIR/${file_base}-Regular.otf"; fi
+    if [ -n "$existing" ]; then
+        magic=$(head -c 4 "$existing" | xxd -p)
+        if [ "$magic" = "00010000" ] || [ "$magic" = "4f54544f" ]; then
+            echo "Skipping $font_name (already exists)"
+            continue
+        else
+            echo "Removing corrupt $existing..."
+            rm -f "$existing"
+        fi
     fi
     
     # Try different file formats and naming conventions
