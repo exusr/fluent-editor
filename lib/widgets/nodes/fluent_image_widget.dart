@@ -125,6 +125,10 @@ class _FluentImageWidgetState
   void _onTapDown(TapDownDetails details) {
     if (_isDragging) return;
 
+    if (widget.document.imeHandler.isComposing) {
+      widget.document.imeHandler.commitIfComposing();
+    }
+
     widget.document.requestEditorFocus();
 
     // Initialize original aspect ratio if not set

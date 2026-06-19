@@ -1064,33 +1064,19 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
           }
         }
 
-        // iOS virtual keyboard: backspace is handled via TextEditingDelta so the
-        // IME buffer stays in sync with the document. macOS physical keyboard:
-        // backspace is a hardware KeyEvent; the delta model is unreliable there,
-        // so we let the KeyEvent path handle it and re-sync the buffer afterwards.
-        final _isVirtualKeyboard = !kIsWeb && (defaultTargetPlatform == TargetPlatform.iOS || defaultTargetPlatform == TargetPlatform.android);
-        if (_isVirtualKeyboard &&
+        // iOS: backspace is always handled via TextEditingDelta (IME),
+        // whether from virtual or physical keyboard. iOS routes all text
+        // input through UIKit's text input system, which generates IME
+        // deltas. The placeholder logic in the IME handler handles
+        // structural backspace (cursor at fragment start). Returning
+        // ignored lets the delta propagate without double-handling.
+        final _isIOSOrAndroid = !kIsWeb && (defaultTargetPlatform == TargetPlatform.iOS || defaultTargetPlatform == TargetPlatform.android);
+        if (_isIOSOrAndroid &&
             widget.document.imeHandler.shouldUseBufferSync &&
             widget.document.cursor.isCollapsed &&
             !widget.document.imeHandler.isComposing &&
             (event.logicalKey == LogicalKeyboardKey.backspace ||
              event.logicalKey == LogicalKeyboardKey.delete)) {
-          // iOS virtual keyboard does not generate KeyUp/KeyRepeat events —
-          // only physical keyboards do. Swallow KeyUp and KeyRepeat to
-          // prevent the IME from generating a stale deletion delta echo
-          // that would cascade into a backspace loop.
-          if (event is! KeyDownEvent) {
-            return KeyEventResult.handled;
-          }
-          // When the cursor is at the very start of the current fragment the
-          // platform IME buffer has no text before the cursor, so iOS will
-          // not emit a deletion delta. We must handle the structural backspace
-          // (merge with previous node) ourselves.
-          if (widget.document.imeHandler.cursorIsAtFragmentStart) {
-            widget.document.manageEvent(event);
-            widget.document.imeHandler.markBackspaceHandledViaKeyEvent();
-            return KeyEventResult.handled;
-          }
           return KeyEventResult.ignored;
         }
 

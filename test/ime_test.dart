@@ -648,5 +648,69 @@ void main() {
       expect(currentNode, isA<Fragment>());
       expect((currentNode as Fragment).text, 'First');
     });
+
+    test('currentTextEditingValue reflects non-collapsed single-fragment selection on iOS', () {
+      final para = doc.content.nodes.first as Paragraph;
+      final frag = para.fragments.first as Fragment;
+      // Select "lo " (offsets 3..6) within "Hello world"
+      doc.cursor.anchorId = frag.id;
+      doc.cursor.anchorOffset = 3;
+      doc.cursor.focusId = frag.id;
+      doc.cursor.focusOffset = 6;
+
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      addTearDown(() => debugDefaultTargetPlatformOverride = null);
+
+      final value = handler.currentTextEditingValue!;
+      expect(value.text, 'Hello world');
+      expect(value.selection.baseOffset, 3);
+      expect(value.selection.extentOffset, 6);
+      expect(value.selection.isCollapsed, isFalse);
+    });
+
+    test('syncImeBufferToFragment sends real selection for single-fragment selection on macOS', () {
+      final para = doc.content.nodes.first as Paragraph;
+      final frag = para.fragments.first as Fragment;
+      // Select "lo " (offsets 3..6) within "Hello world"
+      doc.cursor.anchorId = frag.id;
+      doc.cursor.anchorOffset = 3;
+      doc.cursor.focusId = frag.id;
+      doc.cursor.focusOffset = 6;
+
+      debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+      addTearDown(() => debugDefaultTargetPlatformOverride = null);
+
+      // syncImeBufferToFragment must not throw and must send the real
+      // selection so the IME can replace the selected text when accepting
+      // a suggestion.
+      expect(() => handler.syncImeBufferToFragment(), returnsNormally);
+
+      // Verify via currentTextEditingValue that the selection is non-collapsed
+      final value = handler.currentTextEditingValue!;
+      expect(value.selection.baseOffset, 3);
+      expect(value.selection.extentOffset, 6);
+      expect(value.selection.isCollapsed, isFalse);
+    });
+
+    test('iOS placeholder not injected when selection is active', () {
+      final para = doc.content.nodes.first as Paragraph;
+      final frag = para.fragments.first as Fragment;
+      // Select from offset 0 to 2 within "Hello world" — cursor at start
+      // but with a real selection, so the placeholder should NOT be injected.
+      doc.cursor.anchorId = frag.id;
+      doc.cursor.anchorOffset = 0;
+      doc.cursor.focusId = frag.id;
+      doc.cursor.focusOffset = 2;
+
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      addTearDown(() => debugDefaultTargetPlatformOverride = null);
+
+      final value = handler.currentTextEditingValue!;
+      // No placeholder prefix
+      expect(value.text, 'Hello world');
+      expect(value.text.startsWith('\u200B'), isFalse);
+      expect(value.selection.baseOffset, 0);
+      expect(value.selection.extentOffset, 2);
+    });
   });
 }

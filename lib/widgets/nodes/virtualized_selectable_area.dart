@@ -91,7 +91,14 @@ class _VirtualizedSelectableAreaState extends State<VirtualizedSelectableArea> {
   void _onPointerDown(PointerDownEvent event) {
     // Ignore pointer events while resizing images
     if (widget.document.isResizingImage) return;
-    
+
+    // Commit any active IME composition before processing pointer events
+    // so that selection/cursor movement cannot occur while preedit text
+    // is still uncommitted.
+    if (widget.document.imeHandler.isComposing) {
+      widget.document.imeHandler.commitIfComposing();
+    }
+
     _pointerDownPosition = event.position;
     _isDragging = false;
     _isSelecting = false;
@@ -200,6 +207,11 @@ class _VirtualizedSelectableAreaState extends State<VirtualizedSelectableArea> {
 
     if (wasDragging) {
       setState(() {});
+      // Sync the IME buffer with the new selection so the platform IME
+      // knows about the selected range. Without this, the buffer remains
+      // stale from the previous typing session and IME suggestions produce
+      // incorrect text (e.g., inserting content from the old paragraph).
+      widget.document.cursorOnlyUpdate();
       // Open keyboard after drag selection on mobile.
       if (_isMobilePlatform()) {
         widget.document.requestMobileKeyboardFocus(context);

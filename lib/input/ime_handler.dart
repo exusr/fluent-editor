@@ -42,20 +42,6 @@ class FluentTextInputHandler with DeltaTextInputClient {
   /// via deltas (buffer-sync) rather than raw KeyEvent.
   bool get shouldUseBufferSync => _shouldSyncBuffer;
 
-  /// Called by the editor shell after a structural backspace is handled
-  /// via the KeyEvent path (iOS physical keyboard, cursor at fragment
-  /// start). Starts the structural-change grace period so that IME
-  /// deltas echoing the platform's stale buffer are ignored, then
-  /// re-syncs the buffer with the new fragment text.
-  void markBackspaceHandledViaKeyEvent() {
-    _structuralChangeInProgress = true;
-    _structuralChangeTimer?.cancel();
-    _structuralChangeTimer = Timer(_structuralChangeGracePeriod, () {
-      _structuralChangeInProgress = false;
-    });
-    syncImeBufferToFragment();
-  }
-
   /// Current preedit text displayed to the user but not yet committed.
   String _preeditText = '';
   String get preeditText => _preeditText;
@@ -98,6 +84,11 @@ class FluentTextInputHandler with DeltaTextInputClient {
   /// have the correct context. We only reset the buffer when the cursor
   /// moves to a different fragment.
   String _lastSyncedFragmentId = '';
+
+  /// Tracks the previous selection state so syncImeBufferToFragment can
+  /// detect when a selection change requires resetting the platform IME's
+  /// autocorrect/predictive text context (iOS).
+  String _prevSelectionKey = '';
 
   /// Whether the platform TextInput connection is currently open.
   bool get isConnectionActive => _connection != null && _connection!.attached;
@@ -161,6 +152,7 @@ class FluentTextInputHandler with DeltaTextInputClient {
   void attachInput(FluentDocument document) {
     _document = document;
     _lastSyncedFragmentId = '';
+    _prevSelectionKey = '';
   }
 
   /// Detaches and closes the IME connection.
@@ -177,6 +169,7 @@ class FluentTextInputHandler with DeltaTextInputClient {
     _document = null;
     _resetComposition();
     _lastSyncedFragmentId = '';
+    _prevSelectionKey = '';
   }
 
   /// Opens the keyboard (requests focus from the platform text input).
@@ -311,8 +304,15 @@ class FluentTextInputHandler with DeltaTextInputClient {
     if (_shouldSyncBuffer) {
       final text = _getCurrentFragmentText();
       if (text != null) {
+        final doc = _document!;
+        final cursor = doc.cursor;
+        final isSingleFragSelection =
+            !cursor.isCollapsed && cursor.anchorId == cursor.focusId;
         final offset = _getCursorOffsetInFragment().clamp(0, text.length);
-        if (_isIOS && offset == 0 && !text.startsWith(_emptyFragmentPlaceholder)) {
+        if (_isIOS &&
+            cursor.isCollapsed &&
+            offset == 0 &&
+            !text.startsWith(_emptyFragmentPlaceholder)) {
           // See _emptyFragmentPlaceholder: when the cursor sits at the very
           // start of a fragment (offset 0), UIKit's Backspace has nothing
           // before the cursor to delete and silently swallows the keystroke.
@@ -323,6 +323,16 @@ class FluentTextInputHandler with DeltaTextInputClient {
           return TextEditingValue(
             text: '$_emptyFragmentPlaceholder$text',
             selection: const TextSelection.collapsed(offset: 1),
+            composing: TextRange.empty,
+          );
+        }
+        if (isSingleFragSelection) {
+          return TextEditingValue(
+            text: text,
+            selection: TextSelection(
+              baseOffset: cursor.anchorOffset.clamp(0, text.length),
+              extentOffset: cursor.focusOffset.clamp(0, text.length),
+            ),
             composing: TextRange.empty,
           );
         }
@@ -342,7 +352,6 @@ class FluentTextInputHandler with DeltaTextInputClient {
     if (_updatingSelf) return;
     if (_structuralChangeInProgress) return;
     if (_document == null) return;
-
     // Check if we're handling preedit/composing data - sanitize at source
     if (deltas.any((d) => d.composing.isValid)) {
       // Apply deltas to get the final value, then sanitize it
@@ -681,14 +690,7 @@ class FluentTextInputHandler with DeltaTextInputClient {
           // Text insertion (regular character or emoji input)
           doc.saveState(description: 'Insert text', forceNewAction: false);
           final insertedText = delta.textInserted;
-          
-          for (final char in insertedText.characters) {
-            if (!doc.cursor.isCollapsed) {
-              executeHandleReplaceSelection(char, doc);
-            } else {
-              executeHandleInsertCharacter(char, doc);
-            }
-          }
+          _insertTextOrReplaceSelection(insertedText, doc);
         } else if (delta is TextEditingDeltaReplacement) {
           // Text replacement (selection replaced with new text)
           // This handles autocorrect, suggestion acceptance, etc.
@@ -727,13 +729,7 @@ class FluentTextInputHandler with DeltaTextInputClient {
             executeHandleReplaceSelection(replacementText, doc);
           } else {
             // No existing text to replace; just insert the new text
-            for (final char in replacementText.characters) {
-              if (!doc.cursor.isCollapsed) {
-                executeHandleReplaceSelection(char, doc);
-              } else {
-                executeHandleInsertCharacter(char, doc);
-              }
-            }
+            _insertTextOrReplaceSelection(replacementText, doc);
           }
           _resetPlatformBuffer();
         }
@@ -765,7 +761,6 @@ class FluentTextInputHandler with DeltaTextInputClient {
     if (_updatingSelf) return;
     if (_structuralChangeInProgress) return;
     if (_document == null) return;
-
     final doc = _document!;
     final cursor = doc.cursor;
 
@@ -860,30 +855,56 @@ class FluentTextInputHandler with DeltaTextInputClient {
         final end = FragmentOperations.adjustIndex(value.text, value.composing.end.clamp(0, value.text.length));
         final rawPreedit = value.text.substring(start, end);
         final preeditText = _sanitizeUtf16(rawPreedit);
-        
-        final wholeCleanText = _sanitizeUtf16(value.text);
-        final currentFragText = _getCurrentFragmentText() ?? '';
 
-        if (wholeCleanText != currentFragText) {
-          _updatingSelf = true;
-          final node = doc.nodeById(cursor.focusId.isNotEmpty ? cursor.focusId : cursor.anchorId);
-          if (node is Fragment) {
-            // Replace fragment text but EXCLUDE the temporary preedit
-            // to avoid corrupting the actual rendered text
-            final textBefore = wholeCleanText.substring(0, start);
-            final textAfter = wholeCleanText.substring(end);
-            node.text = _sanitizeUtf16(textBefore + textAfter);
-          }
-          _updatingSelf = false;
-        }
-        
+        // When a selection is active, clear it FIRST so the fragment text
+        // reflects the post-deletion state. The preedit offset must then be
+        // the cursor position after clearing, not the buffer-relative
+        // composing start (which is stale after the selection is removed).
+        int preeditOffset;
         if (!cursor.isCollapsed) {
-          doc.saveState(description: 'Replace selection', forceNewAction: false);
-          executeHandleReplaceSelection('', doc);
+          final anchorNode = doc.nodeById(cursor.anchorId);
+          final focusNode = doc.nodeById(cursor.focusId);
+          final anchorValid = anchorNode is Fragment &&
+              cursor.anchorOffset <= anchorNode.text.length;
+          final focusValid = focusNode is Fragment &&
+              cursor.focusOffset <= focusNode.text.length;
+          if (anchorValid && focusValid) {
+            doc.saveState(description: 'Replace selection', forceNewAction: false);
+            executeHandleReplaceSelection('', doc);
+          } else {
+            if (focusValid) {
+              cursor.moveTo(cursor.focusId, cursor.focusOffset);
+            } else if (anchorValid) {
+              cursor.moveTo(cursor.anchorId, cursor.anchorOffset);
+            }
+            doc.selectionManager.collapse();
+          }
+          // After clearing the selection the cursor is at the base of the
+          // former selection — that's where the preedit should start.
+          preeditOffset = cursor.focusId.isNotEmpty
+              ? cursor.focusOffset
+              : cursor.anchorOffset;
+        } else {
+          // No selection: sync fragment text to match the buffer (excluding
+          // preedit) only when the buffer differs from the current fragment.
+          final wholeCleanText = _sanitizeUtf16(value.text);
+          final currentFragText = _getCurrentFragmentText() ?? '';
+          if (wholeCleanText != currentFragText) {
+            _updatingSelf = true;
+            final node = doc.nodeById(cursor.focusId.isNotEmpty ? cursor.focusId : cursor.anchorId);
+            if (node is Fragment) {
+              final textBefore = wholeCleanText.substring(0, start);
+              final textAfter = wholeCleanText.substring(end);
+              node.text = _sanitizeUtf16(textBefore + textAfter);
+            }
+            _updatingSelf = false;
+          }
+          preeditOffset = start;
         }
+
         _isComposing = true;
         _preeditFragmentId = cursor.focusId.isNotEmpty ? cursor.focusId : cursor.anchorId;
-        _preeditLocalOffset = start;
+        _preeditLocalOffset = preeditOffset;
         _preeditContainerId = doc.findLogicalContainerId(_preeditFragmentId) ?? '';
         cursor.imeComposing = true;
         cursor.imeComposingStart = _preeditLocalOffset;
@@ -899,6 +920,59 @@ class FluentTextInputHandler with DeltaTextInputClient {
 
       final oldText = currentText;
       final newText = value.text;
+
+      // When a selection is active, handle insertion/deletion through the
+      // selection-aware path instead of the single-char paths below, which
+      // would collapse the selection and insert at the wrong position.
+      if (!cursor.isCollapsed) {
+        if (newText != oldText) {
+          String insertedText;
+          if (cursor.anchorId == cursor.focusId) {
+            // Single-fragment selection: use cursor offsets to precisely
+            // extract the replacement text from the buffer. The text before
+            // and after the selection in oldText remains unchanged in
+            // newText, so we can slice it out directly.
+            final selStart = cursor.anchorOffset < cursor.focusOffset
+                ? cursor.anchorOffset
+                : cursor.focusOffset;
+            final selEnd = cursor.anchorOffset < cursor.focusOffset
+                ? cursor.focusOffset
+                : cursor.anchorOffset;
+            final clampedStart = selStart.clamp(0, oldText.length);
+            final clampedEnd = selEnd.clamp(0, oldText.length);
+            final prefixLen = clampedStart;
+            final suffixLen = oldText.length - clampedEnd;
+            final expectedPrefix = oldText.substring(0, prefixLen);
+            final expectedSuffix = oldText.substring(clampedEnd);
+            final newTextPrefix = newText.length >= prefixLen
+                ? newText.substring(0, prefixLen)
+                : newText;
+            final newTextSuffix = newText.length >= suffixLen
+                ? newText.substring(newText.length - suffixLen)
+                : newText;
+            if (newText.length >= prefixLen + suffixLen &&
+                newTextPrefix == expectedPrefix &&
+                newTextSuffix == expectedSuffix) {
+              insertedText = newText.substring(
+                  prefixLen, newText.length - suffixLen);
+            } else {
+              insertedText = _computeInsertedText(oldText, newText);
+            }
+          } else {
+            // Multi-fragment selection: fall back to diff-based extraction.
+            insertedText = _computeInsertedText(oldText, newText);
+          }
+          doc.saveState(description: 'Replace selection', forceNewAction: false);
+          if (insertedText.isNotEmpty) {
+            _insertTextOrReplaceSelection(insertedText, doc);
+          } else {
+            executeHandleReplaceSelection('', doc);
+          }
+          syncImeBufferToFragment();
+          doc.updateContent();
+          return;
+        }
+      }
 
       // Single character insertion (including emoji which are 2 code units)
       final lengthDiff = newText.length - oldText.length;
@@ -975,6 +1049,18 @@ class FluentTextInputHandler with DeltaTextInputClient {
             syncImeBufferToFragment();
             return;
           }
+        }
+        // If there's an active document selection, replace it with the
+        // inserted text instead of overwriting the entire fragment.
+        // This correctly handles multi-node selections, matching the
+        // physical-keyboard path in EventHandler.handleCharacterInput.
+        if (!cursor.isCollapsed) {
+          final insertedText = _computeInsertedText(oldText, newText);
+          doc.saveState(description: 'Replace selection', forceNewAction: false);
+          _insertTextOrReplaceSelection(insertedText, doc);
+          syncImeBufferToFragment();
+          doc.updateContent();
+          return;
         }
         _replaceFragmentText(newText, cursorOffset: cursorOffset);
         return;
@@ -1065,12 +1151,29 @@ class FluentTextInputHandler with DeltaTextInputClient {
             }
           }
 
-          node.text = _sanitizeUtf16(value.text);
-          // Cursor position from the IME's selection after commit.
-          final newCursorOffset = value.selection.isValid && value.selection.isCollapsed
-              ? value.selection.extentOffset
-              : value.text.length;
-          doc.cursor.moveTo(fragId, newCursorOffset);
+          if (_isIOS) {
+            // FIX iOS: value.text can be stale/hybrid when iOS hasn't fully
+            // processed the buffer reset between compositions. Reconstruct
+            // the fragment text from the local source of truth: insert
+            // _preeditText at _preeditLocalOffset in the current fragment.
+            final currentFragText = node.text;
+            final insertOffset = _preeditLocalOffset.clamp(0, currentFragText.length);
+            final committedText = _sanitizeUtf16(_preeditText);
+            node.text = _sanitizeUtf16(
+              currentFragText.substring(0, insertOffset) +
+              committedText +
+              currentFragText.substring(insertOffset),
+            );
+            final newCursorOffset = insertOffset + committedText.length;
+            doc.cursor.moveTo(fragId, newCursorOffset);
+          } else {
+            node.text = _sanitizeUtf16(value.text);
+            // Cursor position from the IME's selection after commit.
+            final newCursorOffset = value.selection.isValid && value.selection.isCollapsed
+                ? value.selection.extentOffset
+                : value.text.length;
+            doc.cursor.moveTo(fragId, newCursorOffset);
+          }
           _resetComposition();
           doc.cursor.imeComposing = false;
           doc.updateContent();
@@ -1114,8 +1217,25 @@ class FluentTextInputHandler with DeltaTextInputClient {
 
     // Start new composition
     if (!cursor.isCollapsed) {
-      doc.saveState(description: 'Replace selection', forceNewAction: false);
-      executeHandleReplaceSelection('', doc);
+      // Guard against stale cursor offsets (see the same guard in the
+      // buffer-sync composition-start path above).
+      final anchorNode = doc.nodeById(cursor.anchorId);
+      final focusNode = doc.nodeById(cursor.focusId);
+      final anchorValid = anchorNode is Fragment &&
+          cursor.anchorOffset <= anchorNode.text.length;
+      final focusValid = focusNode is Fragment &&
+          cursor.focusOffset <= focusNode.text.length;
+      if (anchorValid && focusValid) {
+        doc.saveState(description: 'Replace selection', forceNewAction: false);
+        executeHandleReplaceSelection('', doc);
+      } else {
+        if (focusValid) {
+          cursor.moveTo(cursor.focusId, cursor.focusOffset);
+        } else if (anchorValid) {
+          cursor.moveTo(cursor.anchorId, cursor.anchorOffset);
+        }
+        doc.selectionManager.collapse();
+      }
     }
 
     _isComposing = true;
@@ -1257,6 +1377,52 @@ class FluentTextInputHandler with DeltaTextInputClient {
     }
   }
 
+  /// Centralized text insertion logic shared by all IME code paths.
+  ///
+  /// If the document has an active (non-collapsed) selection, the first
+  /// grapheme replaces the selection via [executeHandleReplaceSelection]
+  /// (which correctly handles multi-node selections). Subsequent graphemes
+  /// are inserted via [executeHandleInsertCharacter] since the selection
+  /// is collapsed after the first call.
+  ///
+  /// This mirrors the physical-keyboard pattern in [EventHandler.handleCharacterInput]
+  /// and ensures the virtual keyboard behaves identically.
+  void _insertTextOrReplaceSelection(String text, FluentDocument doc) {
+    for (final char in text.characters) {
+      if (!doc.cursor.isCollapsed) {
+        executeHandleReplaceSelection(char, doc);
+      } else {
+        executeHandleInsertCharacter(char, doc);
+      }
+    }
+  }
+
+  /// Computes the net inserted text by diffing [oldText] and [newText].
+  ///
+  /// Finds the common prefix and suffix, then returns the middle portion of
+  /// [newText] — i.e. the text that was actually added by the IME. If text
+  /// was only removed (no addition), returns an empty string.
+  String _computeInsertedText(String oldText, String newText) {
+    if (oldText.isEmpty) return newText;
+    if (newText.isEmpty) return '';
+
+    int prefixLen = 0;
+    final minLen = oldText.length < newText.length ? oldText.length : newText.length;
+    while (prefixLen < minLen && oldText[prefixLen] == newText[prefixLen]) {
+      prefixLen++;
+    }
+
+    int suffixLen = 0;
+    while (suffixLen < oldText.length - prefixLen &&
+        suffixLen < newText.length - prefixLen &&
+        oldText[oldText.length - 1 - suffixLen] ==
+            newText[newText.length - 1 - suffixLen]) {
+      suffixLen++;
+    }
+
+    return newText.substring(prefixLen, newText.length - suffixLen);
+  }
+
   /// Inserts text that the platform reported as already finalized (no
   /// composing range at all), bypassing the preedit buffer entirely.
   void _insertFinalizedText(String text) {
@@ -1265,37 +1431,7 @@ class FluentTextInputHandler with DeltaTextInputClient {
 
     doc.saveState(description: 'Insert text', forceNewAction: false);
 
-    // Iterate through UTF-16 code units, but merge surrogate pairs into single characters
-    int i = 0;
-    while (i < text.length) {
-      int charCode = text.codeUnitAt(i);
-      
-      // Check if this is a high surrogate (start of emoji)
-      if (charCode >= 0xD800 && charCode <= 0xDBFF && i + 1 < text.length) {
-        int nextCharCode = text.codeUnitAt(i + 1);
-        // Check if next is a low surrogate
-        if (nextCharCode >= 0xDC00 && nextCharCode <= 0xDFFF) {
-          // This is a complete surrogate pair (emoji), insert as one character
-          final emoji = text.substring(i, i + 2);
-          if (!doc.cursor.isCollapsed) {
-            executeHandleReplaceSelection(emoji, doc);
-          } else {
-            executeHandleInsertCharacter(emoji, doc);
-          }
-          i += 2;
-          continue;
-        }
-      }
-      
-      // Regular single code unit character
-      final char = text[i];
-      if (!doc.cursor.isCollapsed) {
-        executeHandleReplaceSelection(char, doc);
-      } else {
-        executeHandleInsertCharacter(char, doc);
-      }
-      i++;
-    }
+    _insertTextOrReplaceSelection(text, doc);
 
     if (_shouldSyncBuffer) {
       syncImeBufferToFragment();
@@ -1325,39 +1461,9 @@ class FluentTextInputHandler with DeltaTextInputClient {
     // Move cursor back to the original composition start before inserting.
     doc.cursor.moveTo(_preeditFragmentId, _preeditLocalOffset);
 
-    // Insert the committed text character by character using the existing
-    // handlers so pending font/styles are respected.
-    // Iterate through UTF-16 code units, merging surrogate pairs
-    int i = 0;
-    while (i < text.length) {
-      int charCode = text.codeUnitAt(i);
-      
-      // Check if this is a high surrogate (start of emoji)
-      if (charCode >= 0xD800 && charCode <= 0xDBFF && i + 1 < text.length) {
-        int nextCharCode = text.codeUnitAt(i + 1);
-        // Check if next is a low surrogate
-        if (nextCharCode >= 0xDC00 && nextCharCode <= 0xDFFF) {
-          // This is a complete surrogate pair (emoji), insert as one character
-          final emoji = text.substring(i, i + 2);
-          if (!doc.cursor.isCollapsed) {
-            executeHandleReplaceSelection(emoji, doc);
-          } else {
-            executeHandleInsertCharacter(emoji, doc);
-          }
-          i += 2;
-          continue;
-        }
-      }
-      
-      // Regular single code unit character
-      final char = text[i];
-      if (!doc.cursor.isCollapsed) {
-        executeHandleReplaceSelection(char, doc);
-      } else {
-        executeHandleInsertCharacter(char, doc);
-      }
-      i++;
-    }
+    // Insert the committed text using the centralized handler so pending
+    // font/styles are respected and selection replacement works correctly.
+    _insertTextOrReplaceSelection(text, doc);
 
     _resetComposition();
     
@@ -1547,15 +1653,38 @@ class FluentTextInputHandler with DeltaTextInputClient {
     _lastSyncedFragmentId = currentFragId;
     final text = _getCurrentFragmentText();
     if (text == null) return;
+    final cursor = doc.cursor;
+    final isSingleFragSelection =
+        !cursor.isCollapsed && cursor.anchorId == cursor.focusId;
     final offset = _getCursorOffsetInFragment();
-    final bool usePlaceholder = _isIOS && offset == 0 && !text.startsWith(_emptyFragmentPlaceholder);
+    final bool usePlaceholder = _isIOS &&
+        cursor.isCollapsed &&
+        offset == 0 &&
+        !text.startsWith(_emptyFragmentPlaceholder);
     final syncedText = usePlaceholder ? '$_emptyFragmentPlaceholder$text' : text;
     final syncedOffset = usePlaceholder ? 1 : offset.clamp(0, syncedText.length);
+    final TextSelection syncedSelection;
+    if (isSingleFragSelection && !usePlaceholder) {
+      syncedSelection = TextSelection(
+        baseOffset: cursor.anchorOffset.clamp(0, syncedText.length),
+        extentOffset: cursor.focusOffset.clamp(0, syncedText.length),
+      );
+    } else {
+      syncedSelection = TextSelection.collapsed(offset: syncedOffset);
+    }
+    final currentSelectionKey =
+        '${cursor.anchorId}:${cursor.anchorOffset}:${cursor.focusId}:${cursor.focusOffset}';
+    final bool selectionChanged = currentSelectionKey != _prevSelectionKey;
+    _prevSelectionKey = currentSelectionKey;
+
     _updatingSelf = true;
     try {
+      if (_isIOS && selectionChanged) {
+        _connection!.setEditingState(const TextEditingValue());
+      }
       _connection!.setEditingState(TextEditingValue(
         text: syncedText,
-        selection: TextSelection.collapsed(offset: syncedOffset),
+        selection: syncedSelection,
         composing: TextRange.empty,
       ));
     } on PlatformException catch (e) {

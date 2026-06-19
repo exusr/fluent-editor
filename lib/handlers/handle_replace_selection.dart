@@ -115,8 +115,11 @@ void executeHandleReplaceSelection(String character, FluentDocument document) {
     ResolvedSelection sel, String character, Root root) {
   final baseFrag = sel.base.fragment;
   final extFrag  = sel.extent.fragment;
-  final baseOff  = sel.base.offset;
-  final extOff   = sel.extent.offset;
+  // Clamp offsets to actual fragment text length to guard against stale
+  // cursor state (e.g. on buffer-sync IME platforms where the fragment
+  // text may have been modified without updating cursor offsets).
+  final baseOff  = sel.base.offset.clamp(0, baseFrag.text.length);
+  final extOff   = sel.extent.offset.clamp(0, extFrag.text.length);
 
   if (baseFrag.id == extFrag.id) {
     // ── Case 1: same fragment ─────────────────────────────────────
@@ -160,8 +163,11 @@ void executeHandleReplaceSelection(String character, FluentDocument document) {
   final extNode  = sel.nodes.last;
   final baseFrag = sel.base.fragment;
   final extFrag  = sel.extent.fragment;
-  final baseOff  = sel.base.offset;
-  final extOff   = sel.extent.offset;
+  // Clamp offsets to actual fragment text length to guard against stale
+  // cursor state (e.g. on buffer-sync IME platforms where the fragment
+  // text may have been modified without updating cursor offsets).
+  final baseOff  = sel.base.offset.clamp(0, baseFrag.text.length);
+  final extOff   = sel.extent.offset.clamp(0, extFrag.text.length);
 
   // 1. Truncate the base fragment and remove everything that comes after
   //    in the base node

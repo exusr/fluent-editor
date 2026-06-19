@@ -280,6 +280,12 @@ class FluentParagraphWidgetState<T extends FluentParagraphWidget> extends State<
               return; // Do not move cursor / collapse selection on right-click
             }
 
+            // Commit any active IME composition before processing tap
+            // to prevent cursor movement/selection during preedit.
+            if (widget.document.imeHandler.isComposing) {
+              widget.document.imeHandler.commitIfComposing();
+            }
+
             widget.document.requestEditorFocus();
 
             final now = DateTime.now();
@@ -909,6 +915,10 @@ class _InlineImageWidgetState extends State<InlineImageWidget> {
 
   void _onTapDown(TapDownDetails details) {
     if (_isDragging) return;
+
+    if (widget.document.imeHandler.isComposing) {
+      widget.document.imeHandler.commitIfComposing();
+    }
 
     widget.document.requestEditorFocus();
 

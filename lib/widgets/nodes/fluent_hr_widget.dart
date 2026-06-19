@@ -69,6 +69,9 @@ class _FluentHrWidgetState extends State<FluentHrWidget> {
   }
 
   void _onTapDown(TapDownDetails details) {
+    if (widget.document.imeHandler.isComposing) {
+      widget.document.imeHandler.commitIfComposing();
+    }
     final box = context.findRenderObject() as RenderBox?;
     final localX = box != null
         ? box.globalToLocal(details.globalPosition).dx
