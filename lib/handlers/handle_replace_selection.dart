@@ -106,6 +106,8 @@ void executeHandleReplaceSelection(String character, FluentDocument document) {
     }
   }
 
+  recalculateListIndices(root);
+
   recalculateListIndicesFor(
     root,
     sel.nodes.map((n) => n.container as FNode).toSet(),

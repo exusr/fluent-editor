@@ -30,7 +30,8 @@ class FluentTextInputHandler with DeltaTextInputClient {
   bool get _shouldSyncBuffer =>
       kIsWeb || (defaultTargetPlatform == TargetPlatform.iOS ||
                   defaultTargetPlatform == TargetPlatform.macOS ||
-                  defaultTargetPlatform == TargetPlatform.windows);
+                  defaultTargetPlatform == TargetPlatform.windows ||
+                  defaultTargetPlatform == TargetPlatform.linux);
 
   /// True on iOS specifically. Used to scope the empty-fragment placeholder
   /// (see [_emptyFragmentPlaceholder]) and other iOS-only quirks, since
@@ -1436,12 +1437,14 @@ class FluentTextInputHandler with DeltaTextInputClient {
 
           doc.saveState(description: 'Replace text', forceNewAction: false);
 
-          // FIX macOS: When the committed text is shorter than the previous
-          // preedit, we must explicitly clear the old preedit from the editor
-          // before applying the final buffer string to avoid ghost fragments.
-          // On web the preedit is NOT stored in node.text (it's rendered as
-          // an overlay via imePreeditText), so this cleanup must not run.
-          if (!kIsWeb && defaultTargetPlatform == TargetPlatform.macOS) {
+          // FIX macOS & Linux: When the committed text is shorter than the
+          // previous preedit, we must explicitly clear the old preedit from
+          // the editor before applying the final buffer string to avoid
+          // ghost fragments. On web the preedit is NOT stored in node.text
+          // (it's rendered as an overlay via imePreeditText), so this
+          // cleanup must not run.
+          if (!kIsWeb && (defaultTargetPlatform == TargetPlatform.macOS ||
+              defaultTargetPlatform == TargetPlatform.linux)) {
             final oldText = node.text;
             final preeditLen = _preeditText.length;
             final startOffset = _preeditLocalOffset.clamp(0, oldText.length);
@@ -1482,7 +1485,19 @@ class FluentTextInputHandler with DeltaTextInputClient {
             committedText = _sanitizeUtf16(_preeditText);
           }
           node.text = _sanitizeUtf16(prefix + committedText + suffix);
-          final newCursorOffset = insertOffset + committedText.length;
+          // On Linux, use the platform's selection to position the cursor
+          // when valid, since value.selection.extentOffset reflects the
+          // actual cursor position after commit. Other platforms use the
+          // computed offset.
+          final _isLinux = !kIsWeb && defaultTargetPlatform == TargetPlatform.linux;
+          final newCursorOffset = (_isLinux &&
+                  value.selection.isValid &&
+                  value.selection.isCollapsed &&
+                  value.selection.extentOffset >= prefix.length &&
+                  value.selection.extentOffset <=
+                      prefix.length + committedText.length)
+              ? value.selection.extentOffset
+              : insertOffset + committedText.length;
           doc.cursor.moveTo(fragId, newCursorOffset);
           _resetComposition();
           doc.cursor.imeComposing = false;
