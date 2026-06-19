@@ -1467,14 +1467,15 @@ class FluentTextInputHandler with DeltaTextInputClient {
             committedText = _sanitizeUtf16(_preeditText);
           }
           node.text = _sanitizeUtf16(prefix + committedText + suffix);
-          // On Linux & Windows, use the platform's selection to position the
+          // On Linux, Windows & macOS, use the platform's selection to position the
           // cursor when valid, since value.selection.extentOffset reflects the
           // actual cursor position after commit. Other platforms use the
           // computed offset.
-          final _isLinuxOrWindows = !kIsWeb &&
+          final _usePlatformSelection = !kIsWeb &&
               (defaultTargetPlatform == TargetPlatform.linux ||
-               defaultTargetPlatform == TargetPlatform.windows);
-          final newCursorOffset = (_isLinuxOrWindows &&
+               defaultTargetPlatform == TargetPlatform.windows ||
+               defaultTargetPlatform == TargetPlatform.macOS);
+          final newCursorOffset = (_usePlatformSelection &&
                   value.selection.isValid &&
                   value.selection.isCollapsed &&
                   value.selection.extentOffset >= prefix.length &&
@@ -1482,7 +1483,7 @@ class FluentTextInputHandler with DeltaTextInputClient {
                       prefix.length + committedText.length)
               ? value.selection.extentOffset
               : insertOffset + committedText.length;
-          doc.cursor.moveTo(fragId, newCursorOffset);
+          doc.cursor.moveTo(fragId, _snapCursorOffset(node.text, newCursorOffset));
           _resetComposition();
           doc.cursor.imeComposing = false;
           doc.updateContent();
@@ -1918,12 +1919,21 @@ class FluentTextInputHandler with DeltaTextInputClient {
     return -1;
   }
 
+  /// Snaps [offset] to a grapheme cluster boundary within [text],
+  /// preventing the cursor from landing inside a surrogate pair (emoji).
+  int _snapCursorOffset(String text, int offset) {
+    if (text.isEmpty) return offset;
+    return FragmentOperations.adjustIndex(text, offset.clamp(0, text.length));
+  }
+
   /// Moves the cursor to the given [offset] within the current fragment.
   void _moveCursorToFragmentOffset(int offset) {
     final doc = _document;
     if (doc == null) return;
     final fragId = doc.cursor.focusId.isNotEmpty ? doc.cursor.focusId : doc.cursor.anchorId;
-    doc.cursor.moveTo(fragId, offset);
+    final node = doc.nodeById(fragId);
+    final text = node is Fragment ? node.text : '';
+    doc.cursor.moveTo(fragId, _snapCursorOffset(text, offset));
   }
 
   /// Replaces the entire text of the current fragment with [newText].
@@ -1939,7 +1949,7 @@ class FluentTextInputHandler with DeltaTextInputClient {
     
     final cleanText = _sanitizeUtf16(newText);
     node.text = cleanText;
-    final finalOffset = cursorOffset ?? cleanText.length;
+    final finalOffset = _snapCursorOffset(cleanText, cursorOffset ?? cleanText.length);
     doc.cursor.moveTo(fragId, finalOffset);
     doc.updateContent();
     syncImeBufferToFragment();
