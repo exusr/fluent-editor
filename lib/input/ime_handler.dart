@@ -28,7 +28,7 @@ class FluentTextInputHandler with DeltaTextInputClient {
   /// NSTextInputContext, and Windows). When active the buffer mirrors the current fragment
   /// text so autocorrect, predictive text and CJK composition work correctly.
   bool get _shouldSyncBuffer =>
-      !kIsWeb && (defaultTargetPlatform == TargetPlatform.iOS ||
+      kIsWeb || (defaultTargetPlatform == TargetPlatform.iOS ||
                   defaultTargetPlatform == TargetPlatform.macOS ||
                   defaultTargetPlatform == TargetPlatform.windows);
 
@@ -132,10 +132,128 @@ class FluentTextInputHandler with DeltaTextInputClient {
   void setViewHeight(double viewHeight) {
     _lastViewHeight = viewHeight;
     if (_connection == null || !_connection!.attached) return;
+    // On web, setEditableSizeAndTransform is handled by _updateWebImePosition()
+    // which sends the real render box transform. Don't override it with a dummy.
+    if (kIsWeb) return;
     _connection!.setEditableSizeAndTransform(
       const Size(9999, 9999),
       Matrix4.identity(),
     );
+  }
+
+  /// On web, Flutter's engine ignores [setCaretRect]/[setComposingRect] (they
+  /// are no-ops). Instead, the browser positions IME popups based on the hidden
+  /// <textarea>'s size, transform, and font style.
+  ///
+  /// The textarea contains only the current fragment's text (synced via
+  /// [syncImeBufferToFragment]). The browser's internal caret is at
+  /// `cursor_offset * char_width` from the textarea's left edge. To make this
+  /// coincide with Flutter's real caret, the textarea must be positioned at the
+  /// fragment's start within the paragraph (which accounts for previous
+  /// fragments' widths and paragraph alignment offset).
+  void _updateWebImePosition() {
+    if (_connection == null || !_connection!.attached) return;
+    if (_document == null) return;
+    final doc = _document!;
+
+    final fragId = doc.cursor.focusId.isNotEmpty
+        ? doc.cursor.focusId
+        : doc.cursor.anchorId;
+    if (fragId.isEmpty) return;
+
+    final containerId = doc.findLogicalContainerId(fragId);
+    if (containerId == null) return;
+
+    final render = doc.paragraphRegistry.renderFor(containerId);
+    if (render == null || !render.attached || !render.hasSize) return;
+
+    // Resolve font metrics from the current fragment.
+    String fontFamily = 'DejaVu Sans';
+    double fontSize = 14.0;
+    FontWeight fontWeight = FontWeight.normal;
+    final fragNode = doc.nodeById(fragId);
+    if (fragNode is Fragment) {
+      fontFamily = fragNode.fontFamily;
+      fontSize = fragNode.fontSize;
+      fontWeight = fragNode.isBold ? FontWeight.bold : FontWeight.normal;
+    }
+
+    // Get the screen rect of the caret at the fragment's start (offset 0).
+    // This tells us where the fragment begins within the paragraph, accounting
+    // for previous fragments' widths and paragraph alignment offset.
+    final fragmentStartRect = render.getCaretScreenRect(fragId, 0);
+
+    final Matrix4 transform;
+    if (fragmentStartRect != null) {
+      // Compute the fragment's local offset within the render box.
+      final renderBoxOrigin = render.localToGlobal(Offset.zero);
+      final fragOffsetX = fragmentStartRect.left - renderBoxOrigin.dx;
+      final fragOffsetY = fragmentStartRect.top - renderBoxOrigin.dy;
+      // Compose: render box transform × translation to fragment start.
+      // This positions the textarea at the fragment's origin so the browser's
+      // internal caret (at cursor_offset within the textarea) aligns with
+      // Flutter's real caret.
+      transform = render.getTransformTo(null)
+          .multiplied(Matrix4.translationValues(fragOffsetX, fragOffsetY, 0));
+    } else {
+      // Fallback: use the render box transform directly.
+      transform = render.getTransformTo(null);
+    }
+
+    _connection!.setEditableSizeAndTransform(
+      render.size,
+      transform,
+    );
+
+    // Use the fragment's font with a browser-safe fallback so the textarea's
+    // character widths match Flutter's, keeping the internal caret aligned at
+    // any cursor offset.
+    final browserFontFamily = _webFontFallback(fontFamily);
+    _connection!.setStyle(
+      fontFamily: browserFontFamily,
+      fontSize: fontSize,
+      fontWeight: fontWeight,
+      textDirection: TextDirection.ltr,
+      // Left-align within the textarea: positioning is already handled by the
+      // transform above. Center/right alignment would shift the text within
+      // the textarea and misalign the internal caret.
+      textAlign: TextAlign.left,
+    );
+  }
+
+  /// Returns a browser-safe CSS font-family string for [fontFamily].
+  ///
+  /// Fonts declared in pubspec.yaml's `fonts:` section are loaded as web
+  /// fonts and available to the browser's hidden <textarea>. Fonts bundled
+  /// only as assets (e.g. "DejaVu Sans") are NOT available, so the browser
+  /// would fall back to its default font with different metrics, causing
+  /// the textarea's internal caret to be offset from Flutter's real caret.
+  ///
+  /// For asset-only fonts we substitute a similar generic family that the
+  /// browser can render. For web-font families we pass the name through
+  /// with a generic fallback appended.
+  String _webFontFallback(String fontFamily) {
+    // Fonts declared in pubspec.yaml's fonts: section — available as web
+    // fonts to the browser. Append a generic fallback just in case.
+    const webFontFamilies = {
+      'Crimson Text', 'Fira Sans', 'Inter', 'Lato', 'Libre Baskerville',
+      'Literata', 'Lora', 'Merriweather', 'Montserrat', 'Noto Sans',
+      'Noto Serif', 'Nunito', 'Open Sans', 'Oswald', 'PT Sans',
+      'Playfair Display', 'Poppins', 'Quicksand', 'Raleway', 'Roboto',
+      'Roboto Slab', 'Source Sans Pro', 'Titillium Web', 'Ubuntu',
+      'Work Sans',
+      'DejaVu Sans', 'DejaVu Sans Mono', 'DejaVu Serif',
+    };
+
+    if (webFontFamilies.contains(fontFamily)) {
+      return '$fontFamily, sans-serif';
+    }
+
+    // Asset-only fonts — not available to the browser. Map to a similar
+    // generic family so the textarea's metrics are close to Flutter's.
+    return switch (fontFamily) {
+      _ => '$fontFamily, sans-serif',
+    };
   }
 
   /// Updates the caret rectangle so the platform can position the IME
@@ -144,6 +262,12 @@ class FluentTextInputHandler with DeltaTextInputClient {
   void updateCaretRect(Rect rect) {
     _lastCaretRect = rect;
     if (_connection == null || !_connection!.attached) return;
+    // On web, setCaretRect/setComposingRect are no-ops. Use the real render
+    // box transform + font style to position the hidden <textarea> instead.
+    if (kIsWeb) {
+      _updateWebImePosition();
+      return;
+    }
     _connection!.setCaretRect(rect);
     _connection!.setComposingRect(rect);
   }
@@ -181,6 +305,12 @@ class FluentTextInputHandler with DeltaTextInputClient {
       _attachConnection(viewId: viewId);
     }
     _connection?.show();
+    // On web, position the hidden <textarea> using the real render box
+    // transform and font style so IME popups appear next to the cursor.
+    if (kIsWeb) {
+      _updateWebImePosition();
+      return;
+    }
     // Send transform then caret rect immediately after show() so macOS
     // has everything it needs for firstRectForCharacterRange:.
     final h = _lastViewHeight;
@@ -247,10 +377,6 @@ class FluentTextInputHandler with DeltaTextInputClient {
           _connectionRetryCount < _maxConnectionRetries) {
         final delay = _windowsRetryDelays[_connectionRetryCount.clamp(0, _windowsRetryDelays.length - 1)];
         _connectionRetryCount++;
-        debugPrint(
-          'FluentTextInputHandler: Windows view ID null, retry $_connectionRetryCount/${_maxConnectionRetries} '
-          'after ${delay.inMilliseconds}ms',
-        );
         _connectionRetryTimer?.cancel();
         _connectionRetryTimer = Timer(delay, () {
           _connectionRetryTimer = null;
@@ -258,11 +384,6 @@ class FluentTextInputHandler with DeltaTextInputClient {
         });
         return false; // Return false to indicate not ready yet, WITHOUT crashing
       }
-      // If error is different or we exhausted retries, log it
-      debugPrint(
-        'FluentTextInputHandler: Failed to attach text input definitively: '
-        '${e.code} - ${e.message}',
-      );
       _connection = null; // Clean up state on total failure
       return false;
     }
@@ -299,8 +420,8 @@ class FluentTextInputHandler with DeltaTextInputClient {
         composing: _composingRange,
       );
     }
-    // iOS/macOS/Windows: sync buffer with current fragment text for proper IME behavior
-    // (autocorrect, predictive text, suggestions).
+    // Buffer-sync platforms (web, iOS, macOS, Windows): return the actual
+    // fragment text so the IME computes deltas against the correct content.
     if (_shouldSyncBuffer) {
       final text = _getCurrentFragmentText();
       if (text != null) {
@@ -347,6 +468,91 @@ class FluentTextInputHandler with DeltaTextInputClient {
     return const TextEditingValue();
   }
 
+  /// Returns true if the delta's text-modification ranges are within the
+  /// bounds of [textLength] and do not cut through UTF-16 surrogate pairs
+  /// (e.g., emoji). Malformed deltas from the platform (especially web
+  /// browsers) can have ranges that exceed oldText.length, which would
+  /// trigger an assertion inside `delta.apply()`. Ranges that split a
+  /// surrogate pair would produce corrupted text.
+  bool _isDeltaRangeValid(TextEditingDelta delta, String text) {
+    final textLength = text.length;
+    bool isRangeSafe(int start, int end) {
+      if (start < 0 || end > textLength || start > end) return false;
+      // Reject ranges that cut through a surrogate pair.
+      if (start > 0 && start < textLength) {
+        final prev = text.codeUnitAt(start - 1);
+        final curr = text.codeUnitAt(start);
+        if (prev >= 0xD800 && prev <= 0xDBFF &&
+            curr >= 0xDC00 && curr <= 0xDFFF) {
+          return false;
+        }
+      }
+      if (end > 0 && end < textLength) {
+        final prev = text.codeUnitAt(end - 1);
+        final curr = text.codeUnitAt(end);
+        if (prev >= 0xD800 && prev <= 0xDBFF &&
+            curr >= 0xDC00 && curr <= 0xDFFF) {
+          return false;
+        }
+      }
+      return true;
+    }
+
+    if (delta is TextEditingDeltaDeletion) {
+      return isRangeSafe(delta.deletedRange.start, delta.deletedRange.end);
+    }
+    if (delta is TextEditingDeltaReplacement) {
+      return isRangeSafe(delta.replacedRange.start, delta.replacedRange.end);
+    }
+    if (delta is TextEditingDeltaInsertion) {
+      final offset = delta.insertionOffset;
+      if (offset < 0 || offset > textLength) return false;
+      if (offset > 0 && offset < textLength) {
+        final prev = text.codeUnitAt(offset - 1);
+        final curr = text.codeUnitAt(offset);
+        if (prev >= 0xD800 && prev <= 0xDBFF &&
+            curr >= 0xDC00 && curr <= 0xDFFF) {
+          return false;
+        }
+      }
+      return true;
+    }
+    return true;
+  }
+
+  /// Applies a list of [deltas] sequentially to [initialValue], syncing the
+  /// value to each delta's oldText before applying to avoid TextRange
+  /// assertion failures when the buffer doesn't match the platform's text.
+  /// Deltas whose ranges exceed oldText.length are skipped (the value is
+  /// rebuilt from the delta's own selection/composing instead).
+  TextEditingValue _applyDeltasSafely(
+    TextEditingValue initialValue,
+    List<TextEditingDelta> deltas,
+  ) {
+    var value = initialValue;
+    for (final delta in deltas) {
+      if (value.text != delta.oldText) {
+        value = TextEditingValue(
+          text: delta.oldText,
+          selection: delta.selection,
+          composing: delta.composing,
+        );
+      }
+      if (!_isDeltaRangeValid(delta, value.text)) {
+        debugPrint('FluentTextInputHandler: skipping malformed delta '
+            '(range exceeds oldText length ${value.text.length}): $delta');
+        value = TextEditingValue(
+          text: delta.oldText,
+          selection: delta.selection,
+          composing: delta.composing,
+        );
+        continue;
+      }
+      value = delta.apply(value);
+    }
+    return value;
+  }
+
   @override
   void updateEditingValueWithDeltas(List<TextEditingDelta> deltas) {
     if (_updatingSelf) return;
@@ -355,10 +561,10 @@ class FluentTextInputHandler with DeltaTextInputClient {
     // Check if we're handling preedit/composing data - sanitize at source
     if (deltas.any((d) => d.composing.isValid)) {
       // Apply deltas to get the final value, then sanitize it
-      TextEditingValue value = currentTextEditingValue ?? const TextEditingValue();
-      for (final delta in deltas) {
-        value = delta.apply(value);
-      }
+      final value = _applyDeltasSafely(
+        currentTextEditingValue ?? const TextEditingValue(),
+        deltas,
+      );
       final cleanText = _sanitizeUtf16(value.text);
       final cleanValue = TextEditingValue(
         text: cleanText,
@@ -590,7 +796,16 @@ class FluentTextInputHandler with DeltaTextInputClient {
                       selection: adjustedSelection,
                       composing: delta.composing,
                     );
-                    value = expandedDelta.apply(value);
+                    if (value.text != delta.oldText) {
+                      value = TextEditingValue(
+                        text: delta.oldText,
+                        selection: delta.selection,
+                        composing: delta.composing,
+                      );
+                    }
+                    if (_isDeltaRangeValid(expandedDelta, value.text)) {
+                      value = expandedDelta.apply(value);
+                    }
                   } else if (delta is TextEditingDeltaReplacement) {
                     final expandedDelta = TextEditingDeltaReplacement(
                       oldText: delta.oldText,
@@ -599,7 +814,16 @@ class FluentTextInputHandler with DeltaTextInputClient {
                       selection: adjustedSelection,
                       composing: delta.composing,
                     );
-                    value = expandedDelta.apply(value);
+                    if (value.text != delta.oldText) {
+                      value = TextEditingValue(
+                        text: delta.oldText,
+                        selection: delta.selection,
+                        composing: delta.composing,
+                      );
+                    }
+                    if (_isDeltaRangeValid(expandedDelta, value.text)) {
+                      value = expandedDelta.apply(value);
+                    }
                   }
                   continue;
                 }
@@ -607,7 +831,24 @@ class FluentTextInputHandler with DeltaTextInputClient {
             }
           }
           
-          value = delta.apply(value);
+          if (value.text != delta.oldText) {
+            value = TextEditingValue(
+              text: delta.oldText,
+              selection: delta.selection,
+              composing: delta.composing,
+            );
+          }
+          if (_isDeltaRangeValid(delta, value.text)) {
+            value = delta.apply(value);
+          } else {
+            debugPrint('FluentTextInputHandler: skipping malformed delta '
+                '(range exceeds oldText length ${value.text.length}): $delta');
+            value = TextEditingValue(
+              text: delta.oldText,
+              selection: delta.selection,
+              composing: delta.composing,
+            );
+          }
         }
         // Pass the selection offset to position cursor correctly after emoji insertion
         // If the selection would cut through a surrogate pair, use the end of text instead
@@ -640,10 +881,10 @@ class FluentTextInputHandler with DeltaTextInputClient {
       final hasComposing = deltas.any((d) => d.composing.isValid);
       if (hasComposing) {
         // A composition is starting/active - handle via updateEditingValue
-        TextEditingValue value = currentTextEditingValue ?? const TextEditingValue();
-        for (final delta in deltas) {
-          value = delta.apply(value);
-        }
+        final value = _applyDeltasSafely(
+          currentTextEditingValue ?? const TextEditingValue(),
+          deltas,
+        );
         updateEditingValue(value);
         return;
       }
@@ -749,10 +990,10 @@ class FluentTextInputHandler with DeltaTextInputClient {
 
     // Composition active: reconstruct the final TextEditingValue by
     // applying deltas sequentially against our preedit buffer, as before.
-    TextEditingValue value = currentTextEditingValue ?? const TextEditingValue();
-    for (final delta in deltas) {
-      value = delta.apply(value);
-    }
+    final value = _applyDeltasSafely(
+      currentTextEditingValue ?? const TextEditingValue(),
+      deltas,
+    );
     updateEditingValue(value);
   }
 

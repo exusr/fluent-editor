@@ -11,6 +11,7 @@ import 'package:fluent_editor/comments/comment_provider.dart';
 import 'package:fluent_editor/spell_check/spell_annotation.dart';
 import 'package:fluent_editor/spell_check/spell_check_provider.dart';
 import 'package:fluent_editor/styles.dart';
+import 'package:fluent_editor/utils/fragment_operations.dart';
 import 'package:fluent_editor/utils/node_operations.dart';
 import 'package:fluent_editor/widgets/editor/fluent_link_dialog.dart';
 import 'package:fluent_editor/widgets/editor/fluent_context_menu.dart';
@@ -615,9 +616,12 @@ class FluentParagraphWidgetState<T extends FluentParagraphWidget> extends State<
     for (final frag in fragments) {
       final fragEnd = currentOffset + frag.text.length;
       if (ann.startOffset >= currentOffset && ann.startOffset < fragEnd) {
-        final localStart = ann.startOffset - currentOffset;
-        final localEnd = ann.endOffset - currentOffset;
-        final newText = frag.text.replaceRange(localStart, localEnd, correction);
+        final localStart = (ann.startOffset - currentOffset).clamp(0, frag.text.length);
+        final localEnd = (ann.endOffset - currentOffset).clamp(0, frag.text.length);
+        // Adjust indices to avoid cutting through surrogate pairs (emoji)
+        final safeStart = FragmentOperations.adjustIndex(frag.text, localStart);
+        final safeEnd = FragmentOperations.adjustIndex(frag.text, localEnd);
+        final newText = frag.text.replaceRange(safeStart, safeEnd, correction);
         frag.text = newText;
         widget.document.updateContent();
         return;
