@@ -32,6 +32,7 @@ const _fallbackFonts = <String>[
 /// These fonts are bundled locally in assets/google_fonts/.
 /// To add more fonts, place .ttf files in that directory and update this list.
 const _googleFontsForWeb = <String>[
+  'DejaVu Sans',
   'Crimson Text',
   'Fira Sans',
   'Lato',

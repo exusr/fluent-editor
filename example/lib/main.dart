@@ -34,7 +34,7 @@ Future<void> _loadBundledFonts() async {
   const bundledFonts = [
     'Crimson Text', 'Fira Sans', 'Lato', 'Poppins', 'Titillium Web',
   ];
-  
+
   for (final fontName in bundledFonts) {
     final fontLoader = FontLoader(fontName);
     final fileName = fontName.replaceAll(' ', '');
