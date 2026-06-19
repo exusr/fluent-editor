@@ -382,6 +382,56 @@ void recalculateListIndices(Root root) {
   }
 }
 
+/// Recalculates list indices only for lists that contain any of the
+/// given [affectedNodes] (or their ancestors). This avoids walking the
+/// entire document tree when only a subset of lists changed.
+void recalculateListIndicesFor(Root root, Set<FNode> affectedNodes) {
+  // Collect the top-level FluentList ancestors of each affected node.
+  final topLists = <FluentList>{};
+  for (final node in affectedNodes) {
+    FNode? current = node;
+    FluentList? deepestList;
+    while (current != null) {
+      if (current is FluentList) {
+        deepestList = current;
+      }
+      current = findParent(root, current);
+    }
+    if (deepestList != null) {
+      // Walk up to find the top-most FluentList (whose parent is not a ListItem)
+      var top = deepestList;
+      FNode? parent = findParent(root, top);
+      while (parent is ListItem) {
+        final grand = findParent(root, parent);
+        if (grand is FluentList) {
+          top = grand;
+          parent = findParent(root, grand);
+        } else {
+          break;
+        }
+      }
+      topLists.add(top);
+    }
+  }
+
+  void recalculateList(FluentList list, List<int> parentIndices) {
+    for (var i = 0; i < list.items.length; i++) {
+      final item = list.items[i];
+      final newIndexList = [...parentIndices, i + 1];
+      item.indexList = newIndexList;
+      for (final child in item.children) {
+        if (child is FluentList) {
+          recalculateList(child, newIndexList);
+        }
+      }
+    }
+  }
+
+  for (final list in topLists) {
+    recalculateList(list, []);
+  }
+}
+
 /// Merges consecutive lists with the same listType in the document.
 /// This ensures that if two bullet lists are adjacent, they become one list.
 /// This should be called after operations that create or modify lists.
