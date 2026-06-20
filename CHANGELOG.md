@@ -1,3 +1,33 @@
+## 1.0.7
+
+* Added native IME composition support with preedit text isolation for CJK input (iOS, macOS, Windows, Android, web)
+* Added IME buffer sync mirroring fragment text in the platform buffer for autocorrect and predictive text context
+* Added platform-specific IME candidate window positioning for macOS CJK keyboards with caret rect tracking
+* Added grapheme-aware text handling for emoji and surrogate pairs using the `characters` package for accurate grapheme cluster detection
+* Added CJK-aware zero-width space (ZWS) caret stop filtering — ZWS between two CJK characters is skipped during cursor navigation
+* Added ZWS-aware backspace deletion — backspace skips invisible ZWS and deletes the visible character; ZWS in empty table cells is preserved
+* Added table cell preservation — empty table cells retain at least one fragment (ZWS) to remain navigable after backspace
+* Added empty paragraph minimum height rendering so empty paragraphs and table cells remain clickable
+* Added `getFragmentAtPosition` fallback for empty paragraphs so taps place the cursor correctly in empty cells
+* Added web platform IME positioning with fragment-scoped transform, font sync, and delta range validation to prevent surrogate-pair corruption
+* Added Windows IME buffer sync and grapheme-safe spell correction
+* Added Android delta-based text operations with fragment-scoped buffer persistence for autocorrect context
+* Added macOS Cmd+Backspace to delete to line start with platform-specific modifier mapping
+* Added ArrowKeyRepeater support for macOS/iOS physical keyboards with backspace/delete/undo repeat support
+* Added image resize mode with double-tap activation preventing selection/scroll interference during resize
+* Added selective list index recalculation for affected nodes only to avoid full document tree walk
+* Added undo/redo manager improvements for IME composition actions
+* Fixed arrow key navigation to jump between top-level nodes when no line above/below exists
+* Fixed arrow key navigation to collapse selection at edges and prevent duplicate handling
+* Fixed scroll-to-cursor to use measured item heights instead of fixed estimate
+* Fixed backspace to remove empty fragments and clean up empty Links and style wrappers that block navigation
+* Fixed mobile-web gesture detection to distinguish tap/scroll/drag and prevent keyboard interference during scrolling
+* Fixed web IME composition state corruption by tracking full synced text and setting composition flag before selection clearing
+* Fixed iOS virtual keyboard backspace for empty paragraphs and fragment-start cursor positions with zero-width placeholder workaround
+* Fixed IME buffer race conditions by syncing to new fragment after Enter and trusting document cursor position for backspace
+* Fixed macOS IME commit to remove old preedit before applying final text to prevent ghost fragments
+* Fixed structural change grace period to prevent platform echo duplication during paragraph splits on iOS/macOS
+
 ## 1.0.6
 
 * Fixed `Unsupported operation: Platform._operatingSystem` error on web 
