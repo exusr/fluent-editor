@@ -17,12 +17,17 @@
   <a href="https://exusr.github.io/fluent-editor/">
     <img src="https://img.shields.io/badge/demo-live-brightgreen" alt="Live Demo">
   </a>
+  <a href="https://github.com/sponsors/exusr">
+    <img src="https://img.shields.io/badge/GitHub%20Sponsors-Sponsor%20%E2%9D%A4-brightgreen" alt="GitHub Sponsors">
+  </a>
+  <a href="https://www.producthunt.com/products/fluent-editor">
+    <img src="https://img.shields.io/badge/Product%20Hunt-Vote-orange?logo=producthunt" alt="Product Hunt">
+  </a>
 </p>
 
 A powerful and feature-rich rich word processor for Flutter applications, inspired by nature 🍃.
 
 ## Features
-
 - **Rich Text Editing**: Support for bold, italic, underline, strikethrough, and more
 - **Paragraph Styles**: Headings, normal text, and paragraph formatting
 - **Lists**: Ordered and unordered lists with nested sublists
