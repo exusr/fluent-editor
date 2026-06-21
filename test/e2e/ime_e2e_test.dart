@@ -444,4 +444,259 @@ void main() {
       expect(doc.content.text, 'hello');
     });
   });
+
+  group('IME e2e — suggestion on existing word (web/Android)', () {
+    test('suggestion replaces full word without character loss', () {
+      // The bug is in the buffer-sync commit path, shared by web, iOS,
+      // macOS, and Windows. In tests kIsWeb is false (Dart VM), so we use
+      // macOS to exercise the same _shouldSyncBuffer=true code path that
+      // web on Android triggers. The IME re-opens composition on the
+      // existing word "italic" (composing range covers the whole word),
+      // then the user picks the suggestion "italico". The committed text
+      // must be "italico" — not "italio" or "italicitalic".
+      debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+      addTearDown(() => debugDefaultTargetPlatformOverride = null);
+
+      final doc = _docWithText('italic');
+      final frag = _firstFrag(doc);
+      doc.cursor.moveTo(frag.id, 0);
+
+      // IME re-opens composition on the whole word
+      doc.imeHandler.updateEditingValue(TextEditingValue(
+        text: 'italic',
+        selection: const TextSelection.collapsed(offset: 6),
+        composing: const TextRange(start: 0, end: 6),
+      ));
+
+      expect(doc.imeHandler.isComposing, isTrue);
+      expect(doc.imeHandler.preeditText, 'italic');
+      // Fragment text must be stripped of the preedit
+      expect(frag.text, '');
+
+      // User picks suggestion "italico" — platform sends new text with
+      // no composing range
+      doc.imeHandler.updateEditingValue(TextEditingValue(
+        text: 'italico',
+        selection: const TextSelection.collapsed(offset: 7),
+        composing: TextRange.empty,
+      ));
+
+      expect(doc.imeHandler.isComposing, isFalse);
+      expect(frag.text, 'italico');
+      expect(doc.cursor.anchorOffset, 7);
+    });
+
+    test('suggestion on word with surrounding text preserves context', () {
+      debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+      addTearDown(() => debugDefaultTargetPlatformOverride = null);
+
+      final doc = _docWithText('the italic word');
+      final frag = _firstFrag(doc);
+      // Cursor inside "italic" (offset 4 = start of "italic")
+      doc.cursor.moveTo(frag.id, 4);
+
+      // IME re-opens composition on "italic" (offsets 4..10)
+      doc.imeHandler.updateEditingValue(TextEditingValue(
+        text: 'the italic word',
+        selection: const TextSelection.collapsed(offset: 10),
+        composing: const TextRange(start: 4, end: 10),
+      ));
+
+      expect(doc.imeHandler.isComposing, isTrue);
+      expect(doc.imeHandler.preeditText, 'italic');
+      // Fragment text must retain "the " and " word" but NOT "italic"
+      expect(frag.text, 'the  word');
+
+      // Suggestion "italico" applied
+      doc.imeHandler.updateEditingValue(TextEditingValue(
+        text: 'the italico word',
+        selection: const TextSelection.collapsed(offset: 11),
+        composing: TextRange.empty,
+      ));
+
+      expect(doc.imeHandler.isComposing, isFalse);
+      expect(frag.text, 'the italico word');
+    });
+  });
+
+  group('IME e2e — iOS web CJK composition (WebKit isComposing bug)', () {
+    // On iOS Safari, InputEvent.isComposing is always false, so Flutter
+    // never sets composing ranges in deltas. CompositionDetector listens
+    // to DOM compositionstart/compositionend events for a reliable signal.
+    // We simulate this by setting CompositionDetector.isComposing directly.
+
+    test('CJK character is treated as preedit, not committed immediately', () {
+      // kIsWeb is always false in unit tests, but the composition-detector
+      // path is gated on kIsWeb && CompositionDetector.isComposing. We test
+      // the updateEditingValue path directly (which is what the detector
+      // feeds into) by providing a composing range that the detector would
+      // have computed.
+      final doc = _docWithText('');
+      final frag = _firstFrag(doc);
+      doc.cursor.moveTo(frag.id, 0);
+
+      // Simulate what the detector produces: a value WITH composing range
+      // even though the platform delta didn't include one.
+      doc.imeHandler.updateEditingValue(TextEditingValue(
+        text: '你',
+        selection: const TextSelection.collapsed(offset: 1),
+        composing: const TextRange(start: 0, end: 1),
+      ));
+
+      expect(doc.imeHandler.isComposing, isTrue,
+          reason: 'CJK char should enter composition, not be committed');
+      expect(frag.text, '',
+          reason: 'Fragment text must remain empty during active composition');
+      expect(doc.imeHandler.preeditText, '你');
+    });
+
+    test('CJK composition update changes preedit without committing', () {
+      final doc = _docWithText('');
+      final frag = _firstFrag(doc);
+      doc.cursor.moveTo(frag.id, 0);
+
+      // Start composition with first CJK char
+      doc.imeHandler.updateEditingValue(TextEditingValue(
+        text: '你',
+        selection: const TextSelection.collapsed(offset: 1),
+        composing: const TextRange(start: 0, end: 1),
+      ));
+      expect(doc.imeHandler.isComposing, isTrue);
+
+      // Update preedit to "你好" (composition still active)
+      doc.imeHandler.updateEditingValue(TextEditingValue(
+        text: '你好',
+        selection: const TextSelection.collapsed(offset: 2),
+        composing: const TextRange(start: 0, end: 2),
+      ));
+
+      expect(doc.imeHandler.isComposing, isTrue);
+      expect(frag.text, '',
+          reason: 'Fragment must still be empty during composition update');
+      expect(doc.imeHandler.preeditText, '你好');
+    });
+
+    test('CJK composition end commits text to document', () {
+      debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+      addTearDown(() => debugDefaultTargetPlatformOverride = null);
+
+      final doc = _docWithText('');
+      final frag = _firstFrag(doc);
+      doc.cursor.moveTo(frag.id, 0);
+
+      // Composition start
+      doc.imeHandler.updateEditingValue(TextEditingValue(
+        text: '你好',
+        selection: const TextSelection.collapsed(offset: 2),
+        composing: const TextRange(start: 0, end: 2),
+      ));
+      expect(doc.imeHandler.isComposing, isTrue);
+
+      // Composition end (composing range becomes invalid)
+      doc.imeHandler.updateEditingValue(TextEditingValue(
+        text: '你好',
+        selection: const TextSelection.collapsed(offset: 2),
+        composing: TextRange.empty,
+      ));
+
+      expect(doc.imeHandler.isComposing, isFalse);
+      expect(frag.text, '你好');
+      expect(doc.cursor.anchorOffset, 2);
+    });
+  });
+
+  group('IME e2e — autocorrect replacement via updateEditingValue', () {
+    // On web, when the browser applies an autocorrect suggestion (e.g.
+    // "italic"→"italico"), it arrives as a TextEditingDeltaReplacement which
+    // is routed through updateEditingValue. The diff-based single-char
+    // insertion path must NOT intercept this case — it's a replacement, not
+    // a pure insertion. Without the suffix-match check, "italic"→"italico"
+    // (lengthDiff==1) was treated as inserting "o" at position 5, producing
+    // "italioc" instead of "italico".
+    test('autocorrect "italic"→"italico" via updateEditingValue', () {
+      debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+      addTearDown(() => debugDefaultTargetPlatformOverride = null);
+
+      final doc = _docWithText('italic');
+      final frag = _firstFrag(doc);
+      doc.cursor.moveTo(frag.id, 6);
+
+      // Simulate autocorrect: buffer changes from "italic" to "italico"
+      // with no composing range (composition already ended).
+      doc.imeHandler.updateEditingValue(TextEditingValue(
+        text: 'italico',
+        selection: const TextSelection.collapsed(offset: 7),
+        composing: TextRange.empty,
+      ));
+
+      expect(frag.text, 'italico');
+      expect(doc.cursor.anchorOffset, 7);
+    });
+
+    test('autocorrect "italic"→"italics" via updateEditingValue', () {
+      debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+      addTearDown(() => debugDefaultTargetPlatformOverride = null);
+
+      final doc = _docWithText('italic');
+      final frag = _firstFrag(doc);
+      doc.cursor.moveTo(frag.id, 6);
+
+      doc.imeHandler.updateEditingValue(TextEditingValue(
+        text: 'italics',
+        selection: const TextSelection.collapsed(offset: 7),
+        composing: TextRange.empty,
+      ));
+
+      expect(frag.text, 'italics');
+      expect(doc.cursor.anchorOffset, 7);
+    });
+
+    test('autocorrect with surrounding text preserves context', () {
+      debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+      addTearDown(() => debugDefaultTargetPlatformOverride = null);
+
+      final doc = _docWithText('the italic word');
+      final frag = _firstFrag(doc);
+      doc.cursor.moveTo(frag.id, 6);
+
+      doc.imeHandler.updateEditingValue(TextEditingValue(
+        text: 'the italico word',
+        selection: const TextSelection.collapsed(offset: 11),
+        composing: TextRange.empty,
+      ));
+
+      expect(frag.text, 'the italico word');
+    });
+
+    // Regression test: on iOS Safari web, autocorrect fires
+    // compositionstart/compositionend DOM events, so
+    // CompositionDetector.isComposing is true when the autocorrect delta
+    // arrives. The delta is a TextEditingDeltaReplacement which must NOT be
+    // intercepted by the CompositionDetector block (that would corrupt the
+    // fragment by treating it as CJK preedit). Instead it must fall through
+    // to normal buffer-sync processing.
+    test('autocorrect "italic"→"italico" via TextEditingDeltaReplacement on buffer-sync', () {
+      debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+      addTearDown(() => debugDefaultTargetPlatformOverride = null);
+
+      final doc = _docWithText('italic');
+      final frag = _firstFrag(doc);
+      doc.cursor.moveTo(frag.id, 6);
+
+      // Simulate autocorrect as a TextEditingDeltaReplacement: the browser
+      // replaces the entire word "italic" with "italico".
+      doc.imeHandler.updateEditingValueWithDeltas([
+        TextEditingDeltaReplacement(
+          oldText: 'italic',
+          replacementText: 'italico',
+          replacedRange: const TextRange(start: 0, end: 6),
+          selection: const TextSelection.collapsed(offset: 7),
+          composing: TextRange.empty,
+        ),
+      ]);
+
+      expect(frag.text, 'italico');
+      expect(doc.cursor.anchorOffset, 7);
+    });
+  });
 }

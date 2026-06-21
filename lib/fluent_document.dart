@@ -1029,18 +1029,20 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
           return KeyEventResult.ignored;
         }
 
-        // On desktop with an active TextInput connection, printable character
-        // keys must propagate to FlutterTextInputPlugin (secondary responder)
-        // so it calls interpretKeyEvents: on NSTextInputContext, activating the
-        // CJK candidate window. Returning ignored here does NOT prevent the
-        // character from being inserted — it arrives back via
-        // updateEditingValueWithDeltas → _insertFinalizedText.
+        // On desktop and web with an active TextInput connection, printable
+        // character keys must propagate to the platform's text input system
+        // (NSTextInputContext on macOS, the hidden <textarea> on web) so the
+        // IME can start composition for CJK input. Returning ignored here does
+        // NOT prevent the character from being inserted — it arrives back via
+        // updateEditingValueWithDeltas. On web this is critical: without it,
+        // CJK characters are inserted directly by executeHandleInsertCharacter,
+        // bypassing the browser's composition flow entirely.
         // Backspace, Delete, Enter and all nav keys are handled directly here.
-        final _isDesktop = !kIsWeb && (
+        final _shouldRouteToIME = kIsWeb || (
           defaultTargetPlatform == TargetPlatform.macOS ||
           defaultTargetPlatform == TargetPlatform.windows ||
           defaultTargetPlatform == TargetPlatform.linux);
-        if (_isDesktop && widget.document.imeHandler.isConnectionActive) {
+        if (_shouldRouteToIME && widget.document.imeHandler.isConnectionActive) {
           final _isCtrl = HardwareKeyboard.instance.isControlPressed;
           final _isMeta = HardwareKeyboard.instance.isMetaPressed;
           if (!_isCtrl && !_isMeta) {
