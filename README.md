@@ -12,7 +12,7 @@
     <img src="https://img.shields.io/badge/License-MIT-green.svg" alt="License">
   </a>
   <a href="https://github.com/exusr/fluent-editor/releases">
-    <img src="https://img.shields.io/badge/version-1.0.7-orange" alt="Version">
+    <img src="https://img.shields.io/badge/version-1.0.8-orange" alt="Version">
   </a>
   <a href="https://exusr.github.io/fluent-editor/">
     <img src="https://img.shields.io/badge/demo-live-brightgreen" alt="Live Demo">
