@@ -1567,6 +1567,18 @@ class FluentTextInputHandler with DeltaTextInputClient {
     if (value.text.isEmpty) return;
 
     if (!value.composing.isValid) {
+      // Guard against spurious echo on non-buffer-sync platforms (Android):
+      // if the incoming text matches the current fragment text, skip it.
+      // The buffer-sync path has this check at line 1151, but the Android
+      // path was missing it — causing text duplication when the platform
+      // echoes back the current state via updateEditingValue instead of
+      // using the delta model.
+      if (!_shouldSyncBuffer) {
+        final currentFragText = _getCurrentFragmentText() ?? '';
+        if (value.text == currentFragText) {
+          return;
+        }
+      }
       // Caso 4: Testo confermato senza composizione
       _insertFinalizedText(value.text);
       if (_shouldSyncBuffer) {
