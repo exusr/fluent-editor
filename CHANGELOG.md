@@ -1,3 +1,8 @@
+## 1.0.8
+
+* Fixed Android backspace not working when cursor is in the middle of text — zero-length deletion deltas are now always processed instead of only when the fragment is empty or cursor is at offset 0
+* Fixed text duplication on Android when `updateEditingValue` receives text matching the current fragment — added echo guard for non-buffer-sync platforms to skip spurious echoes before `_insertFinalizedText`
+
 ## 1.0.7
 
 * Added native IME composition support with preedit text isolation for CJK input (iOS, macOS, Windows, Android, web)

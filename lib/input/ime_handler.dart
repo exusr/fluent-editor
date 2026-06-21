@@ -990,13 +990,11 @@ class FluentTextInputHandler with DeltaTextInputClient {
             }
           } else if (deletionRange.isValid && deletionRange.start == deletionRange.end) {
             // Zero-length deletion on Android: the IME buffer is empty but
-            // the user pressed backspace. If the cursor is on an empty
-            // fragment or at the start of a fragment, treat this as a
-            // structural backspace so the cursor can enter the adjacent node.
-            final currentFragText = _getCurrentFragmentText() ?? '';
-            if (currentFragText.isEmpty || _getCursorOffsetInFragment() == 0) {
-              executeHandleBackspace(doc);
-            }
+            // the user pressed backspace. Execute backspace regardless of
+            // cursor position — executeHandleBackspace is grapheme-aware and
+            // handles both structural (merge with prev node) and normal
+            // (delete char before cursor) cases.
+            executeHandleBackspace(doc);
           }
         } else if (delta is TextEditingDeltaNonTextUpdate) {
           // Selection or composing range changed without text mutation.
@@ -1567,6 +1565,18 @@ class FluentTextInputHandler with DeltaTextInputClient {
     if (value.text.isEmpty) return;
 
     if (!value.composing.isValid) {
+      // Guard against spurious echo on non-buffer-sync platforms (Android):
+      // if the incoming text matches the current fragment text, skip it.
+      // The buffer-sync path has this check at line 1151, but the Android
+      // path was missing it — causing text duplication when the platform
+      // echoes back the current state via updateEditingValue instead of
+      // using the delta model.
+      if (!_shouldSyncBuffer) {
+        final currentFragText = _getCurrentFragmentText() ?? '';
+        if (value.text == currentFragText) {
+          return;
+        }
+      }
       // Caso 4: Testo confermato senza composizione
       _insertFinalizedText(value.text);
       if (_shouldSyncBuffer) {
