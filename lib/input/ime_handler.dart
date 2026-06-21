@@ -990,13 +990,11 @@ class FluentTextInputHandler with DeltaTextInputClient {
             }
           } else if (deletionRange.isValid && deletionRange.start == deletionRange.end) {
             // Zero-length deletion on Android: the IME buffer is empty but
-            // the user pressed backspace. If the cursor is on an empty
-            // fragment or at the start of a fragment, treat this as a
-            // structural backspace so the cursor can enter the adjacent node.
-            final currentFragText = _getCurrentFragmentText() ?? '';
-            if (currentFragText.isEmpty || _getCursorOffsetInFragment() == 0) {
-              executeHandleBackspace(doc);
-            }
+            // the user pressed backspace. Execute backspace regardless of
+            // cursor position — executeHandleBackspace is grapheme-aware and
+            // handles both structural (merge with prev node) and normal
+            // (delete char before cursor) cases.
+            executeHandleBackspace(doc);
           }
         } else if (delta is TextEditingDeltaNonTextUpdate) {
           // Selection or composing range changed without text mutation.
