@@ -10,7 +10,6 @@ import 'package:flutter/material.dart';
 
 import 'image_drop_stub.dart'
     if (dart.library.html) 'image_drop_web.dart'
-    // ignore: unused_import
     ;
 
 /// Returns true if the platform supports drag & drop from the filesystem.
@@ -94,7 +93,6 @@ class _ImageInsertDialogState extends State<ImageInsertDialog> {
         final file = result.files.first;
         final bytes = file.bytes;
         
-        // Check if bytes are available and not empty
         if (bytes != null && bytes.isNotEmpty) {
           if (!mounted) return;
           setState(() {
@@ -105,7 +103,6 @@ class _ImageInsertDialogState extends State<ImageInsertDialog> {
             _errorMessage = null;
           });
         } else if (!kIsWeb && file.path != null) {
-          // Fallback for desktop platforms: read from file path
           try {
             final ioFile = File(file.path!);
             if (await ioFile.exists()) {
@@ -123,19 +120,16 @@ class _ImageInsertDialogState extends State<ImageInsertDialog> {
               }
             }
           } catch (e) {
-            // If file reading fails, show error
             if (!mounted) return;
             setState(() => _errorMessage = 'Error reading file: $e');
             return;
           }
         } else {
-          // No bytes available and no path to read from
           if (!mounted) return;
           setState(() => _errorMessage = 'Unable to read image data. Please try a different file.');
         }
       }
     } catch (e) {
-      // Fallback for Linux: use zenity or kdialog if file_picker fails
       if (!kIsWeb && Platform.isLinux) {
         final picked = await _pickFileNativeLinux();
         if (picked) return;
@@ -148,7 +142,6 @@ class _ImageInsertDialogState extends State<ImageInsertDialog> {
   /// Native fallback for Linux using zenity or kdialog.
   Future<bool> _pickFileNativeLinux() async {
     try {
-      // Try zenity
       final result = await Process.run('zenity', [
         '--file-selection',
         '--file-filter=Images | *.png *.jpg *.jpeg *.gif *.webp *.bmp *.svg',
@@ -174,7 +167,6 @@ class _ImageInsertDialogState extends State<ImageInsertDialog> {
         }
       }
     } catch (_) {
-      // zenity not available, try kdialog
       try {
         final result = await Process.run('kdialog', [
           '--getopenfilename',
@@ -247,7 +239,6 @@ class _ImageInsertDialogState extends State<ImageInsertDialog> {
   Widget _buildFileSelectionArea(BuildContext context) {
     final hasFile = _selectedFileBytes != null;
 
-    // Central content (selected file or placeholder)
     final content = hasFile
         ? Column(
             mainAxisSize: MainAxisSize.min,
@@ -298,7 +289,6 @@ class _ImageInsertDialogState extends State<ImageInsertDialog> {
       ),
     );
 
-    // On desktop: wrap with DropTarget for drag & drop
     if (_isDesktopPlatform()) {
       return DropTarget(
         onDragDone: _onDragDone,
@@ -308,7 +298,6 @@ class _ImageInsertDialogState extends State<ImageInsertDialog> {
       );
     }
 
-    // On web: wrap with WebDropTarget for HTML5 drag & drop
     if (kIsWeb) {
       return WebDropTarget(
         onFileDropped: _onWebFileDropped,
@@ -329,7 +318,6 @@ class _ImageInsertDialogState extends State<ImageInsertDialog> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // URL input
             TextField(
               controller: _urlController,
               decoration: InputDecoration(
@@ -348,7 +336,6 @@ class _ImageInsertDialogState extends State<ImageInsertDialog> {
             const SizedBox(height: 16),
             Center(child: Text(_labels.or, style: TextStyle(color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6)))),
             const SizedBox(height: 16),
-            // File selection area (drag & drop on desktop, click anywhere)
             _buildFileSelectionArea(context),
             if (_errorMessage != null) ...[
               const SizedBox(height: 8),

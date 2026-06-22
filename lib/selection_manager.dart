@@ -61,7 +61,6 @@ class SelectionState {
     final nodeIsExtent = extent.nodeId == nodeId;
     
     if (nodeIsBase && nodeIsExtent) {
-      // Selection entirely within this node
       return (
         startFrag: base.fragmentId,
         startOff: base.offset,
@@ -69,8 +68,6 @@ class SelectionState {
         endOff: extent.offset,
       );
     } else if (nodeIsBase) {
-      // Selection starts here and continues in other nodes
-      // Select from base to the end of the node
       return (
         startFrag: base.fragmentId,
         startOff: base.offset,
@@ -78,8 +75,6 @@ class SelectionState {
         endOff: -1,
       );
     } else if (nodeIsExtent) {
-      // Selection ends here, started in other nodes
-      // Select from the beginning of the node to extent
       return (
         startFrag: '',  // "" = start of node
         startOff: 0,
@@ -87,7 +82,6 @@ class SelectionState {
         endOff: extent.offset,
       );
     } else {
-      // Node completely selected (in the middle)
       return (
         startFrag: '',  // start
         startOff: 0,

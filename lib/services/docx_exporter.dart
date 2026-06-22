@@ -5,11 +5,10 @@ import 'dart:typed_data';
 
 import 'package:archive/archive.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
-// ignore: unused_import
 import 'package:fluent_editor/factories.dart';
 import 'package:fluent_editor/fluent_document.dart';
 import 'package:fluent_editor/styles.dart';
-import 'package:fluent_editor/utils/editor_utils.dart';
+import 'package:fluent_editor/services/font_service.dart';
 
 class _CommentSeg {
   final int start;
@@ -34,26 +33,21 @@ class DocxExporter {
 
   final StringBuffer _body = StringBuffer();
 
-  // Relationships (images + hyperlinks): rId -> (type, target, mode)
   final Map<String, _Rel> _rels = {};
   int _relCounter = 1;
 
-  // Embedded images: src -> media file name.
   final Map<String, String> _media = {};
   final Map<String, Uint8List> _mediaBytes = {};
   int _mediaCounter = 0;
   int _docPrId = 1;
 
-  // Fonts used in the document (for embedding).
   final Set<String> _fonts = {};
 
-  // List numbering: FluentList.id -> numId assigned in numbering.xml
   final Map<String, int> _listNumIds = {};
   final List<_NumDef> _numDefs = [];
   int _numIdCounter = 1;
   int _abstractNumIdCounter = 0;
 
-  // Native DOCX comment export state.
   final List<Map<String, dynamic>> _docxComments = [];
   int _commentIdCounter = 0;
   final Map<String, int> _commentIdMap = {};
@@ -61,7 +55,6 @@ class DocxExporter {
   final Map<String, String> _paragraphParaIds = {}; // paragraph.id -> paraId
 
   Future<Uint8List> build() async {
-    // Pre-assegna gli ID a tutti i commenti e le reply
     final allComments = document.commentProvider?.exportComments() ?? [];
     for (final c in allComments) {
       if (c['resolved'] == true || c['orphan'] == true) continue;
@@ -80,7 +73,6 @@ class DocxExporter {
 
     final archive = Archive();
 
-    // Embed system fonts
     for (final fontName in _fonts) {
       final bytes = await _findSystemFontBytes(fontName);
       if (bytes != null) {
@@ -164,7 +156,6 @@ class DocxExporter {
       }
     }
 
-    // Deep search on Windows
     if (Platform.isWindows) {
       final windir = Platform.environment['WINDIR'] ?? r'C:\Windows';
       final fontsDir = Directory('$windir\\Fonts');
@@ -192,8 +183,6 @@ class DocxExporter {
     final b = utf8.encode(content);
     a.addFile(ArchiveFile(path, b.length, b));
   }
-
-  // ─── Nodi ───────────────────────────────────────────────────────────
 
   void _writeNode(FNode node, {int extraIndent = 0}) {
     if (node is FluentImage) {
@@ -313,7 +302,6 @@ class DocxExporter {
       _body.write('</w:tr>');
     }
     _body.write('</w:tbl>');
-    // Empty paragraph after the table (required by Word).
     _body.write('<w:p/>');
   }
 
@@ -333,8 +321,6 @@ class DocxExporter {
     }
     if (!wrote) _body.write('<w:p/>');
   }
-
-  // ─── Inline ─────────────────────────────────────────────────────────
 
   List<_TextSeg> _extractSegments(
       String text, int baseOffset, List<_CommentSeg> segs) {
@@ -396,16 +382,7 @@ class DocxExporter {
       segs.sort((a, b) => a.start.compareTo(b.start));
     }
 
-    // Track which comment IDs have already emitted their Start marker so that
-    // comments spanning multiple fragments do not produce duplicate anchors.
     final startedCommentIds = <int>{};
-    // Track comments that need their End+Reference emitted once the last
-    // overlapping fragment has been processed.  Maps commentId -> comment data.
-    // We emit End markers at the boundary where the comment no longer overlaps.
-    // Simpler approach: collect all comment IDs that overlap with each fragment
-    // range and emit Start only on first encounter, End only when the comment
-    // range ends before or at the current fragment's end.
-    // We use per-comment "last fragment end offset" tracking instead.
 
     void _emitCommentStarts(
         Map<String, dynamic> comment, int docxId, List<dynamic> replies) {
@@ -442,7 +419,6 @@ class DocxExporter {
         final overlapping =
             segs.where((s) => s.start < linkEnd && s.end > linkStart).toList();
 
-        // Emit Start markers for comments beginning in this link range.
         for (final seg in overlapping) {
           final cid = _ensureDocxCommentId(seg.comment);
           final replies = (seg.comment['replies'] as List<dynamic>?) ?? [];
@@ -472,7 +448,6 @@ class DocxExporter {
         }
         _body.write('</w:hyperlink>');
 
-        // Emit End markers for comments whose range ends within this link.
         for (final seg in overlapping) {
           if (seg.end <= linkEnd) {
             final cid = _ensureDocxCommentId(seg.comment);
@@ -499,8 +474,6 @@ class DocxExporter {
               text: sub.text, isCommented: sub.comment != null));
         }
 
-        // After writing all sub-segments of this fragment, emit End markers
-        // for every comment whose range ends at or before this fragment's end.
         for (final seg in segs) {
           if (seg.end > fragStart && seg.end <= fragEnd) {
             final cid = _ensureDocxCommentId(seg.comment);
@@ -513,14 +486,9 @@ class DocxExporter {
       }
     }
 
-    // Emit End markers for any comments that extended past the last fragment.
     for (final seg in segs) {
       final cid = _ensureDocxCommentId(seg.comment);
       if (startedCommentIds.contains(cid)) {
-        // Only emit End if it hasn't been emitted yet (i.e., comment end was
-        // beyond the paragraph boundary — shouldn't happen normally but guard
-        // against orphan ranges).
-        // We track emitted ends via a local set.
       }
     }
   }
@@ -584,8 +552,6 @@ class DocxExporter {
     return '<w:r>${rpr.toString()}<w:t xml:space="preserve">${_esc(runText)}</w:t></w:r>';
   }
 
-  // ─── Paragraph properties ───────────────────────────────────────────
-
   String _pPr(Paragraph p, ParagraphStyle pStyle, {int extraIndent = 0, String? paraId}) {
     final jc = _docxAlign(p.textAlign);
     final indent = p.indent * 360 + extraIndent + ((pStyle.indent ?? 0) * 360);
@@ -622,8 +588,6 @@ class DocxExporter {
     return b.toString();
   }
 
-  // ─── Images ───────────────────────────────────────────────────────
-
   String? _imageRun(FluentImage img) {
     final bytes = _bytesOf(img.src);
     if (bytes == null) return null;
@@ -648,7 +612,6 @@ class DocxExporter {
     }
     wPx ??= 300;
     hPx ??= 200;
-    // Limit to useful width (~620px = 16.4cm).
     const maxPx = 620.0;
     if (wPx > maxPx) {
       final scale = maxPx / wPx;
@@ -721,8 +684,6 @@ class DocxExporter {
     return id;
   }
 
-  // ─── Support XML ────────────────────────────────────────────────
-
   String _documentXml() {
     return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
         '<w:document '
@@ -762,11 +723,9 @@ class DocxExporter {
       final paragraphId = c['nodeId'] as String? ?? '';
       final paraId = _paragraphParaIds[paragraphId] ?? _generateParaId();
 
-      // Commento principale
       b.write(
           '<w15:commentEx w15:id="$docxId" w15:paraId="$paraId" w15:done="1"/>');
 
-      // Risposte
       final replies = (c['replies'] as List<dynamic>?) ?? [];
       for (var ri = 0; ri < replies.length; ri++) {
         final replyId = _replyDocxIds['${docxId}_$ri']!;
@@ -798,12 +757,10 @@ class DocxExporter {
       final date = _esc(_formatDate(c['createdAt'] as String?));
       final text = _esc(c['text'] as String? ?? '');
 
-      // Commento principale
       b.write('<w:comment w:id="$docxId" w:author="$author" w:date="$date">'
           '<w:p><w:r><w:t>$text</w:t></w:r></w:p>'
           '</w:comment>');
 
-      // Risposte come commenti separati
       final replies = (c['replies'] as List<dynamic>?) ?? [];
       for (var ri = 0; ri < replies.length; ri++) {
         final r = replies[ri];
@@ -866,8 +823,6 @@ class DocxExporter {
         'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" '
         'Target="word/document.xml"/></Relationships>';
   }
-
-  // ─── Helper ─────────────────────────────────────────────────────────
 
   int _colCount(FluentTable t) {
     int max = 0;

@@ -11,13 +11,11 @@ bool executeHandleParagraphStyle(
   FluentDocument document,
   ParagraphStyle style,
 ) {
-  // Save state for undo/redo
   document.saveState(description: 'Change paragraph style to ${style.name}');
 
   final root = document.content;
   final cursor = document.cursor;
 
-  // If there's a selection, apply it to all paragraphs in the selection
   if (!cursor.isCollapsed) {
     final selection = resolveSelection(
       root,
@@ -38,19 +36,16 @@ bool executeHandleParagraphStyle(
       }
     }
   } else {
-    // Collapsed cursor: apply to the current paragraph
     final container = findLogicalContainer(root, cursor.anchorId);
     if (container is Paragraph) {
       _applyStyleToParagraph(container, style);
     } else {
-      // If we're not in a paragraph, only set the pending style
       document.pendingStyle = style;
       document.updateContent();
       return true;
     }
   }
 
-  // Update the pending style
   document.pendingStyle = style;
   document.syncPendingFontWithCursor();
   document.updateContent();
@@ -64,11 +59,8 @@ void _applyStyleToParagraph(
   Paragraph paragraph,
   ParagraphStyle style,
 ) {
-  // Save only the style reference
   paragraph.styleName = style.name;
 
-  // Apply style properties only if there are no explicit overrides
-  // within the paragraph (like textAlign, indent)
   if (style.textAlign != null) {
     paragraph.textAlign = style.textAlign!;
   }
@@ -76,7 +68,4 @@ void _applyStyleToParagraph(
     paragraph.indent = style.indent!;
   }
 
-  // NOTE: We don't modify fragment properties (font, size, styles)
-  // because those are explicit user customizations.
-  // The style works as a "fallback" when creating new fragments.
 }

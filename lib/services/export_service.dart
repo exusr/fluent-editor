@@ -10,13 +10,11 @@ import 'package:fluent_editor/factories.dart';
 import 'package:fluent_editor/fluent_document.dart';
 import 'package:fluent_editor/styles.dart';
 import 'package:fluent_editor/localization/fluent_editor_labels.dart';
-import 'package:fluent_editor/utils/editor_utils.dart';
+import 'package:fluent_editor/services/font_service.dart';
 import 'package:flutter/services.dart';
 
-// Conditional import for web-specific download functionality
 import 'export_service_web_stub.dart'
     if (dart.library.html) 'export_service_web_html.dart'
-    // ignore: unused_import
     ;
 
 import 'package:pdf/pdf.dart';
@@ -145,7 +143,6 @@ class ExportService {
         }
       } catch (_) {}
     } else {
-      // Local asset
       try {
         final data = await rootBundle.load(url);
         final bytes = data.buffer.asUint8List();
@@ -225,14 +222,11 @@ class ExportService {
     return families;
   }
 
-  // ─── PDF ────────────────────────────────────────────────────────────
-
   FluentEditorLabels? get _labels => document.labels;
 
   Future<Uint8List> exportToPdf() async {
     final fontFamilies = _collectFontFamilies(document.content.nodes);
 
-    // Initialize TTF fonts (with document-specific families) and pre-fetch images in parallel
     await Future.wait([
       _fontProvider.init(fontFamilies),
       _prefetchImages(),
@@ -249,8 +243,6 @@ class ExportService {
       ),
     );
 
-    // Sticky-note annotations are added dynamically during paint by
-    // _CommentAnnotWidget placed inline at the start of each commented range.
     return await pdf.save();
   }
 
@@ -309,7 +301,6 @@ class ExportService {
 
     final lineHeight = style.lineHeight ?? document.pendingLineHeight;
 
-    // SizedBox(width: infinity) to make textAlign work
     pw.Widget content = pw.SizedBox(
       width: double.infinity,
       child: pw.RichText(
@@ -321,7 +312,6 @@ class ExportService {
       ),
     );
 
-    // Quotation: gray left border + padding
     if (isQuote) {
       content = pw.Container(
         decoration: const pw.BoxDecoration(
@@ -334,7 +324,6 @@ class ExportService {
       );
     }
 
-    // Code: light gray background + monospace font
     if (isCode) {
       content = pw.Container(
         decoration: pw.BoxDecoration(
@@ -512,7 +501,6 @@ class ExportService {
     final hasUnderline = fragStyles.contains('underline');
     final hasStrikethrough = fragStyles.contains('strikethrough');
 
-    // Combine underline and strikethrough
     pw.TextDecoration? decoration;
     if (hasUnderline && hasStrikethrough) {
       decoration = pw.TextDecoration.combine([
@@ -525,13 +513,11 @@ class ExportService {
       decoration = pw.TextDecoration.lineThrough;
     }
 
-    // Font size: use the fragment's, or the ParagraphStyle's
     double fontSize = fragment.fontSize;
     if (fontSize == 14.0 && pStyle.fontSize != null) {
       fontSize = pStyle.fontSize!;
     }
 
-    // Color: fragment > paragraphStyle > black
     PdfColor? color;
     if (fragment.color != null && fragment.color!.isNotEmpty) {
       color = _parsePdfColor(fragment.color!);
@@ -539,7 +525,6 @@ class ExportService {
       color = _parsePdfColor(pStyle.color!);
     }
 
-    // Font: use TTF from provider (full Unicode support)
     final fontFamily = normalizeFontFamily(fragment.fontFamily.isNotEmpty ? fragment.fontFamily : pStyle.fontFamily);
     final selectedFont = _fontProvider.selectFont(
       fontFamily,
@@ -548,12 +533,10 @@ class ExportService {
       italic: isItalic,
     );
 
-    // Superscript and subscript: reduce font
     if (fragStyles.contains('superscript') || fragStyles.contains('subscript')) {
       fontSize = fontSize * 0.65;
     }
 
-    // Highlight color (background)
     PdfColor? backgroundColor;
     if (fragment.highlightColor != null && fragment.highlightColor!.isNotEmpty) {
       backgroundColor = _parsePdfColor(fragment.highlightColor!);
@@ -577,7 +560,6 @@ class ExportService {
   pw.Widget _buildPdfImage(FluentImage image) {
     Uint8List? bytes;
 
-    // Try to decode data URI
     if (image.src.startsWith('data:')) {
       try {
         final dataStart = image.src.indexOf(',');
@@ -586,7 +568,6 @@ class ExportService {
         }
       } catch (_) {}
     } else {
-      // External URL: use the cache
       bytes = _imageCache[image.src];
     }
 
@@ -594,12 +575,8 @@ class ExportService {
       try {
         final pdfImage = pw.MemoryImage(bytes);
 
-        // Useful width of A4 page (595 - margins ~72 pt)
         const maxWidth = 452.0;
 
-        // Use width and height from the model (set by resize in the editor).
-        // The editor shows the image with BoxFit.cover in a SizedBox(w, h),
-        // the PDF must replicate the exact same dimensions.
         double? imgWidth = image.width;
         double? imgHeight = image.height;
 
@@ -611,7 +588,6 @@ class ExportService {
           }
         }
 
-        // Scale proportionally if exceeds page width
         if (imgWidth != null && imgWidth > maxWidth) {
           final scale = maxWidth / imgWidth;
           if (imgHeight != null) imgHeight = imgHeight * scale;
@@ -636,7 +612,6 @@ class ExportService {
       } catch (_) {}
     }
 
-    // Fallback: placeholder with URL
     return pw.Padding(
       padding: const pw.EdgeInsets.symmetric(vertical: 8),
       child: pw.SizedBox(
@@ -846,14 +821,12 @@ class ExportService {
   (int, int)? _readImageDimensions(Uint8List bytes) {
     if (bytes.length < 24) return null;
 
-    // PNG: header 8 bytes + IHDR chunk with width/height
     if (bytes[0] == 0x89 && bytes[1] == 0x50 && bytes[2] == 0x4E && bytes[3] == 0x47) {
       final w = (bytes[16] << 24) | (bytes[17] << 16) | (bytes[18] << 8) | bytes[19];
       final h = (bytes[20] << 24) | (bytes[21] << 16) | (bytes[22] << 8) | bytes[23];
       return (w, h);
     }
 
-    // JPEG: search for SOF0 marker (0xFF 0xC0) or SOF2 (0xFF 0xC2)
     if (bytes[0] == 0xFF && bytes[1] == 0xD8) {
       int offset = 2;
       while (offset < bytes.length - 8) {
@@ -911,8 +884,6 @@ class ExportService {
     };
   }
 
-  // ─── DOCX / ODT (native formats) ────────────────────────────────────
-
   /// Exports as native DOCX (OOXML) file.
   Future<Uint8List> exportToDocx() async {
     await _prefetchImages();
@@ -925,8 +896,6 @@ class ExportService {
     return await OdtExporter(document, imageCache: _imageCache).build();
   }
 
-  // ─── Markdown ───────────────────────────────────────────────────────
-
   String exportToMarkdown() {
     final root = document.content;
     final buffer = StringBuffer();
@@ -935,8 +904,6 @@ class ExportService {
       final md = _nodeToMarkdown(nodes[i]);
       if (md.isEmpty) continue;
       buffer.write(md);
-      // Separate blocks with a blank line so Markdown renders them
-      // as distinct paragraphs / lists / tables.
       if (i < nodes.length - 1) buffer.write('\n\n');
     }
     return buffer.toString().trim();
@@ -992,12 +959,8 @@ class ExportService {
     var text = _escapeMarkdown(fragment.text);
     final styles = fragment.styles ?? [];
 
-    // Empty fragments with styles would emit bare syntax (e.g. ****).
     if (text.isEmpty) return '';
 
-    // Apply inline styles that Markdown natively supports.
-    // underline, superscript, subscript and smallcaps have no
-    // native Markdown equivalent, so they are kept as plain text.
     if (styles.contains('bold')) text = '**$text**';
     if (styles.contains('italic')) text = '*$text*';
     if (styles.contains('strikethrough')) text = '~~$text~~';
@@ -1008,8 +971,6 @@ class ExportService {
   String _linkToMarkdown(Link link) {
     final text = _fragmentsToMarkdown(link.fragments);
     if (text.isEmpty) {
-      // Empty link text — skip it entirely so it does not pollute
-      // the Markdown output with useless `[]()` syntax.
       return '';
     }
     return '[$text](${link.url})';
@@ -1029,14 +990,10 @@ class ExportService {
           : (isOrdered ? '${i + 1}.' : '-');
       final children = item.children;
 
-      // Inline content (Paragraph / Image) goes on the same line as the bullet.
-      // Block content (sub-list) goes on a new line so Markdown parsers
-      // treat it as a nested list.
       final inlineChildren = children.where((c) => c is Paragraph || c is FluentImage).toList();
       final blockChildren = children.where((c) => c is FluentList).toList();
 
       if (inlineChildren.isNotEmpty) {
-        // Write bullet + inline content on one line.
         buffer.write('$indent$prefix ');
         for (var j = 0; j < inlineChildren.length; j++) {
           final child = inlineChildren[j];
@@ -1050,11 +1007,9 @@ class ExportService {
           }
         }
       } else if (blockChildren.isNotEmpty) {
-        // No inline text — bullet on its own line.
         buffer.write('$indent$prefix');
       }
 
-      // Sub-lists (and any remaining block children) on new lines.
       for (final child in blockChildren) {
         if (child is FluentList) {
           buffer.write('\n');
@@ -1079,9 +1034,6 @@ class ExportService {
     final rows = table.rows;
     if (rows.isEmpty) return '';
 
-    // Compute the total number of visible columns from all rows,
-    // respecting colSpan so a single cell spanning 3 columns
-    // contributes 3 to the total.
     int visualColumns(FluentRow row) =>
         row.cells.map((c) => c.colSpan).fold<int>(0, (a, b) => a + b);
 
@@ -1098,22 +1050,17 @@ class ExportService {
             .whereType<Paragraph>()
             .map((p) => _fragmentsToMarkdown(p.fragments))
             .join(' ');
-        // _fragmentsToMarkdown already escapes raw text; do NOT
-        // call _escapeMarkdown again or it would break bold/link syntax.
         buffer.write('$text | ');
         writtenCols += cell.colSpan;
-        // Pad empty cells for colspan > 1 (Markdown has no colspan support).
         for (var e = 1; e < cell.colSpan; e++) {
           buffer.write('| ');
         }
       }
-      // Pad remaining columns if the row is shorter than colCount.
       for (; writtenCols < colCount; writtenCols++) {
         buffer.write('| ');
       }
       buffer.writeln();
 
-      // Separator after first row (header)
       if (r == 0) {
         buffer.write('|');
         for (var c = 0; c < colCount; c++) {
@@ -1130,7 +1077,6 @@ class ExportService {
   }
 
   String _escapeMarkdown(String text) {
-    // Escape characters that have special meaning in Markdown
     return text
         .replaceAll('\\', '\\\\')
         .replaceAll('*', '\\*')
@@ -1141,10 +1087,7 @@ class ExportService {
         .replaceAll('`', '\\`');
   }
 
-  // ─── HTML ───────────────────────────────────────────────────────────
-
   Future<String> exportToHtml() async {
-    // Pre-fetch all images to embed them as data URI
     await _prefetchImages();
 
     final root = document.content;
@@ -1198,7 +1141,6 @@ class ExportService {
     if (src.startsWith('data:')) return src;
     final bytes = _imageCache[src];
     if (bytes == null) return src;
-    // Detect MIME type from header
     String mime = 'image/jpeg';
     if (bytes.length > 3 && bytes[0] == 0x89 && bytes[1] == 0x50) {
       mime = 'image/png';
@@ -1216,7 +1158,6 @@ class ExportService {
     final attrStr = attrs.isNotEmpty ? ' ${attrs.join(' ')}' : '';
     final imgTag = '<img src="$resolvedSrc"$attrStr alt="">';
 
-    // Alignment
     final align = image.textAlign;
     if (align == 'center') {
       return '<p style="text-align:center">$imgTag</p>';
@@ -1232,7 +1173,6 @@ class ExportService {
     final isQuote = pStyle.name == 'quote';
     final isCode = pStyle.name == 'code';
 
-    // CSS styles for the paragraph
     final cssProps = <String>[];
     if (paragraph.textAlign != 'left') {
       cssProps.add('text-align:${paragraph.textAlign}');
@@ -1240,11 +1180,9 @@ class ExportService {
     if (paragraph.indent > 0) {
       cssProps.add('margin-left:${paragraph.indent * 24}px');
     }
-    // Line height from ParagraphStyle
     if (pStyle.lineHeight != null && pStyle.lineHeight != 1.4) {
       cssProps.add('line-height:${pStyle.lineHeight}');
     }
-    // Spacing from ParagraphStyle
     if (pStyle.spacingBefore != null && pStyle.spacingBefore! > 0 && headingLevel == 0) {
       cssProps.add('margin-top:${pStyle.spacingBefore!.toInt()}px');
     }
@@ -1255,7 +1193,6 @@ class ExportService {
     final styleAttr = cssProps.isNotEmpty ? ' style="${cssProps.join(';')}"' : '';
     final inlineContent = _fragmentsToHtml(paragraph.fragments, pStyle);
 
-    // Choose the tag
     if (headingLevel > 0) {
       return '<h$headingLevel$styleAttr>$inlineContent</h$headingLevel>';
     }
@@ -1274,7 +1211,6 @@ class ExportService {
 
     for (final frag in fragments) {
       if (frag is Link) {
-        // Render all children of the link in the correct order
         final linkBuffer = StringBuffer();
         for (final linkChild in frag.fragments) {
           if (linkChild is FluentImage) {
@@ -1290,7 +1226,6 @@ class ExportService {
         }
         buffer.write('<a href="${_escapeHtml(frag.url)}">${linkBuffer.toString()}</a>');
       } else if (frag is FluentImage) {
-        // Inline image
         final resolvedSrc = _resolveImageSrc(frag.src);
         final imgAttrs = <String>[];
         if (frag.width != null) imgAttrs.add('width="${frag.width!.toInt()}"');
@@ -1310,26 +1245,21 @@ class ExportService {
     final fragStyles = fragment.styles ?? [];
     final fontSize = fragment.fontSize;
 
-    // Inline CSS
     final cssStyles = <String>[];
 
-    // Font size: show if different from default (14) and paragraph style
     final pFontSize = pStyle.fontSize ?? 14.0;
     if (fontSize != pFontSize) {
       cssStyles.add('font-size:${fontSize}px');
     }
 
-    // Font family: if different from paragraph style
     final pFontFamily = pStyle.fontFamily ?? 'Arial';
     if (fragment.fontFamily.isNotEmpty && fragment.fontFamily != pFontFamily) {
       cssStyles.add("font-family:'${fragment.fontFamily}'");
     }
 
-    // Text color
     if (fragment.color != null && fragment.color!.isNotEmpty) {
       cssStyles.add('color:${fragment.color}');
     }
-    // Highlight color
     if (fragment.highlightColor != null && fragment.highlightColor!.isNotEmpty) {
       cssStyles.add('background-color:${fragment.highlightColor}');
     }
@@ -1338,7 +1268,6 @@ class ExportService {
       text = '<span style="${cssStyles.join(';')}">$text</span>';
     }
 
-    // Semantic tags
     if (fragStyles.contains('bold')) text = '<strong>$text</strong>';
     if (fragStyles.contains('italic')) text = '<em>$text</em>';
     if (fragStyles.contains('underline')) text = '<u>$text</u>';
@@ -1353,7 +1282,6 @@ class ExportService {
   }
 
   String _listToHtml(FluentList list) {
-    // Checkbox list: use ul without marker + HTML checkbox
     final isCheckbox = list.items.isNotEmpty && _isCheckboxType(list.items.first.bulletType);
     final tag = list.listType == 'ordered' ? 'ol' : 'ul';
 
@@ -1361,7 +1289,6 @@ class ExportService {
     if (isCheckbox) {
       buffer.writeln('<ul style="list-style:none;padding-left:20px">');
     } else {
-      // CSS marker type for bullet variants
       final listStyleType = _htmlListStyleType(list.items.isNotEmpty ? list.items.first.bulletType : 'bullet');
       if (listStyleType != null) {
         buffer.writeln('<$tag style="list-style-type:$listStyleType">');
@@ -1371,7 +1298,6 @@ class ExportService {
     }
 
     for (final item in list.items) {
-      // Check if this item contains only a single FluentList (flatten nested structure)
       final hasOnlyList = item.children.length == 1 && item.children.first is FluentList;
 
       if (!hasOnlyList) {
@@ -1464,11 +1390,8 @@ class ExportService {
         .replaceAll('"', '&quot;');
   }
 
-  // ─── File I/O ───────────────────────────────────────────────────────
-
   Future<String?> saveFileNative(Uint8List bytes, String defaultName, String extension) async {
     if (kIsWeb) {
-      // Web: use HTML5 download
       downloadFileWeb(bytes, '$defaultName.$extension');
       return null; // Web doesn't return a path
     }
@@ -1486,13 +1409,11 @@ class ExportService {
           return result;
         }
       } catch (e) {
-        // Ignore errors, return null
       }
       return null;
     }
 
     if (Platform.isLinux) {
-      // Try zenity
       try {
         final result = await Process.run('zenity', [
           '--file-selection',
@@ -1513,7 +1434,6 @@ class ExportService {
         }
       } catch (_) {}
 
-      // Try kdialog
       try {
         final result = await Process.run('kdialog', [
           '--getsavefilename',

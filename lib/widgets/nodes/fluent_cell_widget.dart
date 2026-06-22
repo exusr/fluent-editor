@@ -1,6 +1,6 @@
 import 'package:fluent_editor/factories.dart';
 import 'package:fluent_editor/fluent_document.dart';
-import 'package:fluent_editor/utils/editor_utils.dart';
+import 'package:fluent_editor/widgets/node_widget_builder.dart';
 import 'package:flutter/material.dart';
 
 /// Widget for table cells that support generic content.
@@ -51,20 +51,17 @@ class _FluentCellWidgetState extends State<FluentCellWidget> {
 
   @override
   Widget build(BuildContext context) {
-    // Build widgets for all children of the cell
     final childrenWidgets = <Widget>[];
 
     for (final child in widget.node.children) {
       childrenWidgets.add(buildFNodeWidget(child, widget.document));
     }
 
-    // If empty, show at least an empty paragraph for the cursor
     if (childrenWidgets.isEmpty) {
       final emptyParagraph = Paragraph();
       childrenWidgets.add(buildFNodeWidget(emptyParagraph, widget.document));
     }
 
-    // Vertical layout for children
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 6.0),
       child: Column(

@@ -1,7 +1,6 @@
 import 'package:fluent_editor/core/constants.dart';
 import 'package:fluent_editor/factories.dart';
 
-//apply markers to list
 void applyListMarkers(List<ListItem> items, {bool nested = false}) {
   for (final item in items) {
     for (final frag in item.fragments.whereType<Fragment>()) {
@@ -37,9 +36,7 @@ void applyListMarkers(List<ListItem> items, {bool nested = false}) {
   }
 }
 
-//apply markers to table
 void applyTableMarkers(List<FluentRow> rows) {
-  // remove all existing markers
   for (final row in rows) { 
     for (final cell in row.cells) {
       for (final frag in cell.fragments.whereType<Fragment>()) {

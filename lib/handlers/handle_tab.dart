@@ -37,12 +37,9 @@ bool executeHandleTab(FluentDocument document, {bool shift = false}) {
   final root = document.content;
   final cursor = document.cursor;
 
-  // Find the current cursor container
   final container = findLogicalContainer(root, cursor.anchorId);
   if (container == null) return true;
 
-  // Climb up to find ListItem/Cell ancestor (with the new structure the
-  // returned container is the inner Paragraph, not the ListItem/Cell).
   final containerNode = container as FNode;
   final ancestorItem = _findAncestor<ListItem>(root, containerNode);
   if (ancestorItem != null) {
@@ -60,7 +57,6 @@ bool executeHandleTab(FluentDocument document, {bool shift = false}) {
     return true;
   }
 
-  // Normal paragraphs: handle indent/outdent
   if (container is Paragraph) {
     shift
         ? _handleParagraphOutdent(document, container)
@@ -81,26 +77,18 @@ T? _findAncestor<T extends FNode>(Root root, FNode node) {
   return null;
 }
 
-// ═══════════════════════════════════════════════════════════════════════
-// LISTS - Indent / Outdent
-// ═══════════════════════════════════════════════════════════════════════
-
 /// Indent: moves the current item as a sub-item of the previous one.
 bool _handleListIndent(FluentDocument document, ListItem currentItem) {
   final root = document.content;
 
-  // Find the parent FluentList
   final listParent = findParent(root, currentItem);
   if (listParent == null || listParent is! FluentList) return false;
 
-  // Find the index of the current item
   final currentIndex = listParent.items.indexOf(currentItem);
   if (currentIndex <= 0) return false; // First item, cannot indent
 
-  // Find the previous item
   final prevItem = listParent.items[currentIndex - 1];
 
-  // Check if the previous item already has a sublist
   FluentList? existingSublist;
   for (final fragment in prevItem.fragments) {
     if (fragment is FluentList) {
@@ -109,25 +97,19 @@ bool _handleListIndent(FluentDocument document, ListItem currentItem) {
     }
   }
 
-  // Remove the current item from the parent list
   removeNode(root, currentItem);
 
   if (existingSublist != null) {
-    // Add to the existing sublist
     appendChild(existingSublist, currentItem);
   } else {
-    // Create a new sublist
     final newSublist = FluentList(listType: listParent.listType);
     appendChild(prevItem, newSublist);
     appendChild(newSublist, currentItem);
   }
 
-  // Merge consecutive lists with the same type
   mergeConsecutiveLists(root);
-  // Recalculate the indices
   recalculateListIndices(root);
 
-  // Keep the cursor in the same position
   document.updateContent();
   return true;
 }
@@ -136,44 +118,34 @@ bool _handleListIndent(FluentDocument document, ListItem currentItem) {
 bool _handleListOutdent(FluentDocument document, ListItem currentItem) {
   final root = document.content;
 
-  // Find the parent FluentList
   final listParent = findParent(root, currentItem);
   if (listParent == null || listParent is! FluentList) return false;
 
-  // Find the parent of the list
   final grandparent = findParent(root, listParent);
   if (grandparent == null) return false;
 
-  // Save the cursor position before mutating the tree
   final cursor = document.cursor;
   final savedFragId = cursor.anchorId;
   final savedOffset = cursor.anchorOffset;
 
-  // If the list is inside a ListItem (sublist), promote to the upper level
-  // (Google Docs behavior: subsequent items become sublist of currentItem).
   if (grandparent is ListItem) {
     final greatGrandparent = findParent(root, grandparent);
     if (greatGrandparent == null || greatGrandparent is! FluentList) return false;
 
-    // Items of the sublist AFTER currentItem: will become sublist of currentItem
     final currentIndexInSub = listParent.items.indexOf(currentItem);
     final itemsAfter = (currentIndexInSub >= 0)
         ? listParent.items.sublist(currentIndexInSub + 1).toList()
         : <ListItem>[];
 
-    // Remove currentItem and subsequent items from the sublist
     removeNode(root, currentItem);
     for (final item in itemsAfter) {
       removeNode(root, item);
     }
 
-    // Inherit bulletType from the upper level (e.g., • instead of ◦)
     if (greatGrandparent.items.isNotEmpty) {
       currentItem.bulletType = greatGrandparent.items.first.bulletType;
     }
 
-    // If there are subsequent items, they become a new sublist of currentItem
-    // (preserves the visual hierarchy like Google Docs)
     if (itemsAfter.isNotEmpty) {
       final newSublist = FluentList(listType: listParent.listType);
       for (final item in itemsAfter) {
@@ -182,28 +154,23 @@ bool _handleListOutdent(FluentDocument document, ListItem currentItem) {
       appendChild(currentItem, newSublist);
     }
 
-    // Insert currentItem after the grandparent (parent ListItem) in the upper list
     final parentIndex = greatGrandparent.items.indexOf(grandparent);
     if (parentIndex >= 0) {
       greatGrandparent.items.insert(parentIndex + 1, currentItem);
     }
 
-    // If the original sublist is now empty, remove it from the grandparent
     if (listParent.items.isEmpty) {
       removeNode(root, listParent);
     }
 
     recalculateListIndices(root);
 
-    // Merge consecutive lists with the same type
     mergeConsecutiveLists(root);
 
-    // Restore the cursor position (the original fragment survives)
     final originalFrag = document.nodeById(savedFragId);
     if (originalFrag is Fragment) {
       cursor.moveTo(savedFragId, savedOffset.clamp(0, originalFrag.text.length));
     } else {
-      // Fallback: end of text of the first paragraph of currentItem
       final firstParagraph = currentItem.children.whereType<Paragraph>().firstOrNull;
       if (firstParagraph != null && firstParagraph.fragments.isNotEmpty) {
         final lastFrag = firstParagraph.fragments.last;
@@ -217,12 +184,9 @@ bool _handleListOutdent(FluentDocument document, ListItem currentItem) {
     return true;
   }
 
-  // First level: transform to paragraph (exits the list like Google Docs)
   final newParagraph = outdentListItemToParagraph(root, listParent, currentItem);
   if (newParagraph == null) return false;
 
-  // Restore the cursor position: try the original fragment first
-  // (it might still exist in the newParagraph), otherwise go to the end.
   final originalFrag = document.nodeById(savedFragId);
   if (originalFrag != null) {
     cursor.moveTo(savedFragId, savedOffset.clamp(0, (originalFrag as Fragment).text.length));
@@ -236,10 +200,6 @@ bool _handleListOutdent(FluentDocument document, ListItem currentItem) {
   document.updateContent();
   return true;
 }
-
-// ═══════════════════════════════════════════════════════════════════════
-// PARAGRAPHS - Indent / Outdent
-// ═══════════════════════════════════════════════════════════════════════
 
 const int _maxIndent = 10;
 const int _indentStep = 1;
@@ -262,17 +222,12 @@ bool _handleParagraphOutdent(FluentDocument document, Paragraph paragraph) {
   return true;
 }
 
-// ═══════════════════════════════════════════════════════════════════════
-// TABLES - Cell navigation
-// ═══════════════════════════════════════════════════════════════════════
-
 /// Moves the cursor to the next cell (right, then down).
 /// If last cell, creates a new row.
 bool _handleTableNextCell(FluentDocument document, FluentCell currentCell) {
   final root = document.content;
   final cursor = document.cursor;
 
-  // Find the row and the table
   final row = findParent(root, currentCell);
   if (row == null || row is! FluentRow) return false;
 
@@ -284,14 +239,11 @@ bool _handleTableNextCell(FluentDocument document, FluentCell currentCell) {
 
   if (rowIndex < 0 || cellIndex < 0) return false;
 
-  // Look for the next cell in the same row
   if (cellIndex < row.cells.length - 1) {
-    // There's a next cell in the same row
     final nextCell = row.cells[cellIndex + 1];
     return _moveCursorToCellStart(cursor, nextCell);
   }
 
-  // We're in the last cell of the row, move to the next row
   if (rowIndex < table.rows.length - 1) {
     final nextRow = table.rows[rowIndex + 1];
     if (nextRow.cells.isNotEmpty) {
@@ -299,7 +251,6 @@ bool _handleTableNextCell(FluentDocument document, FluentCell currentCell) {
     }
   }
 
-  // We're in the last cell of the last row, create a new row
   return _createNewRowInTable(document, table, row);
 }
 
@@ -308,7 +259,6 @@ bool _handleTablePreviousCell(FluentDocument document, FluentCell currentCell) {
   final root = document.content;
   final cursor = document.cursor;
 
-  // Find the row and the table
   final row = findParent(root, currentCell);
   if (row == null || row is! FluentRow) return false;
 
@@ -320,13 +270,11 @@ bool _handleTablePreviousCell(FluentDocument document, FluentCell currentCell) {
 
   if (rowIndex < 0 || cellIndex < 0) return false;
 
-  // Look for the previous cell in the same row
   if (cellIndex > 0) {
     final prevCell = row.cells[cellIndex - 1];
     return _moveCursorToCellEnd(cursor, prevCell);
   }
 
-  // We're in the first cell, move to the previous row
   if (rowIndex > 0) {
     final prevRow = table.rows[rowIndex - 1];
     if (prevRow.cells.isNotEmpty) {
@@ -334,7 +282,6 @@ bool _handleTablePreviousCell(FluentDocument document, FluentCell currentCell) {
     }
   }
 
-  // We're in the first cell of the first row, do nothing
   return false;
 }
 
@@ -345,7 +292,6 @@ bool _moveCursorToCellStart(Cursor cursor, FluentCell cell) {
     cursor.moveTo(leaves.first.id, 0);
     return true;
   }
-  // Create an empty fragment if necessary
   final emptyFrag = Fragment('');
   appendChild(cell, emptyFrag);
   cursor.moveTo(emptyFrag.id, 0);
@@ -360,7 +306,6 @@ bool _moveCursorToCellEnd(Cursor cursor, FluentCell cell) {
     cursor.moveTo(last.id, last.text.length);
     return true;
   }
-  // Create an empty fragment if necessary
   final emptyFrag = Fragment('');
   appendChild(cell, emptyFrag);
   cursor.moveTo(emptyFrag.id, 0);
@@ -375,11 +320,9 @@ bool _createNewRowInTable(
 ) {
   final cursor = document.cursor;
 
-  // Determine the number of columns from the previous row
   final numCols = lastRow.cells.length;
   if (numCols == 0) return false;
 
-  // Create the new row with empty cells
   final newCells = <FluentCell>[];
   for (var i = 0; i < numCols; i++) {
     final emptyFrag = FragmentOperations.createFragmentWithPendingStyles(document, '');
@@ -391,6 +334,5 @@ bool _createNewRowInTable(
   final newRow = FluentRow(cells: newCells);
   appendChild(table, newRow);
 
-  // Position the cursor in the first cell of the new row
   return _moveCursorToCellStart(cursor, newCells.first);
 }

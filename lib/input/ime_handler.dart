@@ -11,6 +11,7 @@ import 'package:fluent_editor/handlers/handle_enter.dart';
 import 'package:fluent_editor/handlers/handle_backspace.dart';
 import 'package:fluent_editor/utils/cursor_navigation.dart';
 import 'package:fluent_editor/utils/fragment_operations.dart';
+import 'package:fluent_editor/utils/node_operations.dart';
 import 'composition_detector_stub.dart'
     if (dart.library.html) 'composition_detector_web.dart';
 
@@ -254,8 +255,6 @@ class FluentTextInputHandler with DeltaTextInputClient {
       return false;
     }
   }
-
-  // ─── TextInputClient implementation ─────────────────────────────
 
   @override
   AutofillScope? get currentAutofillScope => null;
@@ -539,20 +538,6 @@ class FluentTextInputHandler with DeltaTextInputClient {
           }
         }
 
-        // ── FIX: Autocorrect replacement on buffer-sync platforms ──────────
-        // On web+Android (and iOS) the autocorrect/suggestion system sends a
-        // single TextEditingDeltaReplacement with non-empty replacementText
-        // (e.g. "italic" -> "italico"). The delta's oldText may not match our
-        // current buffer if the buffer was de-synced during typing (the
-        // browser's internal state drifts). Applying the delta blindly via
-        // _applyDeltasSafely in that case produces a wrong intermediate text,
-        // and _replaceFragmentText then writes corrupt content (e.g. "italco"
-        // instead of "italico").
-        //
-        // Fix: intercept a single autocorrect Replacement delta here, before
-        // the generic loop, and compute the new fragment text directly from
-        // the real fragment text + the delta's prefix/suffix anchoring.
-        // This bypasses the stale-buffer path entirely.
         if (deltas.length == 1 && deltas.first is TextEditingDeltaReplacement) {
           final rd = deltas.first as TextEditingDeltaReplacement;
           if (rd.replacementText.isNotEmpty) {
@@ -565,15 +550,12 @@ class FluentTextInputHandler with DeltaTextInputClient {
               final prefix = oldBufText.substring(0, replacedRange.start);
               final suffix = oldBufText.substring(replacedRange.end);
               final replacement = rd.replacementText;
-              // Reconstruct the new fragment text anchored to the real
-              // fragment content so stale-buffer drift does not corrupt it.
               final String newFragText;
               if (currentFragText.startsWith(prefix) &&
                   currentFragText.endsWith(suffix) &&
                   currentFragText.length >= prefix.length + suffix.length) {
                 newFragText = prefix + replacement + suffix;
               } else {
-                // Buffer and fragment diverged: use delta's oldText as base.
                 newFragText = prefix + replacement + suffix;
               }
               final newCursorOffset = prefix.length + replacement.length;
@@ -582,7 +564,6 @@ class FluentTextInputHandler with DeltaTextInputClient {
             }
           }
         }
-        // ── END FIX ────────────────────────────────────────────────────────
 
         TextEditingValue value = currentTextEditingValue ?? const TextEditingValue();
         for (final delta in deltas) {
@@ -747,7 +728,6 @@ class FluentTextInputHandler with DeltaTextInputClient {
         return;
       }
 
-      // ─── Android & Desktop: buffer NOT synced, process deltas directly ──
       final hasComposing = deltas.any((d) => d.composing.isValid);
       if (hasComposing) {
         final value = _applyDeltasSafely(
@@ -785,7 +765,6 @@ class FluentTextInputHandler with DeltaTextInputClient {
             executeHandleBackspace(doc);
           }
         } else if (delta is TextEditingDeltaNonTextUpdate) {
-          // No action needed.
         } else if (delta is TextEditingDeltaInsertion) {
           doc.saveState(description: 'Insert text', forceNewAction: false);
           _insertTextOrReplaceSelection(delta.textInserted, doc);
@@ -836,8 +815,6 @@ class FluentTextInputHandler with DeltaTextInputClient {
       return;
     }
 
-    // Composition active: reconstruct the final TextEditingValue by
-    // applying deltas sequentially against our preedit buffer.
     final value = _applyDeltasSafely(
       currentTextEditingValue ?? const TextEditingValue(),
       deltas,
@@ -1115,7 +1092,6 @@ class FluentTextInputHandler with DeltaTextInputClient {
       return;
     }
 
-    // ─── Active composition handling ────────────────────────────────
     if (_isComposing) {
       if (value.composing.isValid) {
         if (value.text.isEmpty) {
@@ -1209,7 +1185,6 @@ class FluentTextInputHandler with DeltaTextInputClient {
       return;
     }
 
-    // ─── New composition start ────────────────────────────────────
     if (value.text.isEmpty) return;
 
     if (!value.composing.isValid) {
@@ -1333,8 +1308,6 @@ class FluentTextInputHandler with DeltaTextInputClient {
 
   @override
   void showToolbar() {}
-
-  // ─── Preedit lifecycle ──────────────────────────────────────────
 
   void commitIfComposing() {
     if (_isComposing && _preeditText.isNotEmpty) {

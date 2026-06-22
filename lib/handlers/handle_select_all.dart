@@ -6,21 +6,17 @@ bool handleSelectAll(FluentDocument document) {
   
   if (root.nodes.isEmpty) return false;
   
-  // Use the document-cached stop rail instead of rebuilding O(n).
   final stops = document.caretStops;
   if (stops.isEmpty) return false;
 
-  // Select from first to last stop
   final firstStop = stops.first;
   final lastStop = stops.last;
 
   cursor.moveTo(firstStop.fragmentId, firstStop.offset);
   cursor.focusTo(lastStop.fragmentId, lastStop.offset);
 
-  // Sync SelectionManager to show visual selection
   _syncSelectionManager(document);
 
-  // Select-all does NOT mutate content: cursor-only update.
   document.cursorOnlyUpdate();
   return true;
 }
@@ -31,7 +27,6 @@ void _syncSelectionManager(FluentDocument document) {
   final cursor = document.cursor;
 
   if (cursor.isCollapsed) {
-    // No selection: collapse
     document.selectionManager.collapse();
     return;
   }
@@ -44,7 +39,6 @@ void _syncSelectionManager(FluentDocument document) {
     return;
   }
 
-  // Set fixed anchor, then update focus
   document.selectionManager.startSelection(
     anchorNodeId,
     cursor.anchorId,

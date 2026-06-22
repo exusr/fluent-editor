@@ -22,14 +22,8 @@ bool executeHandleFontSize(FluentDocument document, double fontSize) {
     return _applyFontSizeToSelection(document, selection, fontSize);
   }
 
-  // Collapsed cursor: store pending size (persistent like Word/Google Docs).
   return _applyFontSizeAtCursor(document, fontSize);
 }
-
-// ───────────────────────────────────────────────────────────────────
-// Helpers
-// ───────────────────────────────────────────────────────────────────
-
 
 /// Applies font size to fragments affected by the selection.
 bool _applyFontSizeToSelection(
@@ -43,14 +37,12 @@ bool _applyFontSizeToSelection(
   for (final node in selection.nodes) {
     final container = node.container;
 
-    // ── 1st pass: split at edges in the actual parent ───────────
     final startParent = findParent(root, node.startFragment);
     final endParent   = findParent(root, node.endFragment);
 
     late Fragment actualStartFrag;
     late Fragment actualEndFrag;
 
-    // Single fragment
     if (node.startFragment.id == node.endFragment.id) {
       final frag = node.startFragment;
       if (node.startOffset > 0 && node.endOffset < frag.text.length) {
@@ -87,7 +79,6 @@ bool _applyFontSizeToSelection(
         actualEndFrag   = frag;
       }
     } else {
-      // First fragment: split at start
       final first = node.startFragment;
       if (node.startOffset > 0 && node.startOffset < first.text.length) {
         final before = first.text.substring(0, node.startOffset);
@@ -100,7 +91,6 @@ bool _applyFontSizeToSelection(
         actualStartFrag = first;
       }
 
-      // Last fragment: split at end
       final last = node.endFragment;
       if (node.endOffset > 0 && node.endOffset < last.text.length) {
         final selected = last.text.substring(0, node.endOffset);
@@ -114,7 +104,6 @@ bool _applyFontSizeToSelection(
       }
     }
 
-    // ── 2nd pass: apply fontSize to leaf fragments in range ───
     final leaves = FragmentOperations.collectLeafFragments(container as FNode);
     bool inRange = false;
     Fragment? lastModified;

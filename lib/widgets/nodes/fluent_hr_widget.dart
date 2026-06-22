@@ -63,7 +63,6 @@ class _FluentHrWidgetState extends State<FluentHrWidget> {
   }
 
   void _rebuild() {
-    // Skip rebuild if this node was not touched by the last document change.
     if (!widget.document.isNodeDirty(widget.node.id)) return;
     setState(() {});
   }

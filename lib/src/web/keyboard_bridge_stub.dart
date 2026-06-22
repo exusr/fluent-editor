@@ -7,18 +7,14 @@ class MobileKeyboardBridgeImpl {
   static final MobileKeyboardBridgeImpl instance = MobileKeyboardBridgeImpl._internal();
 
   void initialize() {
-    // No-op on native platforms
   }
 
   void showKeyboard() {
-    // No-op on native platforms
   }
 
   void hideKeyboard() {
-    // No-op on native platforms
   }
 
   void dispose() {
-    // No-op on native platforms
   }
 }

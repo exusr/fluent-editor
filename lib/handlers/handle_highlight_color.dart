@@ -28,10 +28,6 @@ bool executeHandleHighlightColor(FluentDocument document, String? color) {
   return _applyColorAtCursor(document, color);
 }
 
-// ───────────────────────────────────────────────────────────────────
-// Helpers
-// ───────────────────────────────────────────────────────────────────
-
 bool _applyColorToSelection(
   FluentDocument document,
   ResolvedSelection selection,

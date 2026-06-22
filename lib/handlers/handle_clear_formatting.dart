@@ -27,7 +27,6 @@ bool executeHandleClearFormatting(FluentDocument document) {
     return _clearFormattingFromSelection(document, selection);
   }
 
-  // Collapsed cursor: reset pending styles and style
   if (cursor.isCollapsed) {
     document.pendingStyles = [];
     document.pendingFontFamily = 'Arial';
@@ -36,7 +35,6 @@ bool executeHandleClearFormatting(FluentDocument document) {
     document.pendingHighlightColor = null;
     document.pendingStyle = ParagraphStyle.normal;
 
-    // Also reset the current paragraph style to "normal"
     final container = findLogicalContainer(root, cursor.anchorId);
     if (container is Paragraph) {
       container.styleName = 'normal';
@@ -58,7 +56,6 @@ bool _clearFormattingFromSelection(FluentDocument document, ResolvedSelection se
   for (final node in selection.nodes) {
     final container = node.container;
 
-    // Reset paragraph style to "normal" (once per paragraph)
     if (container is Paragraph) {
       final paragraphId = container.id;
       if (!processedParagraphs.contains(paragraphId)) {
@@ -67,7 +64,6 @@ bool _clearFormattingFromSelection(FluentDocument document, ResolvedSelection se
       }
     }
 
-    // Collect all leaf fragments in the range
     final leaves = FragmentOperations.collectLeafFragments(container as FNode);
     bool inRange = false;
     Fragment? lastCleared;
@@ -76,7 +72,6 @@ bool _clearFormattingFromSelection(FluentDocument document, ResolvedSelection se
       if (leaf.id == node.startFragment.id) inRange = true;
 
       if (inRange && leaf is! FluentImage) {
-        // Remove all formatting
         leaf.styles = [];
         leaf.fontFamily = 'Arial';
         leaf.fontSize = 14.0;
@@ -93,7 +88,6 @@ bool _clearFormattingFromSelection(FluentDocument document, ResolvedSelection se
     }
   }
 
-  // Also reset the pending style
   document.pendingStyle = ParagraphStyle.normal;
 
   document.syncPendingFontWithCursor();

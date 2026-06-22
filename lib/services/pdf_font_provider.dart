@@ -2,7 +2,6 @@ import 'dart:io' show Directory, File, Platform;
 import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart' show kIsWeb;
-// ignore: unused_import
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:pdf/widgets.dart' as pw;
 
@@ -27,19 +26,16 @@ class PdfFontProvider {
 
   bool _initialized = false;
 
-  // Sans-serif (default)
   pw.Font? sansRegular;
   pw.Font? sansBold;
   pw.Font? sansItalic;
   pw.Font? sansBoldItalic;
 
-  // Serif (quotations, Georgia, Times)
   pw.Font? serifRegular;
   pw.Font? serifBold;
   pw.Font? serifItalic;
   pw.Font? serifBoldItalic;
 
-  // Monospace (code, Courier)
   pw.Font? monoRegular;
   pw.Font? monoBold;
 
@@ -49,10 +45,8 @@ class PdfFontProvider {
   Future<void> init([Set<String> requiredFamilies = const {}]) async {
     if (_initialized) return;
 
-    // Load bundled fonts (fallback)
     await _loadBundledFonts();
 
-    // Load any system fonts that match families used in the document
     for (final family in requiredFamilies) {
       if (family.trim().isEmpty) continue;
       await _tryLoadSystemFont(family);
@@ -91,8 +85,6 @@ class PdfFontProvider {
       return null;
     }
   }
-
-  // ─── Dynamic system-font loading ────────────────────────────────────────
 
   Future<void> _tryLoadSystemFont(String fontFamily) async {
     final lower = fontFamily.toLowerCase();
@@ -145,11 +137,9 @@ class PdfFontProvider {
     final windir = Platform.environment['WINDIR'] ?? r'C:\Windows';
     final fontsDir = '$windir\\Fonts';
 
-    // Build candidate names
     final candidates = <String>[];
 
     if (Platform.isWindows) {
-      // Windows naming: calibri.ttf, calibrib.ttf, calibrii.ttf, calibriz.ttf
       final base = suffix.isEmpty ? lower : '$lower$suffix';
       candidates.addAll([
         '$fontsDir\\$base.ttf',
@@ -157,7 +147,6 @@ class PdfFontProvider {
         '$fontsDir\\$base.otf',
         '$fontsDir\\$base.OTF',
       ]);
-      // Also try spaced names: "Calibri Bold.ttf"
       if (suffix.isNotEmpty) {
         final spaced = suffix == 'b'
             ? 'Bold'
@@ -197,7 +186,6 @@ class PdfFontProvider {
       if (await file.exists()) return file;
     }
 
-    // Deep search on Windows (fontsDir listing) for suffix matching
     if (Platform.isWindows && suffix.isNotEmpty) {
       final dir = Directory(fontsDir);
       if (await dir.exists()) {
@@ -233,7 +221,6 @@ class PdfFontProvider {
     final lower = fontFamily.toLowerCase();
     final isCode = styleName == 'code';
 
-    // Explicit DejaVu Sans mapping (bundled fallback)
     if (lower.contains('dejavu')) {
       return (
         regular: sansRegular ?? pw.Font.helvetica(),
@@ -262,7 +249,6 @@ class PdfFontProvider {
       );
     }
 
-    // Default: sans-serif (DejaVu Sans, Helvetica, Roboto, Noto Sans, etc.)
     return (
       regular: sansRegular ?? pw.Font.helvetica(),
       bold: sansBold ?? pw.Font.helveticaBold(),

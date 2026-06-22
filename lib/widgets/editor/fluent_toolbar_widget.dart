@@ -102,8 +102,6 @@ class _FluentToolbarState extends State<FluentToolbar> {
   }
 
   void _onDocumentChanged() {
-    // Cursor-only changes are handled by _onCursorChanged; skip here
-    // to avoid duplicate _updateFormats calls.
     if (widget.document.cursorOnlyChange) return;
     _updateFormats();
   }
@@ -239,7 +237,6 @@ class _FluentToolbarState extends State<FluentToolbar> {
     try {
       String? jsonContent;
 
-      // Web: use file_picker with HTML5 file input
       if (kIsWeb) {
         final result = await FilePicker.platform.pickFiles(
           type: FileType.custom,
@@ -254,10 +251,8 @@ class _FluentToolbarState extends State<FluentToolbar> {
           }
         }
       }
-      // On Linux, use zenity directly to ensure GNOME file dialog
       else if (Platform.isLinux) {
         try {
-          // Set GTK to use Adwaita theme (GNOME default)
           final env = Map<String, String>.from(Platform.environment);
           env['GTK_THEME'] = 'Adwaita';
 
@@ -274,7 +269,6 @@ class _FluentToolbarState extends State<FluentToolbar> {
           }
         } catch (_) {}
       } else if (Platform.isMacOS || Platform.isWindows) {
-        // Desktop: use file_selector for native dialogs
         const typeGroup = XTypeGroup(
           label: 'Fluent documents',
           extensions: ['fluent', 'json'],
@@ -285,7 +279,6 @@ class _FluentToolbarState extends State<FluentToolbar> {
           jsonContent = await file.readAsString();
         }
       } else {
-        // Android/iOS: use file_picker
         final result = await FilePicker.platform.pickFiles(
           type: FileType.any,
           withData: true,
@@ -314,7 +307,6 @@ class _FluentToolbarState extends State<FluentToolbar> {
       if (!mounted) return;
       final jsonMap = jsonDecode(jsonContent) as Map<String, dynamic>;
       if (jsonMap.containsKey('nodes') && jsonMap.containsKey('settings')) {
-        // New format: wrapped with settings
         widget.document.loadContent(Root.fromJson(jsonMap['nodes'] as Map<String, dynamic>));
         final settings = jsonMap['settings'] as Map<String, dynamic>;
         widget.document.pendingLineHeight = (settings['lineHeight'] as num?)?.toDouble() ?? widget.document.pendingLineHeight;
@@ -336,7 +328,6 @@ class _FluentToolbarState extends State<FluentToolbar> {
             DocumentLanguage.fromCode(loadedLang),
           );
         }
-        // Restore comments if present
         final comments = jsonMap['comments'];
         if (comments is List && widget.document.commentProvider != null) {
           widget.document.commentProvider!.importComments(
@@ -344,7 +335,6 @@ class _FluentToolbarState extends State<FluentToolbar> {
           );
         }
       } else {
-        // Legacy format: Root JSON directly
         widget.document.loadContent(Root.fromJson(jsonMap));
       }
       ScaffoldMessenger.of(context).showSnackBar(
@@ -541,12 +531,10 @@ class _FluentToolbarState extends State<FluentToolbar> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // ── Top row ───────────────────────────────────────────
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
             child: Row(
               children: [
-                // ── File ────────────────────────────────────────────
                 MenuAnchor(
                   menuChildren: [
                     _withClickCursor(MenuItemButton(
@@ -655,7 +643,6 @@ class _FluentToolbarState extends State<FluentToolbar> {
                   },
                 ),
                 const SizedBox(width: 4),
-                // ── Edit ────────────────────────────────────────────
                 MenuAnchor(
                   menuChildren: [
                     _withClickCursor(MenuItemButton(
@@ -727,17 +714,16 @@ class _FluentToolbarState extends State<FluentToolbar> {
                   },
                 ),
                 const SizedBox(width: 4),
-                // ── Insert ──────────────────────────────────────────
                 MenuAnchor(
                   menuChildren: [
                     _withClickCursor(MenuItemButton(
                       leadingIcon: const Icon(Icons.link),
-                      onPressed: () => widget.document.eventHandler.handleInsertLink(context),
+                      onPressed: () => widget.document.dialogPresenter.handleInsertLink(context),
                       child: Text(_labels.link),
                     )),
                     _withClickCursor(MenuItemButton(
                       leadingIcon: const Icon(Icons.image),
-                      onPressed: () => widget.document.eventHandler.handleInsertImage(context),
+                      onPressed: () => widget.document.dialogPresenter.handleInsertImage(context),
                       child: Text(_labels.image),
                     )),
                     _withClickCursor(MenuItemButton(
@@ -765,7 +751,6 @@ class _FluentToolbarState extends State<FluentToolbar> {
                   },
                 ),
                 const SizedBox(width: 4),
-                // ── Format ──────────────────────────────────────────
                 MenuAnchor(
                   menuChildren: [
                     _withClickCursor(SubmenuButton(
@@ -979,7 +964,6 @@ class _FluentToolbarState extends State<FluentToolbar> {
                   },
                 ),
                 const SizedBox(width: 4),
-                // ── Comments ────────────────────────────────────────
                 if (widget.document.commentProvider != null)
                   MenuAnchor(
                     menuChildren: [
@@ -1011,7 +995,6 @@ class _FluentToolbarState extends State<FluentToolbar> {
               ],
             ),
           ),
-          // ── Bottom row: formatting ────────────────────────────
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
             child: Wrap(
@@ -1065,7 +1048,7 @@ class _FluentToolbarState extends State<FluentToolbar> {
                   icon: Icons.link,
                   tooltip: "Insert Link",
                   onPressed: () {
-                    widget.document.eventHandler.handleInsertLink(context);
+                    widget.document.dialogPresenter.handleInsertLink(context);
                     widget.document.requestEditorFocus();
                   },
                 ),

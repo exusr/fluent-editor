@@ -61,12 +61,10 @@ class SpellCheckState {
 
     final updated = <SpellAnnotation>[];
     for (final ann in list) {
-      // Annotation entirely before the edit point → unchanged
       if (ann.endOffset <= fromOffset) {
         updated.add(ann);
         continue;
       }
-      // Annotation entirely after the edit point → shift both offsets
       if (ann.startOffset >= fromOffset) {
         updated.add(SpellAnnotation(
           nodeId: ann.nodeId,
@@ -78,8 +76,6 @@ class SpellCheckState {
         ));
         continue;
       }
-      // Annotation overlaps the edit point → invalidate it (clear it)
-      // A new check will be triggered by the debounce mechanism.
     }
 
     if (updated.isEmpty) {

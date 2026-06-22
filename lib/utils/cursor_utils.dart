@@ -5,11 +5,28 @@ import 'package:fluent_editor/handlers/event_handler.dart';
 import 'package:fluent_editor/renderers/render_fluent_node.dart';
 import 'package:fluent_editor/renderers/render_fragment.dart';
 import 'package:fluent_editor/renderers/render_paragraph.dart';
-import 'package:fluent_editor/utils/tree_utils.dart';
 import 'package:fluent_editor/widgets/nodes/fluent_paragraph_widget.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/widgets.dart';
+
+FNodeRange? findDirectParent(FNode root, FNode target) {
+  if (root is InlineContainerNode) {
+    for (final child in (root as InlineContainerNode).getChildren()) {
+      if (child.id == target.id) return FNodeRange(node: root, parent: null);
+      if (child is InlineContainerNode) {
+        final found = findDirectParent(child, target);
+        if (found != null) {
+          return FNodeRange(
+            node: found.node,
+            parent: found.parent ?? root,
+          );
+        }
+      }
+    }
+  }
+  return null;
+}
 
 RenderFluentNode? _findTopLevelRenderNodeRecursive(RenderFluentLeaf start) {
   RenderObject? current = start;
@@ -60,7 +77,6 @@ CursorOffset? resolvePositionGestureDetails(PositionedGestureDetails details, Bu
   final localPosition = renderBox.globalToLocal(details.globalPosition);
   renderBox.hitTest(result, position: localPosition);
   
-  //Search for RenderFluentParagraph first
   RenderFluentParagraph? foundParagraph;
   for (final entry in result.path) {
     if (entry.target is RenderFluentParagraph) {
@@ -75,7 +91,6 @@ CursorOffset? resolvePositionGestureDetails(PositionedGestureDetails details, Bu
     }
   }
   
-  // Fallback: old method with RenderFluentFragment
   for (final entry in result.path) {
     if (entry.target is RenderFluentFragment) {
       if ((entry.target as RenderFluentFragment).node is! InlineContainerNode) {
@@ -92,7 +107,6 @@ CursorOffset? detectOffsetOnRenderFluentFragment(RenderFluentFragment fragment, 
       renderBox.localToGlobal(localPosition),
     );
     final localOffset = fragment.getOffsetForPosition(localInFragment);
-    // Walk up the render tree to find the top-level RenderFluentNode
     final topLevel = _findTopLevelRenderNodeRecursive(fragment);
     if (topLevel != null) {
       final globalOffset = _computeGlobalOffset(topLevel.node, fragment.node, localOffset);
@@ -101,7 +115,6 @@ CursorOffset? detectOffsetOnRenderFluentFragment(RenderFluentFragment fragment, 
         offset: globalOffset,
       );
     }
-    // Fallback: use widget's node (may be Link-relative for nested structures)
     return CursorOffset(
       id: (widget as FluentParagraphWidget).node.id,
       offset: absoluteOffset(fragment, localOffset, widget),
@@ -120,9 +133,7 @@ int absoluteOffset(RenderFluentFragment targetRender, int localOffset, Widget wi
   return absolute;
 }
 
-//walk into nodes until we find the target render fragment
 (bool, int) _walkNode(FNode node, RenderFluentFragment targetRender, int localOffset, int currentOffset) {
-  // Link extends Paragraph AND implements Fragment, check Link first!
   if (node is InlineContainerNode) {
     int offset = currentOffset;
     for (final child in (node as InlineContainerNode).fragments) {
@@ -170,14 +181,10 @@ FragmentRange? getFragmentAtCursor(EventHandler eventHandler) {
   if (node == null) {
     return null;
   }
-  // Flatten all fragments in the container with their global offsets.
-  // Use the document cache to avoid rebuilding on repeated calls.
   final flat = eventHandler.document.flattenContainer(node);
   for (int i = 0; i < flat.length; i++) {
     final (fragment, startOffset, endOffset) = flat[i];
-    // Check if the cursor offset falls within this fragment
     if (cursor.anchorOffset >= startOffset && cursor.anchorOffset <= endOffset) {
-      // Find the direct parent of this fragment (Link or Paragraph)
       final parent = findDirectParent(node, fragment);
       final localOffset = cursor.anchorOffset - startOffset;
       return FragmentRange(
@@ -204,7 +211,6 @@ int findCurrentFragmentIndex(InlineContainerNode parent, Cursor cursor) {
   return currentIndex;
 }
 
-//region cursor finds
 FNode? getNodeAtCursor(EventHandler eventHandler) {
   final targetId = eventHandler.document.cursor.anchorId;
   return eventHandler.document.nodeById(targetId);

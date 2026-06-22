@@ -1,10 +1,4 @@
-// GENERATED CODE - DO NOT MODIFY BY HAND
-
 part of 'factories.dart';
-
-// **************************************************************************
-// JsonSerializableGenerator
-// **************************************************************************
 
 FNode _$FNodeFromJson(Map<String, dynamic> json) => FNode(json['id'] as String);
 

@@ -22,15 +22,8 @@ bool executeHandleFontFamily(FluentDocument document, String fontFamily) {
     return _applyFontFamilyToSelection(document, selection, fontFamily);
   }
 
-  // Collapsed cursor: split at cursor and apply font to the fragment
-  // where subsequent text will be typed (persistent like Word/Google Docs).
   return _applyFontFamilyAtCursor(document, fontFamily);
 }
-
-// ───────────────────────────────────────────────────────────────────
-// Helpers
-// ───────────────────────────────────────────────────────────────────
-
 
 /// Applies font family to fragments affected by the selection.
 bool _applyFontFamilyToSelection(
@@ -44,14 +37,12 @@ bool _applyFontFamilyToSelection(
   for (final node in selection.nodes) {
     final container = node.container;
 
-    // ── 1st pass: split at edges in the actual parent ───────────
     final startParent = findParent(root, node.startFragment);
     final endParent   = findParent(root, node.endFragment);
 
     late Fragment actualStartFrag;
     late Fragment actualEndFrag;
 
-    // Single fragment
     if (node.startFragment.id == node.endFragment.id) {
       final frag = node.startFragment;
       if (node.startOffset > 0 && node.endOffset < frag.text.length) {
@@ -88,7 +79,6 @@ bool _applyFontFamilyToSelection(
         actualEndFrag   = frag;
       }
     } else {
-      // First fragment: split at start
       final first = node.startFragment;
       if (node.startOffset > 0 && node.startOffset < first.text.length) {
         final before = first.text.substring(0, node.startOffset);
@@ -101,7 +91,6 @@ bool _applyFontFamilyToSelection(
         actualStartFrag = first;
       }
 
-      // Last fragment: split at end
       final last = node.endFragment;
       if (node.endOffset > 0 && node.endOffset < last.text.length) {
         final selected = last.text.substring(0, node.endOffset);
@@ -115,7 +104,6 @@ bool _applyFontFamilyToSelection(
       }
     }
 
-    // ── 2nd pass: apply fontFamily to leaf fragments in range ─
     final leaves = FragmentOperations.collectLeafFragments(container as FNode);
     bool inRange = false;
     Fragment? lastModified;
@@ -148,15 +136,12 @@ bool _applyFontFamilyAtCursor(FluentDocument document, String fontFamily) {
   final frag = findById(root, cursor.anchorId);
 
   if (frag is Fragment) {
-    // Save original cursor position
     final originalAnchorId = cursor.anchorId;
     final originalAnchorOffset = cursor.anchorOffset;
 
-    // Create selection covering entire fragment
     cursor.moveTo(frag.id, 0);
     cursor.focusTo(frag.id, frag.text.length);
 
-    // Apply font to selection
     final selection = resolveSelection(
       root,
       cursor.anchorId,
@@ -169,7 +154,6 @@ bool _applyFontFamilyAtCursor(FluentDocument document, String fontFamily) {
       _applyFontFamilyToSelection(document, selection, fontFamily);
     }
 
-    // Collapse to original position
     cursor.moveTo(originalAnchorId, originalAnchorOffset);
     document.selectionManager.collapse();
   }

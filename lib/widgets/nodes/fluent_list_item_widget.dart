@@ -1,6 +1,6 @@
 import 'package:fluent_editor/factories.dart';
 import 'package:fluent_editor/fluent_document.dart';
-import 'package:fluent_editor/utils/editor_utils.dart';
+import 'package:fluent_editor/widgets/node_widget_builder.dart';
 import 'package:fluent_editor/widgets/nodes/fluent_paragraph_widget.dart';
 import 'package:fluent_editor/widgets/dialogs/list_marker_dialog.dart';
 import 'package:flutter/material.dart';
@@ -50,7 +50,6 @@ class _FluentListItemWidgetState extends State<FluentListItemWidget> {
   Widget build(BuildContext context) {
     final allChildren = widget.node.getChildren();
 
-    // Separate children: first Paragraph for the marker, rest as block
     final firstParagraph = allChildren.whereType<Paragraph>().firstOrNull;
     final otherChildren = allChildren.where((c) => c != firstParagraph).toList();
 
@@ -67,7 +66,6 @@ class _FluentListItemWidgetState extends State<FluentListItemWidget> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // ── UPPER PART: Marker + First Paragraph ─────────────
           if (firstParagraph != null)
             Row(
             mainAxisAlignment: mainAxisAlignment,
@@ -100,7 +98,6 @@ class _FluentListItemWidgetState extends State<FluentListItemWidget> {
             ],
           ),
 
-        // ── LOWER PART: Other children ─
         if (otherChildren.isNotEmpty)
           Padding(
             padding: const EdgeInsets.only(left: 24.0),
@@ -117,9 +114,6 @@ class _FluentListItemWidgetState extends State<FluentListItemWidget> {
     );
   }
 }
-
-
-// ── Marker widget ────────────────────────────────────────────────────────────
 
 class _ListMarker extends StatelessWidget {
   const _ListMarker({
@@ -139,7 +133,6 @@ class _ListMarker extends StatelessWidget {
     final String label = _resolveLabel();
 
     return SizedBox(
-      // fixed width keeps all markers aligned regardless of digit count
       width: width,
       child: Padding(
         padding: const EdgeInsets.only(bottom: 2),
@@ -171,13 +164,11 @@ class _ListMarker extends StatelessWidget {
 
   void _handleMarkerLeftClick(BuildContext context) {
     if (_isCheckboxType(node.bulletType)) {
-      // Toggle checkbox state
       _toggleCheckboxState();
     }
   }
 
   void _toggleCheckboxState() {
-    // Cycle through checkbox states: checkbox -> checkbox-checked -> checkbox-crossed -> checkbox
     switch (node.bulletType) {
       case 'checkbox':
         node.bulletType = 'checkbox-checked';
@@ -200,34 +191,26 @@ class _ListMarker extends StatelessWidget {
       context,
       node.bulletType,
       (newMarkerType) {
-        // Update the marker type for this list item and all items at the same level
         _updateMarkerTypeForList(newMarkerType);
       },
     );
   }
 
   void _updateMarkerTypeForList(String newMarkerType) {
-    // Find the parent FluentList and update all its ListItems
     final parentList = _findParentFluentList(node);
     if (parentList != null) {
-      // Check if we're dealing with checkboxes
       if (_isCheckboxType(newMarkerType)) {
-        // For checkboxes, only update non-checkbox items or convert to base checkbox
         for (final item in parentList.items) {
           if (!_isCheckboxType(item.bulletType)) {
-            // Convert non-checkbox items to base checkbox type
             item.bulletType = 'checkbox';
           }
-          // If already a checkbox, preserve its current state
         }
       } else {
-        // For non-checkbox types, update all items consistently
         for (final item in parentList.items) {
           item.bulletType = newMarkerType;
         }
       }
     } else {
-      // Fallback: update only the current item
       node.bulletType = newMarkerType;
     }
     document.updateContent();
@@ -240,19 +223,16 @@ class _ListMarker extends StatelessWidget {
   }
 
   FluentList? _findParentFluentList(ListItem listItem) {
-    // Find the parent FluentList by traversing the document structure
     return _findFluentListInNode(document.content, listItem);
   }
 
   FluentList? _findFluentListInNode(FNode node, ListItem targetListItem) {
-    // Check if this node is a FluentList containing our target
     if (node is FluentList) {
       if (node.items.contains(targetListItem)) {
         return node;
       }
     }
     
-    // Recursively search in children
     if (node is InlineContainerNode) {
       final container = node as InlineContainerNode;
       for (final child in container.getChildren()) {
@@ -308,7 +288,6 @@ class _ListMarker extends StatelessWidget {
       case 'checkbox-crossed':
         return '☒';
       default:
-        // Fallback to bullet
         const bullets = ['•', '◦', '▪'];
         return bullets[depth % bullets.length];
     }

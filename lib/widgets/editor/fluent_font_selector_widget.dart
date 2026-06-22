@@ -40,40 +40,30 @@ const _googleFontsForWeb = <String>[
   'Titillium Web',
 ];
 
-// ─── Font names to exclude (symbols, icons, internal system fonts) ──────
-
 /// Fonts to always exclude, regardless of platform.
 const _blocklist = <String>{
-  // Symbols and dingbats
   'Wingdings', 'Wingdings 2', 'Wingdings 3',
   'Webdings', 'Symbol', 'Marlett',
   'MT Extra', 'Bookshelf Symbol 7',
-  // Windows system fonts (internal UI, not for documents)
   'MS UI Gothic', 'Microsoft Sans Serif',
   'Small Fonts', 'Terminal', 'Fixedsys', 'System', 'Modern', 'Roman', 'Script',
-  // macOS system fonts
   '.AppleSystemUIFont', '.SF NS', 'Apple Braille', 'Apple Color Emoji',
   'Apple SD Gothic Neo', 'Apple Symbols',
   'LastResort', 'Keyboard', 'Zapf Dingbats',
-  // Common Linux system fonts
   'cursor', 'fixed',
 };
 
 /// Prefixes that identify internal/hidden operating system fonts.
 final _internalPrefixes = ['.', '#'];
 
-// ─── Regex to identify non-Latin scripts ─────────────────────────────────
-
 /// Typical Unicode characters of non-Latin scripts in the font *name*.
 /// Note: it's not necessary to filter CJK fonts by name on fc-list —
 /// fc-list already returns families like "Noto Sans CJK SC"; we exclude them
 /// with the ASCII name pattern, not searching for Unicode characters in the name.
 final _nonLatinNamePatterns = <RegExp>[
-  // Names with CJK, Devanagari, Arabic, Hangul etc. characters in the name itself
   RegExp(r'[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af\u0600-\u06ff'
       r'\u0590-\u05ff\u0900-\u097f\u0e00-\u0e7f]'),
   
-  // ASCII names that explicitly indicate a non-Latin script (CORRECTED HERE)
   RegExp(
     r'\b(CJK|Noto\s+(?:Sans|Serif)\s+(?:SC|TC|HK|JP|KR|Mono)|'
     r'SimSun|SimHei|SimKai|FangSong|KaiTi|'
@@ -87,13 +77,10 @@ final _nonLatinNamePatterns = <RegExp>[
   ),
 ];
 
-// ─── Font retrieval by platform ───────────────────────────────────────────
-
 /// Returns the list of Google Fonts bundled locally for web.
 /// These fonts are registered in pubspec.yaml and loaded from
 /// assets/google_fonts/ without network requests.
 List<String> _getWebFonts() {
-  // Return the curated list directly - fonts are registered in pubspec.yaml
   return _googleFontsForWeb;
 }
 
@@ -138,7 +125,6 @@ Future<List<String>> _getMobileFonts() async {
 /// Example output: "DejaVu Sans,DejaVu Sans Book:style=Book,..."
 Future<List<String>> _getLinuxFonts() async {
   try {
-    // Get system locale (e.g., "it_IT" -> "it")
     final locale = Platform.localeName.split('_').first;
     final result = await Process.run('fc-list', [':lang=$locale', 'family']);
     if (result.exitCode == 0 && (result.stdout as String).isNotEmpty) {
@@ -150,7 +136,6 @@ Future<List<String>> _getLinuxFonts() async {
 
 /// macOS: try fc-list first (Homebrew), then CTFontManager via system_profiler.
 Future<List<String>> _getMacOSFonts() async {
-  // Attempt 1: fc-list (available if installed with Homebrew)
   try {
     final locale = Platform.localeName.split('_').first;
     final result = await Process.run('fc-list', [':lang=$locale', 'family']);
@@ -159,7 +144,6 @@ Future<List<String>> _getMacOSFonts() async {
     }
   } catch (_) {}
 
-  // Attempt 2: system_profiler (natively available on macOS)
   try {
     final result = await Process.run(
       'system_profiler', ['SPFontsDataType', '-json'],
@@ -201,8 +185,6 @@ Future<List<String>> _getWindowsFonts() async {
   return [];
 }
 
-// ─── Parsers for different output formats ──────────────────────────────────
-
 /// Parses the output of `fc-list : family`.
 /// Each line can contain multiple names separated by comma (e.g. localized names).
 /// We take the first name per line (usually the ASCII/Latin one).
@@ -211,7 +193,6 @@ List<String> _parseFcList(String output) {
   for (final line in output.split('\n')) {
     final trimmed = line.trim();
     if (trimmed.isEmpty) continue;
-    // fc-list separates alternative names with comma
     final name = trimmed.split(',').first.trim();
     if (name.isNotEmpty) families.add(name);
   }
@@ -222,12 +203,10 @@ List<String> _parseFcList(String output) {
 /// Searches for "family" (preferred) or "name" fields in the raw JSON.
 List<String> _parseSystemProfiler(String output) {
   final families = <String>{};
-  // First look for the "family" field (direct family name)
   final familyRegex = RegExp(r'"family"\s*:\s*"([^"]+)"');
   for (final m in familyRegex.allMatches(output)) {
     families.add(m.group(1)!);
   }
-  // If nothing found, fallback to the "name" field
   if (families.isEmpty) {
     final nameRegex = RegExp(r'"name"\s*:\s*"([^"]+)"');
     for (final m in nameRegex.allMatches(output)) {
@@ -237,36 +216,27 @@ List<String> _parseSystemProfiler(String output) {
   return families.toList();
 }
 
-// ─── Common post-processing ───────────────────────────────────────────────────
-
 /// Applies all filters and returns an ordered and deduplicated list.
 List<String> _postProcess(List<String> raw) {
   final seen = <String>{};   // key: lowercase for deduplication
   final result = <String>[];
 
-  // Pre-trim to use for variant detection
   final allFonts = raw.map((f) => f.trim()).where((f) => f.isNotEmpty).toList();
 
   for (final font in raw) {
     final trimmed = font.trim();
     if (trimmed.isEmpty) continue;
 
-    // 1. Filter hidden internal fonts (names starting with '.' or '#')
     if (_internalPrefixes.any((p) => trimmed.startsWith(p))) continue;
 
-    // 2. Filter by exact blocklist
     if (_blocklist.contains(trimmed)) continue;
 
-    // 3. Filter fonts with names containing non-Latin scripts or known patterns
     if (_isNonLatinFont(trimmed)) continue;
 
-    // 4. Filter symbol fonts recognizable by name
     if (_isSymbolFont(trimmed)) continue;
 
-    // 5. Filter style variants (e.g. "Cascadia Mono Light" when "Cascadia Mono" exists)
     if (_isStyleVariant(trimmed, allFonts)) continue;
 
-    // 6. Case-insensitive deduplication
     final key = trimmed.toLowerCase();
     if (!seen.add(key)) continue;
 
@@ -307,8 +277,6 @@ bool _isStyleVariant(String font, List<String> allFonts) {
   }
   return false;
 }
-
-// ─── Widget ──────────────────────────────────────────────────────────────────
 
 class FluentFontSelectorWidget extends StatefulWidget {
   final FluentDocument document;
@@ -447,8 +415,6 @@ class _FluentFontSelectorWidgetState extends State<FluentFontSelectorWidget> {
                 color: colorScheme.onSurface,
               ),
               selectedItemBuilder: (context) {
-                // Use TextStyle with fontFamily to avoid network requests
-                // Fonts are loaded from local assets/google_fonts/
                 return _availableFonts.map((font) {
                   return Center(
                     child: Text(
@@ -460,8 +426,6 @@ class _FluentFontSelectorWidgetState extends State<FluentFontSelectorWidget> {
                 }).toList();
               },
               items: _availableFonts.map((String font) {
-                // Use TextStyle with fontFamily to avoid network requests
-                // Fonts are loaded from local assets/google_fonts/
                 return DropdownMenuItem<String>(
                   value: font,
                   child: Text(

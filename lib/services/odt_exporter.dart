@@ -3,11 +3,10 @@ import 'dart:io' show Directory, File, Platform;
 
 import 'package:archive/archive.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
-// ignore: unused_import
 import 'package:fluent_editor/factories.dart';
 import 'package:fluent_editor/fluent_document.dart';
 import 'package:fluent_editor/styles.dart';
-import 'package:fluent_editor/utils/editor_utils.dart';
+import 'package:fluent_editor/services/font_service.dart';
 import 'package:flutter/services.dart';
 
 class _CommentSeg {
@@ -40,32 +39,25 @@ class OdtExporter {
   OdtExporter(this.document, {Map<String, Uint8List>? imageCache})
       : imageCache = imageCache ?? {};
 
-  // Registered automatic styles: property key -> style name.
   final Map<String, String> _textStyles = {};
   final Map<String, String> _paragraphStyles = {};
   int _textStyleCounter = 0;
   int _paragraphStyleCounter = 0;
 
-  // Image frame styles: align key -> style name.
   final Map<String, String> _imageFrameStyles = {};
   final Map<String, String> _imageFrameStyleDefs = {};
   int _imageFrameStyleCounter = 0;
 
-  // Embedded images: src -> file name in Pictures/.
   final Map<String, String> _pictures = {};
   final Map<String, Uint8List> _pictureBytes = {};
   int _pictureCounter = 0;
 
-  // Fonts used in the document (for declaration in font-face-decls).
   final Set<String> _fonts = {};
 
-  // Embedded fonts: font name -> asset path.
   final Map<String, String> _embeddedFonts = {};
 
-  // Comment index by paragraph node id (built once at export start).
   Map<String, List<Map<String, dynamic>>> _commentsByNode = {};
 
-  // Document body buffer.
   final StringBuffer _body = StringBuffer();
 
   /// Attempts to find a TTF/OTF file for [fontName] on the current OS.
@@ -110,7 +102,6 @@ class OdtExporter {
       }
     }
 
-    // Deep search on Windows
     if (Platform.isWindows) {
       final windir = Platform.environment['WINDIR'] ?? r'C:\Windows';
       final fontsDir = Directory('$windir\\Fonts');
@@ -159,8 +150,6 @@ class OdtExporter {
 
   /// Generates the ODT file bytes.
   Future<Uint8List> build() async {
-    // Index comments by paragraph node id so every paragraph can
-    // quickly look up its own annotations without re-exporting.
     _commentsByNode = {};
     final commentProvider = document.commentProvider;
     if (commentProvider != null) {
@@ -178,10 +167,8 @@ class OdtExporter {
       _writeNode(node);
     }
 
-    // Ensure DejaVu Sans as default font always present.
     _fonts.add('DejaVu Sans');
 
-    // Resolve fonts: try system fonts first, then bundled fallback.
     final fontBytesMap = <String, Uint8List>{};
     for (final fontName in _fonts) {
       final sysBytes = await _findSystemFontBytes(fontName);
@@ -204,7 +191,6 @@ class OdtExporter {
 
     final archive = Archive();
 
-    // mimetype MUST be the first entry and uncompressed.
     final mimeBytes = utf8.encode('application/vnd.oasis.opendocument.text');
     final mimeFile = ArchiveFile('mimetype', mimeBytes.length, mimeBytes);
     mimeFile.compress = false;
@@ -214,7 +200,6 @@ class OdtExporter {
     _addText(archive, 'content.xml', contentXml);
     _addText(archive, 'styles.xml', stylesXml);
 
-    // Embed resolved fonts.
     for (final entry in fontBytesMap.entries) {
       final fileName = 'Fonts/${entry.key.replaceAll(' ', '_')}.ttf';
       archive.addFile(ArchiveFile(fileName, entry.value.length, entry.value));
@@ -233,8 +218,6 @@ class OdtExporter {
     final bytes = utf8.encode(content);
     archive.addFile(ArchiveFile(path, bytes.length, bytes));
   }
-
-  // ─── Node generation ───────────────────────────────────────────────
 
   void _writeNode(FNode node, {double extraIndentCm = 0}) {
     if (node is FluentImage) {
@@ -271,7 +254,6 @@ class OdtExporter {
   }
 
   void _writeHr() {
-    // Prefix "HR_" to avoid collisions with auto paragraph style names.
     const key = 'HR_hr';
     final styleName = _paragraphStyles.putIfAbsent(key, () {
       return 'P${_paragraphStyleCounter++}';
@@ -396,8 +378,6 @@ class OdtExporter {
     return result;
   }
 
-  // ─── Inline (fragments) ─────────────────────────────────────────────
-
   String _buildInline(
     List<FNode> fragments,
     ParagraphStyle pStyle, {
@@ -422,8 +402,6 @@ class OdtExporter {
       segs.sort((a, b) => a.start.compareTo(b.start));
     }
 
-    // Build a lookup map so we can find comment metadata (including replies)
-    // when we close an annotation and need to emit replies after it.
     final commentById = <String, Map<String, dynamic>>{};
     for (final seg in segs) {
       final cid = seg.comment['id'] as String? ?? '';
@@ -602,8 +580,6 @@ class OdtExporter {
     final escaped = _escWithSpaces(spanText);
     return '<text:span text:style-name="$styleName">$escaped</text:span>';
   }
-
-  // ─── Style registration ────────────────────────────────────────────
 
   String _registerTextStyle(Fragment frag, ParagraphStyle pStyle,
       {bool forceLink = false, bool isCommented = false}) {
@@ -786,8 +762,6 @@ class OdtExporter {
     });
   }
 
-  // ─── List styles ───────────────────────────────────────────────────
-
   final Map<String, String> _listStyles = {};
   final Map<String, (String, int)> _listStyleDefs = {};
   int _listStyleCounter = 0;
@@ -863,8 +837,6 @@ class OdtExporter {
     return '<text:list-level-style-bullet text:level="1" text:bullet-char="$bullet"/>';
   }
 
-  // ─── Images ───────────────────────────────────────────────────────
-
   String? _imageFrame(FluentImage image, {required String anchor}) {
     final bytes = _imageBytes(image.src);
     if (bytes == null) return null;
@@ -918,8 +890,6 @@ class OdtExporter {
     return imageCache[src];
   }
 
-  // ─── Final XML construction ─────────────────────────────────────────
-
   /// Builds the <office:font-face-decls> block to use in both files.
   String _buildFontFaceDecls() {
     final buf = StringBuffer();
@@ -940,14 +910,12 @@ class OdtExporter {
   String _buildContentXml() {
     final styles = StringBuffer();
 
-    // Automatic text styles.
     _textStyleDefs.forEach((name, props) {
       styles.write('<style:style style:name="$name" style:family="text">');
       styles.write('<style:text-properties $props/>');
       styles.write('</style:style>');
     });
 
-    // Automatic paragraph styles.
     _paragraphStyleDefs.forEach((name, defs) {
       final (pProps, tProps) = defs;
       styles.write(
@@ -961,7 +929,6 @@ class OdtExporter {
       styles.write('</style:style>');
     });
 
-    // List styles.
     _listStyleDefs.forEach((name, def) {
       final (listType, _) = def;
       final levelStyle = _buildListLevelStyle(listType);
@@ -970,7 +937,6 @@ class OdtExporter {
       styles.write('</text:list-style>');
     });
 
-    // HR style (bottom border).
     if (_hrStyleName != null) {
       styles.write(
           '<style:style style:name="$_hrStyleName" style:family="paragraph" style:parent-style-name="Standard">');
@@ -979,7 +945,6 @@ class OdtExporter {
       styles.write('</style:style>');
     }
 
-    // Table styles.
     styles.write(
         '<style:style style:name="$_tableStyleName" style:family="table">'
         '<style:table-properties style:width="17cm" fo:margin-top="0.2cm" fo:margin-bottom="0.2cm" table:align="margins"/>'
@@ -993,13 +958,10 @@ class OdtExporter {
         '<style:table-cell-properties fo:border="0.02cm solid #999999" fo:padding="0.1cm" style:vertical-align="top"/>'
         '</style:style>');
 
-      // Image frame styles.
     for (final entry in _imageFrameStyleDefs.entries) {
       styles.write(entry.value);
     }
 
-    // FIX: font-face-decls must also be present in content.xml,
-    // otherwise style:font-name in automatic styles are not resolved.
     final fontFaceDecls = _buildFontFaceDecls();
 
     return '<?xml version="1.0" encoding="UTF-8"?>\n'
@@ -1023,10 +985,6 @@ class OdtExporter {
   }
 
   String _buildStylesXml() {
-    // FIX: font-face go in <office:font-face-decls>, NOT inside
-    // <office:styles>. In the previous version they were inside office:styles,
-    // which is syntactically invalid for the ODF standard and causes
-    // LibreOffice/Writer to silently ignore all font declarations.
     final fontFaceDecls = _buildFontFaceDecls();
 
     return '<?xml version="1.0" encoding="UTF-8"?>\n'
@@ -1085,8 +1043,6 @@ class OdtExporter {
         'xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0" '
         'manifest:version="1.2">${entries.toString()}</manifest:manifest>';
   }
-
-  // ─── Helper ─────────────────────────────────────────────────────────
 
   static const _tableStyleName = 'TableStyle';
   static const _tableColStyleName = 'TableCol';

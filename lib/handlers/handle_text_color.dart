@@ -25,13 +25,8 @@ bool executeHandleTextColor(FluentDocument document, String? color) {
     return _applyColorToSelection(document, selection, color);
   }
 
-  // Collapsed cursor: store pending color
   return _applyColorAtCursor(document, color);
 }
-
-// ───────────────────────────────────────────────────────────────────
-// Helpers
-// ───────────────────────────────────────────────────────────────────
 
 bool _applyColorToSelection(
   FluentDocument document,

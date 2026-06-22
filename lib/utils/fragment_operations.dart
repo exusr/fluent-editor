@@ -116,13 +116,11 @@ class FragmentOperations {
   /// back to the start of that cluster.
   static int adjustIndex(String s, int index) {
     if (index <= 0 || index >= s.length) return index;
-    // Fast path: check surrogate pair (most common case)
     final prev = s.codeUnitAt(index - 1);
     final curr = s.codeUnitAt(index);
     if (prev >= 0xD800 && prev <= 0xDBFF && curr >= 0xDC00 && curr <= 0xDFFF) {
       return index - 1;
     }
-    // General path: check if index falls inside any grapheme cluster
     return _snapToGraphemeStart(s, index);
   }
 
@@ -133,7 +131,6 @@ class FragmentOperations {
   static int getPreviousGraphemeOffset(String s, int currentOffset) {
     if (currentOffset <= 0) return 0;
     if (currentOffset > s.length) return s.length;
-    // Walk the grapheme clusters and find the one whose end == currentOffset
     int pos = 0;
     for (final grapheme in s.characters) {
       final nextPos = pos + grapheme.length;
@@ -151,7 +148,6 @@ class FragmentOperations {
   /// (e.g., CJK + variation selector, ZWJ sequences).
   static int getGraphemeLengthAt(String s, int offset) {
     if (offset < 0 || offset >= s.length) return 1;
-    // Walk the grapheme clusters to find the one starting at [offset]
     int pos = 0;
     for (final grapheme in s.characters) {
       if (pos == offset) {
@@ -159,7 +155,6 @@ class FragmentOperations {
       }
       pos += grapheme.length;
       if (pos > offset) {
-        // offset falls inside a grapheme cluster — return the remaining length
         return pos - offset;
       }
     }
@@ -181,5 +176,20 @@ class FragmentOperations {
       pos = nextPos;
     }
     return index;
+  }
+
+  /// Returns the grapheme offset before [offset], skipping a ZWS character
+  /// if the fragment has visible content (so backspace deletes the visible
+  /// character, not the invisible marker). If the fragment is all-ZWS,
+  /// the original offset is returned (preserve original behavior).
+  static int getPreviousGraphemeOffsetSkippingZWS(String text, int offset) {
+    int newOffset = getPreviousGraphemeOffset(text, offset);
+    if (newOffset >= 0 && newOffset < text.length &&
+        text.codeUnitAt(newOffset) == 0x200B &&
+        text.replaceAll('\u200B', '').isNotEmpty) {
+      final skipOffset = getPreviousGraphemeOffset(text, newOffset);
+      if (skipOffset < newOffset) newOffset = skipOffset;
+    }
+    return newOffset;
   }
 }

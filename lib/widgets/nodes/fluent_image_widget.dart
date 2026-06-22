@@ -40,15 +40,12 @@ class _FluentImageWidgetState
   _ResizeHandle? _hoveredHandle;
   Offset? _dragStartPosition;
   
-  // Resize mode: activated by double-tap, gives image priority over scroll/selection
   bool _isResizeMode = false;
 
-  // Aspect ratio tracking
   double? _originalAspectRatio;
   bool _aspectRatioConstrained = true;
   static const double _aspectRatioThreshold = 0.1; // 10% deviation threshold
 
-  // Cached image bytes for data URIs to avoid re-decoding on every rebuild
   String? _cachedSrc;
   Uint8List? _cachedBytes;
 
@@ -94,7 +91,6 @@ class _FluentImageWidgetState
         final w = info.image.width.toDouble();
         final h = info.image.height.toDouble();
         if (node.width == null && node.height == null) {
-          // Limita a dimensioni ragionevoli per l'editor
           final maxW = math.min(w, _maxSize);
           final scale = maxW / w;
           node.width = maxW;
@@ -131,10 +127,8 @@ class _FluentImageWidgetState
 
     widget.document.requestEditorFocus();
 
-    // Initialize original aspect ratio if not set
     _initializeAspectRatio();
 
-    // Position the cursor at offset 0 (before) or 1 (after) based on the tap x.
     final box = context.findRenderObject() as RenderBox?;
     final localX = box != null
         ? box.globalToLocal(details.globalPosition).dx
@@ -171,14 +165,12 @@ class _FluentImageWidgetState
       return;
     }
 
-    // Detect which handle is near the cursor
     final imgWidth = widget.node.width ?? _defaultImgWidth;
     final imgHeight = widget.node.height ?? _defaultImgHeight;
     final tolerance = _handleSize;
 
     _ResizeHandle? newHoveredHandle;
 
-    // Check corners
     if (localPosition.dx <= tolerance && localPosition.dy <= tolerance) {
       newHoveredHandle = _ResizeHandle.topLeft;
     } else if (localPosition.dx >= imgWidth - tolerance &&
@@ -191,7 +183,6 @@ class _FluentImageWidgetState
         localPosition.dy >= imgHeight - tolerance) {
       newHoveredHandle = _ResizeHandle.bottomRight;
     }
-    // Check edges
     else if (localPosition.dx <= tolerance) {
       newHoveredHandle = _ResizeHandle.left;
     } else if (localPosition.dx >= imgWidth - tolerance) {
@@ -218,7 +209,6 @@ class _FluentImageWidgetState
     final cursorBefore = cursorOnImage && cursor.anchorOffset == 0;
     final cursorAfter = cursorOnImage && cursor.anchorOffset == 1;
 
-    // Check if image is selected
     bool isSelected = false;
     if (!cursor.isCollapsed) {
       final stops = widget.document.caretStops;
@@ -237,7 +227,6 @@ class _FluentImageWidgetState
       }
     }
 
-    // Show resize handles only in resize mode (activated by double-tap)
     final showHandles = _isResizeMode;
 
     return Container(
@@ -252,12 +241,9 @@ class _FluentImageWidgetState
           onTapDown: _onTapDown,
           onTap: () {
             widget.document.requestEditorFocus();
-            // Handle tap to prevent it from reaching the link
-            // Position cursor on the image
             widget.document.cursor.moveTo(widget.node.id, 0);
           },
           onDoubleTap: () {
-            // Toggle resize mode on double tap
             setState(() {
               _isResizeMode = !_isResizeMode;
               widget.document.isResizingImage = _isResizeMode;
@@ -267,7 +253,6 @@ class _FluentImageWidgetState
           onLongPressStart: (details) => _showContextMenu(details.globalPosition),
           child: LayoutBuilder(
             builder: (context, constraints) {
-              // Calculate the actual width to use
               final availableWidth = constraints.maxWidth;
               final actualWidth = _calculateActualWidth(
                 imgWidth,
@@ -309,7 +294,6 @@ class _FluentImageWidgetState
                         bottom: 0,
                         child: _CaretLine(),
                       ),
-                    // Resize handles - MUST be last to be on top
                     if (showHandles) ..._buildResizeHandles(actualWidth, actualHeight)
                   ],
                 ),
@@ -323,11 +307,9 @@ class _FluentImageWidgetState
 
   Widget _buildImage(String src) {
     if (src.startsWith('data:')) {
-      // Parse data URI: data:[<mediatype>][;base64],<data>
       final commaIndex = src.indexOf(',');
       if (commaIndex != -1) {
         try {
-          // Cache decoded bytes to avoid re-decoding on every rebuild
           if (_cachedSrc != src || _cachedBytes == null) {
             _cachedSrc = src;
             _cachedBytes = base64Decode(src.substring(commaIndex + 1));
@@ -345,9 +327,7 @@ class _FluentImageWidgetState
   }
 
   List<Widget> _buildResizeHandles(double imgWidth, double imgHeight) {
-    // Show all handles for better visibility and usability
     return [
-      // Corner handles
       _buildHandle(
         0,
         0,
@@ -372,7 +352,6 @@ class _FluentImageWidgetState
         _ResizeHandle.bottomRight,
         SystemMouseCursors.resizeDownRight,
       ),
-      // Edge handles
       _buildHandle(
         imgWidth / 2 - _handleSize / 2,
         0,
@@ -417,10 +396,7 @@ class _FluentImageWidgetState
           setState(() {
             _isDragging = true;
             _activeHandle = handle;
-            // Reset aspect ratio constraint for new drag operations
-            // This allows users to "re-enable" aspect ratio by starting fresh
             _aspectRatioConstrained = true;
-            // Store the handle's initial position relative to the image
             final imgWidth = widget.node.width ?? _defaultImgWidth;
             final imgHeight = widget.node.height ?? _defaultImgHeight;
             _dragStartPosition = _getHandlePosition(
@@ -429,8 +405,6 @@ class _FluentImageWidgetState
               imgHeight,
             );
           });
-          // Notify document that image resize is in progress
-          // This prevents text selection from interfering
           widget.document.isResizingImage = true;
         },
         onPanUpdate: (details) {
@@ -480,35 +454,28 @@ class _FluentImageWidgetState
               break;
           }
 
-          // Apply max size constraints
           newWidth = math.min(newWidth, _maxSize);
           newHeight = math.min(newHeight, _maxSize);
 
-          // Check if aspect ratio is deviating and disable constraint if needed
           if (_aspectRatioConstrained &&
               _isAspectRatioDeviating(newWidth, newHeight)) {
             _aspectRatioConstrained = false;
           }
 
-          // Apply aspect ratio constraint only if still enabled
           if (_aspectRatioConstrained && _originalAspectRatio != null) {
-            // For corner handles, maintain aspect ratio
             if (_activeHandle == _ResizeHandle.topLeft ||
                 _activeHandle == _ResizeHandle.topRight ||
                 _activeHandle == _ResizeHandle.bottomLeft ||
                 _activeHandle == _ResizeHandle.bottomRight) {
-              // Calculate the dimension that changed more
               final widthRatio = newWidth / imgWidth;
               final heightRatio = newHeight / imgHeight;
 
-              // Use the ratio that preserves the constraint better
               if (widthRatio > heightRatio) {
                 newHeight = newWidth / _originalAspectRatio!;
               } else {
                 newWidth = newHeight * _originalAspectRatio!;
               }
             }
-            // For edge handles, adjust the other dimension to maintain aspect ratio
             else if (_activeHandle == _ResizeHandle.left ||
                 _activeHandle == _ResizeHandle.right) {
               newHeight = newWidth / _originalAspectRatio!;
@@ -518,7 +485,6 @@ class _FluentImageWidgetState
             }
           }
 
-          // Apply minimal threshold for smooth but responsive resize
           const double threshold = 1.0;
 
           final widthDiff = (newWidth - imgWidth).abs();
@@ -536,9 +502,7 @@ class _FluentImageWidgetState
             _activeHandle = null;
             _dragStartPosition = null;
           });
-          // Clear the resize flag when drag ends
           widget.document.isResizingImage = false;
-          // Update document only when drag ends
           widget.document.updateContent();
         },
         child: MouseRegion(
@@ -612,17 +576,14 @@ class _FluentImageWidgetState
   /// Calculate the actual width to use for the image
   /// If the image width exceeds available width, stretch it to fit
   double _calculateActualWidth(double imageWidth, double availableWidth) {
-    // If available width is 0 or infinite, return the original width
     if (availableWidth <= 0 || availableWidth == double.infinity) {
       return imageWidth;
     }
 
-    // If image width is greater than available width, stretch to fit
     if (imageWidth > availableWidth) {
       return availableWidth;
     }
 
-    // Otherwise, use the original width
     return imageWidth;
   }
 
@@ -632,7 +593,6 @@ class _FluentImageWidgetState
     double actualWidth,
     double originalWidth,
   ) {
-    // If we're stretching the width, adjust height to maintain aspect ratio
     if (actualWidth != originalWidth && originalWidth > 0) {
       final aspectRatio = imageHeight / originalWidth;
       return actualWidth * aspectRatio;

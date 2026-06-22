@@ -13,7 +13,6 @@ class FluentLinkWidget extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // The link is already rendered by the parent paragraph as TextSpan
     return const SizedBox.shrink();
   }
 }

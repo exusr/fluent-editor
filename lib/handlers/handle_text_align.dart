@@ -28,7 +28,6 @@ bool executeHandleTextAlign(FluentDocument document, String align) {
     return true;
   }
 
-  // Collapsed cursor: apply to the current Paragraph and update pending.
   final container = findLogicalContainer(root, cursor.anchorId);
   if (container != null) {
     _applyToParagraphs(container as FNode, align);

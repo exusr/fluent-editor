@@ -68,7 +68,6 @@ class FNode {
   Map<String, dynamic> toJson() => _$FNodeToJson(this);
 }
 
-
 @JsonSerializable()
 class Root extends FNode implements InlineContainerNode {
   @FNodeJsonConverter()
@@ -324,7 +323,6 @@ class Link extends Paragraph implements Fragment, InlineContainerNode {
   @override
   String get type => 'link';
 
-  // Link implements Fragment → override of new members
   @override
   List<String>? get styles => null;
   @override
@@ -380,7 +378,6 @@ class FluentList extends Paragraph implements InlineContainerNode {
   
   set items(List<ListItem> value) {
     _items = value;
-    //applyListMarkers(value);
   }
   
   FluentList({required this.listType}) : super();
@@ -392,14 +389,9 @@ class FluentList extends Paragraph implements InlineContainerNode {
 
   @override
   String get text {
-    //applyListMarkers(_items);
     return _items.map((item) => item.text).join();
   }
 
-  //@override
-  //@FNodeJsonConverter()
-  //List<FNode> get fragments => TrackedList(_items, () => applyListMarkers(_items));
-  
   factory FluentList.fromJson(Map<String, dynamic> json) => _$FluentListFromJson(json);
   
   @override
@@ -454,15 +446,10 @@ class ListItem extends FNode implements InlineContainerNode {
 
   /// Compatibility setter: allows assigning fragments (creates Paragraph wrapper)
   set fragments(List<FNode> value) {
-    // Replace children with Paragraph containing the fragments
     children = [Paragraph()..fragments = value];
   }
 
   factory ListItem.fromJson(Map<String, dynamic> json) {
-    // BUG WORKAROUND: _$ListItemFromJson first calls ..children = [...] then
-    // ..fragments = [...]. The `fragments` setter of ListItem overrides
-    // children with a single wrapper Paragraph, destroying the actual
-    // structure (e.g. nested sublists). Restore the real children from JSON.
     final item = _$ListItemFromJson(json);
     final rawChildren = json['children'] as List<dynamic>?;
     if (rawChildren != null) {
@@ -657,8 +644,6 @@ FNode makeNode(String nodeType, dynamic options) {
     case 'list':
       final listType = options['listType'] as String? ?? 'bullet';
       final list = FluentList(listType: listType);
-      // Create an initial ListItem with an empty Paragraph so the
-      // cursor has a fragment to land on.
       final initialItem = ListItem(
         bulletType: listType,
         indexList: [1],

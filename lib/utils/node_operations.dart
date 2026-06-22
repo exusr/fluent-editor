@@ -1,21 +1,5 @@
-// node_operations.dart
-//
-// PURE utility for tree node operations.
-// No dependency on FluentDocument, Cursor or Flutter.
-// Each function receives Root (or the necessary subtree) and returns
-// a result, never void — so it's testable in isolation.
-//
-// ORGANIZATION:
-//  1. Traversal   — finding nodes in the tree
-//  2. Node CRUD   — insertion, removal, substitution of nodes
-//  3. Inline      — operations on InlineContainerNode children
-
 import 'package:fluent_editor/factories.dart';
 import 'package:fluent_editor/utils/fragment_operations.dart';
-
-// ═══════════════════════════════════════════════════════════════════════
-// 1. TRAVERSAL
-// ═══════════════════════════════════════════════════════════════════════
 
 /// Returns the direct children of [node] for any type, including
 /// Root, FluentList, FluentTable/FluentRow.
@@ -37,11 +21,8 @@ List<FNode> childrenOf(FNode node) {
   return [];
 }
 
-/// Correct version of findRecursive: traverses ALL node types,
-/// including Root, FluentList, FluentTable and ListItem with sublists.
-///
-/// Replaces the old findRecursive in editor_utils.dart that skipped
-/// FluentList and FluentTable.
+/// Traverses ALL node types, including Root, FluentList, FluentTable
+/// and ListItem with sublists.
 FNode? findNode(FNode root, bool Function(FNode) test) {
   if (test(root)) return root;
   for (final child in childrenOf(root)) {
@@ -70,6 +51,120 @@ FNode? findParent(FNode root, FNode target) {
   return null;
 }
 
+/// Climbs up the tree from [node] looking for a [FluentCell] ancestor.
+FluentCell? findAncestorCell(FNode root, FNode node) {
+  FNode? current = node;
+  while (current != null) {
+    if (current is FluentCell) return current;
+    current = findParent(root, current);
+  }
+  return null;
+}
+
+/// Climbs up the tree from [node] looking for a [ListItem] ancestor.
+ListItem? findAncestorListItem(FNode root, FNode node) {
+  FNode? current = node;
+  while (current != null) {
+    if (current is ListItem) return current;
+    current = findParent(root, current);
+  }
+  return null;
+}
+
+/// Returns the "flat" list of children of [container] in reading order,
+/// expanding Links (transparent) into their fragments.
+List<FNode> flattenInlineChildren(InlineContainerNode container) {
+  final out = <FNode>[];
+  for (final child in container.getChildren()) {
+    if (child is Link) {
+      for (final inner in child.getChildren()) {
+        out.add(inner);
+      }
+    } else {
+      out.add(child);
+    }
+  }
+  return out;
+}
+
+/// Resolves the actual Fragment from the cursor anchor node.
+/// The anchor may be a Fragment directly, or an InlineContainerNode
+/// whose child at [offset] (or first Fragment child) is the target.
+Fragment? resolveFragmentFromCursor(FNode? currentNode, int offset) {
+  if (currentNode is Fragment) return currentNode;
+  if (currentNode is InlineContainerNode) {
+    final children = (currentNode as InlineContainerNode).getChildren();
+    if (offset >= 0 && offset < children.length) {
+      final child = children[offset];
+      if (child is Fragment) return child;
+    }
+    for (final child in children) {
+      if (child is Fragment) return child;
+    }
+  }
+  return null;
+}
+
+/// Removes empty Links and other inline wrappers that no longer contain
+/// any text fragments after a deletion.
+void cleanupEmptyInlineParents(Root root, FNode? node) {
+  if (node == null) return;
+  if (node is Link && node.getChildren().isEmpty) {
+    final parent = findParent(root, node);
+    removeNode(root, node);
+    if (parent != null) cleanupEmptyInlineParents(root, parent);
+  }
+}
+
+/// Returns true if [container] has no children or a single empty Fragment.
+bool isContainerEmpty(InlineContainerNode container) {
+  final children = container.getChildren();
+  return children.isEmpty ||
+      (children.length == 1 &&
+       children.first is Fragment &&
+       (children.first as Fragment).text.isEmpty);
+}
+
+/// Moves all Fragment and Link children from [source] to [target].
+void moveInlineChildren(Root root, InlineContainerNode source, InlineContainerNode target) {
+  for (final child in source.getChildren().toList()) {
+    if (child is Fragment || child is Link) {
+      removeNode(root, child);
+      appendChild(target as FNode, child);
+    }
+  }
+}
+
+/// Returns the first Paragraph child of [node], or null if none.
+Paragraph? findFirstParagraph(FNode node) {
+  for (final c in childrenOf(node)) {
+    if (c is Paragraph) return c;
+  }
+  return null;
+}
+
+/// Returns the last Paragraph child of [node], or null if none.
+Paragraph? findLastParagraph(FNode node) {
+  final children = childrenOf(node);
+  for (int i = children.length - 1; i >= 0; i--) {
+    if (children[i] is Paragraph) return children[i] as Paragraph;
+  }
+  return null;
+}
+
+/// Finds the nearest non-empty plain Fragment predecessor of the element at
+/// [index] in [flat]. Returns null if none exists.
+/// A "plain" Fragment is one that is not an InlineContainerNode.
+Fragment? findPredecessorFragment(List<FNode> flat, int index) {
+  for (int i = index - 1; i >= 0; i--) {
+    final f = flat[i];
+    if (f is Fragment && f is! InlineContainerNode && f.text.isNotEmpty) {
+      return f;
+    }
+  }
+  return null;
+}
+
 /// Finds the first InlineContainerNode (Paragraph/ListItem/FluentCell)
 /// that contains [fragmentId] as a direct text descendant.
 /// Link is transparent: its fragments belong to the parent container.
@@ -86,12 +181,6 @@ InlineContainerNode? findLogicalContainer(
   }
 
   InlineContainerNode? search(FNode node, InlineContainerNode? currentContainer) {
-    // FluentImage atomic:
-    //  - INLINE (inside Paragraph/Link, currentContainer is Paragraph):
-    //    it's a fragment of the Paragraph → return the Paragraph.
-    //  - BLOCK-LEVEL (parent Root/ListItem/FluentCell, currentContainer
-    //    is that "block container"): it's its own logical-line → return
-    //    the image itself.
     if (node is FluentImage && node.id == fragmentId) {
       if (currentContainer is Paragraph) return currentContainer;
       return node as InlineContainerNode;
@@ -99,7 +188,6 @@ InlineContainerNode? findLogicalContainer(
     if (node is HorizontalRule && node.id == fragmentId) {
       return node as InlineContainerNode;
     }
-    // Link: transparent, doesn't update currentContainer
     if (node is Link) {
       for (final child in node.getChildren()) {
         final found = search(child, currentContainer);
@@ -108,7 +196,6 @@ InlineContainerNode? findLogicalContainer(
       return null;
     }
 
-    // FluentList / FluentTable: descend without container
     if (node is FluentList || node is FluentTable || node is FluentRow) {
       for (final child in childrenOf(node)) {
         final found = search(child, null);
@@ -117,12 +204,10 @@ InlineContainerNode? findLogicalContainer(
       return null;
     }
 
-    // InlineContainerNode (Paragraph, ListItem, FluentCell): new container
     if (node is InlineContainerNode) {
       final container = node as InlineContainerNode;
       for (final child in container.getChildren()) {
         if (child is FluentList) {
-          // Sublists: new container scope
           final found = search(child, null);
           if (found != null) return found;
         } else {
@@ -133,7 +218,6 @@ InlineContainerNode? findLogicalContainer(
       return null;
     }
 
-    // Leaf Fragment: check if it's the one searched for
     if (node is Fragment && node.id == fragmentId) {
       return currentContainer;
     }
@@ -166,22 +250,6 @@ bool walkTree(FNode root, bool Function(FNode node, FNode? parent) visitor,
   }
   return true;
 }
-
-/// Collects all leaf Fragments of the tree in reading order.
-List<Fragment> collectAllFragments(FNode root) {
-  final result = <Fragment>[];
-  walkTree(root, (node, _) {
-    if (node is Fragment && node is! InlineContainerNode) {
-      result.add(node);
-    }
-    return true;
-  });
-  return result;
-}
-
-// ═══════════════════════════════════════════════════════════════════════
-// 2. NODE CRUD — insertion, removal, substitution in the tree
-// ═══════════════════════════════════════════════════════════════════════
 
 /// Returns the mutable list of children of [parent], or null if
 /// [parent] doesn't support mutable children directly.
@@ -273,10 +341,6 @@ bool moveAfter(FNode root, FNode target, FNode sibling) {
   return insertAfter(siblingParent, sibling, target);
 }
 
-// ═══════════════════════════════════════════════════════════════════════
-// 3. INLINE CONTAINER — specific operations on inline fragments
-// ═══════════════════════════════════════════════════════════════════════
-
 /// Inserts [fragment] in [container] at position [index].
 bool insertFragmentAt(InlineContainerNode container, Fragment fragment, int index) {
   final children = container.getChildren();
@@ -288,7 +352,6 @@ bool insertFragmentAt(InlineContainerNode container, Fragment fragment, int inde
 /// Removes [fragment] from [container]. Returns false if not present.
 bool removeFragment(InlineContainerNode container, Fragment fragment) {
   container.getChildren().removeWhere((c) => c.id == fragment.id);
-  // getChildren() returns a list; removeWhere is void, check with indexOf first
   return true; // caller should verify with findNode if needed
 }
 
@@ -344,13 +407,11 @@ void pruneEmptyContainers(FNode node, Root root) {
 /// Maintains the table structure preserving at least one empty paragraph
 /// to allow the cursor to be positioned in the cell.
 void clearCellKeepingEmptyFragment(FluentCell cell, Root root) {
-  // Remove all existing children
   final childrenToRemove = cell.children.toList();
   for (final child in childrenToRemove) {
     removeNode(root, child);
   }
 
-  // Add an empty Paragraph to keep the cell "alive"
   final emptyParagraph = Paragraph();
   appendChild(cell, emptyParagraph);
 }
@@ -361,11 +422,9 @@ void recalculateListIndices(Root root) {
   void recalculateList(FluentList list, List<int> parentIndices) {
     for (var i = 0; i < list.items.length; i++) {
       final item = list.items[i];
-      // Build the new indexList: parent + current position (1-based)
       final newIndexList = [...parentIndices, i + 1];
       item.indexList = newIndexList;
 
-      // Check if the item has sublists in its children
       for (final child in item.children) {
         if (child is FluentList) {
           recalculateList(child, newIndexList);
@@ -374,7 +433,6 @@ void recalculateListIndices(Root root) {
     }
   }
 
-  // Start from the root level
   for (final node in root.nodes) {
     if (node is FluentList) {
       recalculateList(node, []);
@@ -386,7 +444,6 @@ void recalculateListIndices(Root root) {
 /// given [affectedNodes] (or their ancestors). This avoids walking the
 /// entire document tree when only a subset of lists changed.
 void recalculateListIndicesFor(Root root, Set<FNode> affectedNodes) {
-  // Collect the top-level FluentList ancestors of each affected node.
   final topLists = <FluentList>{};
   for (final node in affectedNodes) {
     FNode? current = node;
@@ -398,7 +455,6 @@ void recalculateListIndicesFor(Root root, Set<FNode> affectedNodes) {
       current = findParent(root, current);
     }
     if (deepestList != null) {
-      // Walk up to find the top-most FluentList (whose parent is not a ListItem)
       var top = deepestList;
       FNode? parent = findParent(root, top);
       while (parent is ListItem) {
@@ -440,15 +496,12 @@ void mergeConsecutiveLists(Root root) {
     final children = childrenOf(container);
     final listsToMerge = <FluentList>[];
 
-    // Find consecutive lists with the same type
     for (var i = 0; i < children.length; i++) {
       final child = children[i];
       if (child is FluentList) {
-        // Only merge if it has the same type as the previous list
         if (listsToMerge.isEmpty || child.listType == listsToMerge.first.listType) {
           listsToMerge.add(child);
         } else {
-          // Different type: merge accumulated lists and start new group
           if (listsToMerge.length > 1) {
             _mergeLists(root, listsToMerge);
           }
@@ -456,7 +509,6 @@ void mergeConsecutiveLists(Root root) {
           listsToMerge.add(child);
         }
       } else {
-        // Non-list node: merge any accumulated lists and reset
         if (listsToMerge.length > 1) {
           _mergeLists(root, listsToMerge);
         }
@@ -464,16 +516,13 @@ void mergeConsecutiveLists(Root root) {
       }
     }
 
-    // Merge any remaining lists at the end
     if (listsToMerge.length > 1) {
       _mergeLists(root, listsToMerge);
     }
   }
 
-  // Process root level
   mergeInContainer(root);
 
-  // Process nested lists (sublists in ListItem children)
   void processSublists(FNode node) {
     if (node is ListItem) {
       for (final child in node.children) {
@@ -499,16 +548,12 @@ void _mergeLists(Root root, List<FluentList> lists) {
 
   final targetList = lists.first;
 
-  // Move all items from subsequent lists to the target list
   for (var i = 1; i < lists.length; i++) {
     final sourceList = lists[i];
     for (final item in sourceList.items) {
-      // Reset the indexList for numbered lists to ensure correct numbering
-      // after merge. The indices will be recalculated by recalculateListIndices.
       item.indexList = [];
       appendChild(targetList, item);
     }
-    // Remove the now-empty list
     removeNode(root, sourceList);
   }
 }
@@ -522,15 +567,11 @@ Paragraph? outdentListItemToParagraph(
   FluentList listParent,
   ListItem currentItem,
 ) {
-  // Find the parent of the list (where to insert the item after outdent)
   final grandparent = findParent(root, listParent);
   if (grandparent == null) return null;
 
-  // Snapshot of children before removing the item
   final itemChildren = currentItem.children.toList();
 
-  // Extract the first Paragraph (which will become the new output paragraph)
-  // and the other children that need to be promoted.
   Paragraph? firstParagraph;
   final otherChildren = <FNode>[];
   for (final c in itemChildren) {
@@ -541,38 +582,23 @@ Paragraph? outdentListItemToParagraph(
     }
   }
 
-  // Capture the items that come AFTER currentItem in the list:
-  // they will go in a new separate list after the paragraph.
   final currentIndex = listParent.items.indexOf(currentItem);
   final itemsAfter = (currentIndex >= 0)
       ? listParent.items.sublist(currentIndex + 1).toList()
       : <ListItem>[];
 
-  // Remove the current item from the list
   removeNode(root, currentItem);
 
-  // Also remove the following items from the original list
   for (final item in itemsAfter) {
     removeNode(root, item);
   }
 
-  // Detach the promoted children from the orphaned currentItem: so the nodes
-  // exist ONLY in their new position in Root, avoiding double references
-  // that confuse widget tree reconciliation and ParagraphRegistry during
-  // cursor navigation.
   currentItem.children.clear();
 
-  // If there's no Paragraph, create an empty one
   final newParagraph = firstParagraph ?? Paragraph();
 
-  // Always insert the paragraph after the list (Google Docs behavior):
-  // - If the list has other items, the paragraph goes after it
-  // - If the list is empty (outdent of the last item), the paragraph goes after the empty list
-  //   (the empty list will be removed after if necessary)
   insertAfter(grandparent, listParent, newParagraph);
 
-  // Promote the other children of the ListItem (images, sublists, etc.)
-  // immediately after the paragraph.
   var insertAfterNode = newParagraph as FNode;
   for (final child in otherChildren) {
     if (child is FluentList) {
@@ -583,7 +609,6 @@ Paragraph? outdentListItemToParagraph(
     insertAfterNode = child;
   }
 
-  // If there are following items, create a new separate list after the paragraph
   if (itemsAfter.isNotEmpty) {
     final newList = FluentList(listType: listParent.listType);
     for (final item in itemsAfter) {
@@ -592,15 +617,12 @@ Paragraph? outdentListItemToParagraph(
     insertAfter(grandparent, insertAfterNode, newList);
   }
 
-  // If the original list remained empty, remove it to avoid empty orphan lists
   if (listParent.items.isEmpty) {
     removeNode(root, listParent);
   }
 
-  // Merge consecutive lists with the same type
   mergeConsecutiveLists(root);
 
-  // Recalculate the indices of all modified lists
   recalculateListIndices(root);
 
   return newParagraph;
@@ -613,20 +635,14 @@ void _promoteSublistRecursive(
   FNode insertAfterNode,
   FluentList sublist,
 ) {
-  // Remove the sublist from its parent
   removeNode(root, sublist);
 
-  // Insert the sublist after the specified node
   insertAfter(grandparent, insertAfterNode, sublist);
 
-  // For each item in the sublist, handle its sublists
   for (final item in sublist.items) {
-    // Find any nested sublists in the items
     final nestedSublists = item.children.whereType<FluentList>().toList();
     for (final nestedSublist in nestedSublists) {
-      // Remove the nested sublist from the item
       removeNode(root, nestedSublist);
-      // Insert it after the current sublist
       insertAfter(grandparent, sublist, nestedSublist);
     }
   }

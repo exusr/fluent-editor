@@ -3,7 +3,7 @@ import 'dart:math' as math;
 import 'package:fluent_editor/factories.dart';
 import 'package:fluent_editor/fluent_document.dart';
 import 'package:fluent_editor/renderers/render_fluent_node.dart';
-import 'package:fluent_editor/utils/editor_utils.dart';
+import 'package:fluent_editor/widgets/node_widget_builder.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 
@@ -56,7 +56,6 @@ class FluentRowWidgetRenderer extends MultiChildRenderObjectWidget {
   }
 }
 
-// Wrapper to pass colSpan to the render object
 class _CellWrapper extends SingleChildRenderObjectWidget {
   final FluentCell cell;
   
@@ -132,7 +131,6 @@ class RenderFluentRow extends RenderFluentNode
       return;
     }
 
-    // Calculate uniform width for each cell (minimum 20px)
     final double availableWidth = constraints.maxWidth;
     final double cellWidth = math.max(availableWidth / cellCount, minCellWidth);
 
@@ -143,17 +141,14 @@ class RenderFluentRow extends RenderFluentNode
     while (child != null) {
       final parentData = child.parentData as FluentRowParentData;
       
-      // Get the colSpan from wrapper or default 1
       int colSpan = 1;
       if (child is _RenderCellWrapper) {
         colSpan = child.colSpan;
         parentData.colSpan = colSpan;
       }
       
-      // Calculate width based on colSpan
       final double spanWidth = cellWidth * colSpan;
       
-      // Layout the cell with extended width and minimum height
       child.layout(
         BoxConstraints(
           minWidth: spanWidth,
@@ -170,13 +165,11 @@ class RenderFluentRow extends RenderFluentNode
       child = parentData.nextSibling;
     }
 
-    // Minimum height of the row: 20px
     size = constraints.constrain(Size(availableWidth, math.max(maxHeight, minCellHeight)));
   }
 
   @override
   void paint(PaintingContext context, Offset offset) {
-    // Draw vertical borders between cells
     final linePaint = Paint()
       ..color = _borderColor
       ..style = PaintingStyle.stroke
@@ -186,7 +179,6 @@ class RenderFluentRow extends RenderFluentNode
     while (child != null) {
       final parentData = child.parentData as FluentRowParentData;
       final childRect = (offset + parentData.offset) & child.size;
-      // Vertical line to the right of each cell
       context.canvas.drawLine(
         Offset(childRect.right, childRect.top),
         Offset(childRect.right, childRect.bottom),
@@ -195,7 +187,6 @@ class RenderFluentRow extends RenderFluentNode
       child = parentData.nextSibling;
     }
     
-    // Draw the children (cells)
     defaultPaint(context, offset);
   }
 

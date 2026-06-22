@@ -29,13 +29,11 @@ class MobileKeyboardBridgeImpl {
     _hiddenInput!.setAttribute('spellcheck', 'false');
     _hiddenInput!.setAttribute('autocomplete', 'off');
 
-    // Wire up input event handler
     _inputListener = (html.Event event) {
       _handleInput(event);
     };
     _hiddenInput!.addEventListener('input', _inputListener);
 
-    // Wire up keydown event handler
     _keyDownListener = (html.Event event) {
       if (event is html.KeyboardEvent) {
         _handleKeyDown(event);
@@ -63,20 +61,10 @@ class MobileKeyboardBridgeImpl {
     final value = _hiddenInput!.value;
     if (value == null || value.isEmpty) return;
 
-    // Forward each character to the editor
-    // This will be handled by the existing insertion API
-    // The editor state will receive these through the normal Flutter pipeline
-    // since we're not directly manipulating the document here
-    
-    // Clear the textarea for next input
     _hiddenInput!.value = '';
   }
 
   void _handleKeyDown(html.KeyboardEvent event) {
-    // Let all key events pass through to Flutter's HardwareKeyboard
-    // Flutter will handle navigation keys (arrows, backspace, delete, enter)
-    // and shortcuts (Ctrl+B, Ctrl+Z, etc.) correctly
-    // We don't call preventDefault to avoid blocking keyboard functionality
   }
 
   void dispose() {

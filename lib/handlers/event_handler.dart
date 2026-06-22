@@ -24,8 +24,6 @@ import 'package:fluent_editor/renderers/render_paragraph.dart';
 import 'package:fluent_editor/styles.dart';
 import 'package:fluent_editor/utils/cursor_utils.dart';
 import 'package:fluent_editor/utils/cursor_navigation.dart';
-import 'package:fluent_editor/widgets/editor/fluent_link_dialog.dart';
-import 'package:fluent_editor/widgets/dialogs/image_insert_dialog.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'handle_insert_character.dart';
@@ -38,30 +36,20 @@ class EventHandler {
 
   late FluentDocument document;
 
-  // ─── Manual repeat handling for arrow keys (Linux workaround) ─────
-  //
-  // See arrow_key_repeater.dart for details. On non-Linux platforms
-  // this is inert and native KeyRepeatEvent is handled normally.
-
   late final ArrowKeyRepeater _arrowRepeater = ArrowKeyRepeater(
     (event) => handleKeyDown(event, document),
   );
 
-  // Move cursor to tap position (simple tap, collapse selection)
   void onTapDown(TapDownDetails details, BuildContext context, Widget widget) {
     final localOffset = resolvePositionGestureDetails(details, context, widget);
     if (localOffset != null) {
       document.cursor.moveTo(localOffset.id, localOffset.offset);
-      // Collapse global selection
       document.selectionManager.collapse();
       document.syncPendingFontWithCursor();
-      // Tap does NOT mutate content: use cursor-only update to avoid
-      // invalidating caches and committing an empty undo delta.
       document.cursorOnlyUpdate();
     }
   }
 
-  // Version with pre-calculated position (uses coordinates relative to RenderBox)
   void onTapDownWithPosition(
     Offset localPosition,
     RenderBox renderBox,
@@ -71,15 +59,12 @@ class EventHandler {
     final fragmentResult = paragraph.getFragmentAtPosition(localPosition);
     if (fragmentResult != null) {
       document.cursor.moveTo(fragmentResult.fragmentId, fragmentResult.localOffset);
-      // Collapse global selection
       document.selectionManager.collapse();
       document.syncPendingFontWithCursor();
-      // Tap does NOT mutate content: use cursor-only update.
       document.cursorOnlyUpdate();
     }
   }
 
-  // Double-tap to select word
   void onDoubleTapWithPosition(
     Offset localPosition,
     RenderBox renderBox,
@@ -93,37 +78,27 @@ class EventHandler {
         final text = node.text;
         final offset = fragmentResult.localOffset;
 
-        // Find word boundaries
         int start = offset;
         int end = offset;
 
-        // Find start of word
         while (start > 0 && _isWordChar(text[start - 1])) {
           start--;
         }
 
-        // Find end of word
         while (end < text.length && _isWordChar(text[end])) {
           end++;
         }
 
-        // Set selection to the word
         document.cursor.moveTo(node.id, start);
         document.cursor.focusTo(node.id, end);
 
-        // Sync SelectionManager to show visual selection
         _syncSelectionManager(document);
 
-        // Double-tap does NOT mutate content: cursor-only update.
         document.cursorOnlyUpdate();
       }
     }
   }
 
-  // Triple-tap to select the entire logical line.
-  // Uses RenderFluentParagraph.getLineBoundsAtOffset which performs
-  // an O(log n) TextPainter lookup instead of building all logical
-  // lines of the document (O(n_documento)).
   void onTripleTapWithPosition(
     Offset localPosition,
     RenderBox renderBox,
@@ -138,7 +113,6 @@ class EventHandler {
 
     _syncSelectionManager(document);
     document.syncPendingFontWithCursor();
-    // Triple-tap does NOT mutate content: cursor-only update.
     document.cursorOnlyUpdate();
   }
 
@@ -157,7 +131,6 @@ class EventHandler {
     final cursor = document.cursor;
 
     if (cursor.isCollapsed) {
-      // No selection: collapse
       document.selectionManager.collapse();
       return;
     }
@@ -170,14 +143,12 @@ class EventHandler {
       return;
     }
 
-    // Start selection with anchor
     document.selectionManager.startSelection(
       anchorNodeId,
       cursor.anchorId,
       cursor.anchorOffset,
     );
 
-    // Update focus
     document.selectionManager.updateFocus(
       focusNodeId,
       cursor.focusId,
@@ -205,7 +176,6 @@ class EventHandler {
       'src': 'https://picsum.photos/200/300',
     };
 
-    // Save state before node insertion
     document.saveState(description: 'Insert $nodeType', forceNewAction: true);
     handleInsertNodeExceution(nodeType, document, options);
   }
@@ -223,9 +193,6 @@ class EventHandler {
       }
       if (event is KeyRepeatEvent) {
         updateModifiers(event);
-        // On Linux, arrow key native autorepeat is ignored: repetition is
-        // driven manually by ArrowKeyRepeater instead, to work around
-        // missing repaint during OS-level key autorepeat.
         if (_arrowRepeater.isActive && _arrowRepeater.supportsRepeat(event.logicalKey)) {
           return;
         }
@@ -261,7 +228,6 @@ class EventHandler {
     if (event.character != null && event.character!.isNotEmpty) {
       final character = event.character!;
 
-      // Save state before modification
       document.saveState(description: 'Type character: $character');
 
       if (document.cursor.isCollapsed) {
@@ -276,7 +242,6 @@ class EventHandler {
 
   bool handleEnterKey(KeyEvent event) {
     if (event.logicalKey == LogicalKeyboardKey.enter) {
-      // Save state before enter
       document.saveState(description: 'Enter', forceNewAction: true);
       executeHandleEnter(document);
       return true;
@@ -286,11 +251,7 @@ class EventHandler {
 
   bool handleBackspaceKey(KeyEvent event) {
     if (event.logicalKey == LogicalKeyboardKey.backspace) {
-      // Save state before deletion
       document.saveState(description: 'Delete', forceNewAction: true);
-      // On macOS Cmd+Backspace deletes to beginning of line; physical
-      // Ctrl+Backspace deletes word. The meta/ctrl keys are swapped in
-      // updateModifiers on macOS, so isCtrlPressed here means Cmd.
       final isApple = !kIsWeb && (Platform.isMacOS || Platform.isIOS);
       final lineStart = isApple && isCtrlPressed;
       final wordDelete = isApple ? isMetaPressed : isCtrlPressed;
@@ -302,7 +263,6 @@ class EventHandler {
 
   bool handleDeleteKey(KeyEvent event) {
     if (event.logicalKey == LogicalKeyboardKey.delete) {
-      // Save state before deletion
       document.saveState(description: 'Delete', forceNewAction: true);
       executeHandleDelete(document, ctrl: isCtrlPressed);
       return true;
@@ -328,7 +288,6 @@ class EventHandler {
           document.selectionManager.collapse();
         }
         document.syncPendingFontWithCursor();
-        // Home/End do NOT mutate content: cursor-only update.
         document.cursorOnlyUpdate();
       }
       return true;
@@ -461,7 +420,6 @@ class EventHandler {
       return true;
     }
     if (key == LogicalKeyboardKey.keyV) {
-      // Save state before paste
       document.saveState(description: 'Paste', forceNewAction: true);
       if (isShiftPressed) {
         executeHandlePastePlain(document);
@@ -471,23 +429,19 @@ class EventHandler {
       return true;
     }
     if (key == LogicalKeyboardKey.keyX) {
-      // Save state before cut
       document.saveState(description: 'Cut', forceNewAction: true);
       executeHandleCut(document);
       return true;
     }
     if (key == LogicalKeyboardKey.keyZ) {
       if (isShiftPressed) {
-        // Handle redo (Ctrl+Shift+Z)
         document.redo();
         return true;
       } else {
-        // Handle undo (Ctrl+Z)
         document.undo();
         return true;
       }
     }
-    // Formatting shortcuts
     if (key == LogicalKeyboardKey.keyB) {
       document.saveState(description: 'Bold', forceNewAction: true);
       handleBold();
@@ -603,35 +557,6 @@ class EventHandler {
   bool handleClearFormatting() {
     executeHandleClearFormatting(document);
     return true;
-  }
-
-  /// Shows the dialog to insert a link and inserts it if confirmed.
-  void handleInsertLink(BuildContext context) async {
-    final result = await showFluentLinkDialog(context, labels: document.labels);
-    if (result != null) {
-      final url = result['url']!;
-      final text = result['text']!;
-      document.saveState(description: 'Insert link', forceNewAction: true);
-      handleInsertNodeExceution(
-        'link',
-        document,
-        {'url': url, 'text': text},
-      );
-    }
-  }
-
-  /// Shows the dialog to insert an image and inserts it if confirmed.
-  void handleInsertImage(BuildContext context) async {
-    final result = await showImageInsertDialog(context, labels: document.labels);
-    if (result != null) {
-      final src = result['src']!;
-      document.saveState(description: 'Insert image', forceNewAction: true);
-      handleInsertNodeExceution(
-        'image',
-        document,
-        {'src': src},
-      );
-    }
   }
 
   /// Applies a paragraph style to the current paragraph or selection.

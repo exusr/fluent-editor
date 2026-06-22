@@ -25,10 +25,6 @@ bool executeHandleSuperscript(FluentDocument document) =>
 bool executeHandleSubscript(FluentDocument document) =>
     _executeHandleExclusiveStyle(document, 'subscript', 'superscript');
 
-// ───────────────────────────────────────────────────────────────────
-// Core
-// ───────────────────────────────────────────────────────────────────
-
 bool _executeHandleStyle(FluentDocument document, String styleName) {
   final root = document.content;
   final cursor = document.cursor;
@@ -47,7 +43,6 @@ bool _executeHandleStyle(FluentDocument document, String styleName) {
     return _applyStyleToSelection(document, selection, styleName);
   }
 
-  // Collapsed cursor: toggle pending style
   if (cursor.isCollapsed) {
     final styles = document.pendingStyles;
     if (styles.contains(styleName)) {
@@ -79,8 +74,6 @@ bool _executeHandleExclusiveStyle(FluentDocument document, String styleName, Str
   );
 
   if (selection != null) {
-    // Remove the opposite style from all leaf fragments in the container
-    // before the split, so new fragments won't inherit it.
     for (final node in selection.nodes) {
       final leafs = FragmentOperations.collectLeafFragments(node.container as FNode);
       for (final f in leafs) {
@@ -88,21 +81,16 @@ bool _executeHandleExclusiveStyle(FluentDocument document, String styleName, Str
         if (s.contains(excludeStyle)) {
           f.styles = s.where((x) => x != excludeStyle).toList();
         }
-        // If the fragment already has styleName, remove it so the toggle will re-add it
-        // (this avoids the toggle removing it when we want to switch)
       }
     }
-    // Now apply/remove the requested style (standard toggle)
     return _applyStyleToSelection(document, selection, styleName);
   }
 
-  // Collapsed cursor: toggle pending style
   if (cursor.isCollapsed) {
     final styles = document.pendingStyles;
     if (styles.contains(styleName)) {
       document.pendingStyles = styles.where((s) => s != styleName).toList();
     } else {
-      // Remove the opposite style and add the new one
       document.pendingStyles = [...styles.where((s) => s != excludeStyle), styleName];
     }
     document.updateContent();
@@ -121,7 +109,6 @@ void _toggleStyle(Fragment f, String styleName) {
   }
 }
 
-
 /// Apply/remove an inline style to fragments affected by the selection.
 bool _applyStyleToSelection(FluentDocument document, ResolvedSelection selection, String styleName) {
   final root = document.content;
@@ -130,19 +117,15 @@ bool _applyStyleToSelection(FluentDocument document, ResolvedSelection selection
   for (final node in selection.nodes) {
     final container = node.container;
 
-    // ── 1st pass: split at edges in the actual parent ───────────
     final startParent = findParent(root, node.startFragment);
     final endParent   = findParent(root, node.endFragment);
 
-    // References to selected fragments (change after splits)
     late Fragment actualStartFrag;
     late Fragment actualEndFrag;
 
-    // Single fragment
     if (node.startFragment.id == node.endFragment.id) {
       final frag = node.startFragment;
       if (node.startOffset > 0 && node.endOffset < frag.text.length) {
-        // Split in three: [before][mid][after]
         final before = frag.text.substring(0, node.startOffset);
         final mid    = frag.text.substring(node.startOffset, node.endOffset);
         final after  = frag.text.substring(node.endOffset);
@@ -156,7 +139,6 @@ bool _applyStyleToSelection(FluentDocument document, ResolvedSelection selection
         actualStartFrag = midFrag;
         actualEndFrag   = midFrag;
       } else if (node.startOffset > 0) {
-        // Split at start: [before][selected]
         final before = frag.text.substring(0, node.startOffset);
         final after  = frag.text.substring(node.startOffset);
         frag.text = before;
@@ -165,7 +147,6 @@ bool _applyStyleToSelection(FluentDocument document, ResolvedSelection selection
         actualStartFrag = newFrag;
         actualEndFrag   = newFrag;
       } else if (node.endOffset < frag.text.length) {
-        // Split at end: [selected][after]
         final selected = frag.text.substring(0, node.endOffset);
         final after    = frag.text.substring(node.endOffset);
         frag.text = selected;
@@ -174,12 +155,10 @@ bool _applyStyleToSelection(FluentDocument document, ResolvedSelection selection
         actualStartFrag = frag;
         actualEndFrag   = frag;
       } else {
-        // Entire fragment is selected, no split
         actualStartFrag = frag;
         actualEndFrag   = frag;
       }
     } else {
-      // First fragment: split at start
       final first = node.startFragment;
       if (node.startOffset > 0 && node.startOffset < first.text.length) {
         final before = first.text.substring(0, node.startOffset);
@@ -192,7 +171,6 @@ bool _applyStyleToSelection(FluentDocument document, ResolvedSelection selection
         actualStartFrag = first;
       }
 
-      // Last fragment: split at end
       final last = node.endFragment;
       if (node.endOffset > 0 && node.endOffset < last.text.length) {
         final selected = last.text.substring(0, node.endOffset);
@@ -206,7 +184,6 @@ bool _applyStyleToSelection(FluentDocument document, ResolvedSelection selection
       }
     }
 
-    // ── 2nd pass: toggle style on leaf fragments in range ────
     final leaves = FragmentOperations.collectLeafFragments(container as FNode);
     bool inRange = false;
     Fragment? firstToggled;
@@ -221,7 +198,6 @@ bool _applyStyleToSelection(FluentDocument document, ResolvedSelection selection
       if (leaf.id == actualEndFrag.id) inRange = false;
     }
 
-    // Preserve selection: anchor at start, focus at end
     if (firstToggled != null && lastToggled != null) {
       cursor.anchorId = firstToggled.id;
       cursor.anchorOffset = 0;
@@ -233,7 +209,6 @@ bool _applyStyleToSelection(FluentDocument document, ResolvedSelection selection
   document.syncPendingFontWithCursor();
   document.updateContent();
 
-  // Keep SelectionManager in sync after cursor is repositioned
   _syncSelectionManager(document);
 
   return true;

@@ -16,21 +16,16 @@ class _ListLevel {
 
 /// Service for importing DOCX into FluentEditor nodes.
 class ImportDocxService {
-  // Relationship map: rId → URL (populated from word/_rels/document.xml.rels)
   final Map<String, String> _relationships = {};
 
-  // Reference to the decoded ZIP archive (needed to read embedded images)
   Archive? _archive;
 
-  // Numbering map: numId → abstractNumId → listType ('ordered' | 'unordered')
-  // Built from word/numbering.xml
   final Map<String, String> _numIdToType = {};
 
   Root importFromDocx(List<int> bytes) {
     final archive = ZipDecoder().decodeBytes(bytes);
     _archive = archive;
 
-    // --- FIX Bug 1: parse relationships for hyperlink URL resolution ---
     final relsFile = archive.files
         .where((f) => f.name == 'word/_rels/document.xml.rels')
         .firstOrNull;
@@ -38,7 +33,6 @@ class ImportDocxService {
       _parseRelationships(utf8.decode(relsFile.content as Uint8List));
     }
 
-    // --- FIX Bug 3: parse numbering.xml for list type detection ---
     final numberingFile = archive.files
         .where((f) => f.name == 'word/numbering.xml')
         .firstOrNull;
@@ -60,10 +54,6 @@ class ImportDocxService {
     return Root(nodes: nodes.isEmpty ? [Paragraph(text: '')] : nodes);
   }
 
-  // ---------------------------------------------------------------------------
-  // Relationships parsing (word/_rels/document.xml.rels)
-  // ---------------------------------------------------------------------------
-
   void _parseRelationships(String xml) {
     try {
       final doc = XmlDocument.parse(xml);
@@ -77,19 +67,13 @@ class ImportDocxService {
     } catch (_) {}
   }
 
-  // ---------------------------------------------------------------------------
-  // Numbering parsing (word/numbering.xml)
-  // ---------------------------------------------------------------------------
-
   void _parseNumbering(String xml) {
     try {
       final doc = XmlDocument.parse(xml);
 
-      // abstractNum: abstractNumId → listType
       final abstractNumMap = <String, String>{};
       for (final an in doc.findAllElements('w:abstractNum')) {
         final abstractNumId = an.getAttribute('w:abstractNumId') ?? '';
-        // Check numFmt of level 0
         final lvl = an.findElements('w:lvl').firstOrNull;
         final numFmt = lvl?.findElements('w:numFmt').firstOrNull
             ?.getAttribute('w:val');
@@ -101,7 +85,6 @@ class ImportDocxService {
         abstractNumMap[abstractNumId] = listType;
       }
 
-      // num: numId → abstractNumId → listType
       for (final num in doc.findAllElements('w:num')) {
         final numId = num.getAttribute('w:numId') ?? '';
         final abstractNumId = num
@@ -116,19 +99,12 @@ class ImportDocxService {
   String _listTypeForNumId(String numId) =>
       _numIdToType[numId] ?? 'unordered';
 
-  // ---------------------------------------------------------------------------
-  // Node building
-  // ---------------------------------------------------------------------------
-
   List<FNode> _elementsToNodes(Iterable<XmlNode> nodes) {
     final result = <FNode>[];
     final paragraphBuffer = <XmlElement>[];
 
     void flushBuffer() {
       if (paragraphBuffer.isEmpty) return;
-      // Always route through _buildLists: it handles mixed list/non-list
-      // paragraphs correctly (groups consecutive same-numId runs into
-      // FluentList nodes and emits plain Paragraph for the rest).
       result.addAll(_buildLists(paragraphBuffer));
       paragraphBuffer.clear();
     }
@@ -137,7 +113,6 @@ class ImportDocxService {
       if (node is XmlElement) {
         switch (node.name.local) {
           case 'p':
-            // FIX Bug 7: skip w:sectPr-only paragraphs
             if (_isSectPrOnly(node)) continue;
             paragraphBuffer.add(node);
           case 'tbl':
@@ -163,7 +138,6 @@ class ImportDocxService {
   /// FluentList tree, respecting ilvl depth via a stack.
   List<FNode> _buildLists(List<XmlElement> paragraphs) {
     final result = <FNode>[];
-    // Stack of active list levels; levelStack[0] is always the root list.
     final levelStack = <_ListLevel>[];
     String? currentNumId;
 
@@ -192,7 +166,6 @@ class ImportDocxService {
         continue;
       }
 
-      // New distinct list (different numId) — flush current tree.
       if (numId != currentNumId) {
         flushStack();
         currentNumId = numId;
@@ -200,16 +173,13 @@ class ImportDocxService {
 
       final listType = _listTypeForNumId(numId);
 
-      // Pop levels that are deeper than the current ilvl.
       while (levelStack.isNotEmpty && levelStack.last.ilvl > ilvl) {
         levelStack.removeLast();
       }
 
-      // If no level matches current ilvl, create a new nested list.
       if (levelStack.isEmpty || levelStack.last.ilvl < ilvl) {
         final newList = FluentList(listType: listType);
         if (levelStack.isNotEmpty) {
-          // Attach to the last item of the parent level.
           final parent = levelStack.last;
           if (parent.lastItem == null) {
             final placeholder = ListItem(
@@ -271,7 +241,6 @@ class ImportDocxService {
       if (ind != null) {
         final leftTwips =
             int.tryParse(ind.getAttribute('w:left') ?? '0') ?? 0;
-        // 720 twips = 1 indent level (standard DOCX indent step)
         indent = (leftTwips / 720).round();
       }
     }
@@ -297,10 +266,8 @@ class ImportDocxService {
           case 'r':
             result.addAll(_runToFragments(child));
           case 'hyperlink':
-            // FIX Bug 2: preserve Link node
             final link = _hyperlink(child);
             if (link != null) result.add(link);
-          // FIX Bug 4: handle inline images
           case 'drawing':
             final image = _drawing(child);
             if (image != null) result.add(image);
@@ -312,7 +279,6 @@ class ImportDocxService {
   }
 
   List<Fragment> _runToFragments(XmlElement el) {
-    // FIX Bug 4: check for drawing inside the run first
     final drawing = el.getElement('w:drawing');
     if (drawing != null) {
       final img = _drawing(drawing);
@@ -327,7 +293,6 @@ class ImportDocxService {
     double fontSize = 14.0;
 
     if (rPr != null) {
-      // FIX Bug 6: respect w:val="0" as explicit off
       if (_isOn(rPr.getElement('w:b'))) styles.add('bold');
       if (_isOn(rPr.getElement('w:i'))) styles.add('italic');
       if (_isOn(rPr.getElement('w:strike'))) styles.add('strikethrough');
@@ -342,7 +307,6 @@ class ImportDocxService {
       final colorEl = rPr.getElement('w:color');
       if (colorEl != null) {
         final raw = colorEl.getAttribute('w:val');
-        // FIX Bug 5: normalize color to #RRGGBB
         if (raw != null && raw != 'auto') {
           color = raw.startsWith('#') ? raw : '#$raw';
         }
@@ -388,12 +352,10 @@ class ImportDocxService {
   bool _isOn(XmlElement? el) {
     if (el == null) return false;
     final val = el.getAttribute('w:val');
-    // w:val="0" or w:val="false" means explicitly OFF
     return val == null || (val != '0' && val.toLowerCase() != 'false');
   }
 
   Link? _hyperlink(XmlElement el) {
-    // FIX Bug 1: resolve rId → actual URL from relationships map
     final rId = el.getAttribute('r:id');
     final url = (rId != null ? _relationships[rId] : null) ??
         el.getAttribute('w:anchor') ?? '';
@@ -406,28 +368,20 @@ class ImportDocxService {
     }
     if (fragments.isEmpty) return null;
     final text = fragments.map((f) => f.text).join();
-    // FIX Bug 2: return Link node directly (not flattened)
     return Link(url: url, text: text)..fragments = fragments;
   }
 
-  // ---------------------------------------------------------------------------
-  // FIX Bug 4: Image extraction from w:drawing
-  // ---------------------------------------------------------------------------
-
   FluentImage? _drawing(XmlElement drawing) {
-    // Inline: wp:inline > a:graphic > a:graphicData > pic:pic > pic:blipFill > a:blip r:embed
     try {
       final inline = drawing.findAllElements('wp:inline').firstOrNull ??
           drawing.findAllElements('wp:anchor').firstOrNull;
       if (inline == null) return null;
 
-      // Dimensions from wp:extent
       final extent = inline.findElements('wp:extent').firstOrNull;
       double? width, height;
       if (extent != null) {
         final cx = int.tryParse(extent.getAttribute('cx') ?? '');
         final cy = int.tryParse(extent.getAttribute('cy') ?? '');
-        // EMUs: 914400 per inch, 72 pt/inch → pt = emu / 12700
         if (cx != null) width = cx / 12700;
         if (cy != null) height = cy / 12700;
       }
@@ -441,7 +395,6 @@ class ImportDocxService {
       if (!src.startsWith('http://') &&
           !src.startsWith('https://') &&
           !src.startsWith('data:')) {
-        // Resolve relative path inside the DOCX archive
         final candidates = [src, 'word/$src'];
         final file = _archive?.files
             .where((f) => candidates.contains(f.name))
@@ -471,10 +424,6 @@ class ImportDocxService {
     }
   }
 
-  // ---------------------------------------------------------------------------
-  // Table
-  // ---------------------------------------------------------------------------
-
   FluentTable _table(XmlElement el) {
     final rows = <FluentRow>[];
     for (final child in el.children) {
@@ -500,7 +449,6 @@ class ImportDocxService {
     final colSpan = int.tryParse(
             tcPr?.getElement('w:gridSpan')?.getAttribute('w:val') ?? '1') ??
         1;
-    // rowSpan via vMerge: 'restart' = first cell, absent val = continuation
     int rowSpan = 1;
     final vMerge = tcPr?.getElement('w:vMerge');
     if (vMerge != null) {

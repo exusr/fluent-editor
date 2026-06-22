@@ -1,7 +1,3 @@
-// render_paragraph.dart
-// Single TextPainter for the entire paragraph
-// with tracking of fragment positions for ID ↔ offset conversion
-
 import 'dart:ui' show Picture, PictureRecorder;
 
 import 'package:fluent_editor/core/paragraph_registry.dart';
@@ -116,7 +112,6 @@ class RenderFluentParagraph extends RenderFluentNode
   String? _selFocusFragmentId;
   int? _selFocusLocalOffset;
 
-  // ─── IME preedit state ──────────────────────────────────────────
   /// Preedit text rendered with a blue dashed underline during composition.
   String _imePreeditText = '';
   String get imePreeditText => _imePreeditText;
@@ -294,10 +289,6 @@ class RenderFluentParagraph extends RenderFluentNode
     }
   }
 
-  // ─── Paint caches ───────────────────────────────────────────────
-  // Cached structures to avoid recomputing expensive TextPainter
-  // queries on every paint (e.g. cursor blink, selection highlight).
-
   List<LineMetrics>? _cachedLineMetrics;
   bool _lineMetricsDirty = true;
 
@@ -336,20 +327,12 @@ class RenderFluentParagraph extends RenderFluentNode
        _imeCompositionColor = imeCompositionColor,
        super(node: container as FNode);
 
-  // ─── System fonts changed (web CanvasKit fallback loading) ────────
-  // CanvasKit loads browser fallback fonts asynchronously. When a CJK
-  // character is first shaped, the font may not be ready yet, producing
-  // tofu glyphs. Once the font loads, PaintingBinding fires the systemFonts
-  // notification. We register/unregister in attach/detach so only live
-  // render objects get notified.
   void _handleSystemFontsChanged() {
     _painter.markNeedsLayout();
     _cachedTextPicture?.dispose();
     _cachedTextPicture = null;
     markNeedsLayout();
   }
-
-  // ─── Lifecycle: automatic registration ──────────────────────────
 
   @override
   void attach(PipelineOwner owner) {
@@ -365,17 +348,12 @@ class RenderFluentParagraph extends RenderFluentNode
     super.detach();
   }
 
-  // ─── Helper for properties with fallback from style ────────────────
-
   /// Returns the effective font family for a fragment,
   /// using the paragraph style as fallback.
   String _getEffectiveFontFamily(Fragment fragment) {
-    // Always use the fragment's font family to respect user's font changes
-    // The paragraph style should only be used as a fallback, not as an override
     if (fragment.fontFamily.isNotEmpty) {
       return fragment.fontFamily;
     }
-    // Fallback to paragraph style if fragment has no font
     if (_paragraphStyle?.fontFamily != null) {
       return _paragraphStyle!.fontFamily!;
     }
@@ -385,8 +363,6 @@ class RenderFluentParagraph extends RenderFluentNode
   /// Returns the effective font size for a fragment,
   /// using the paragraph style as fallback.
   double _getEffectiveFontSize(Fragment fragment) {
-    // If the style is applied and the fragment has the default size,
-    // use the style size
     if (_paragraphStyle?.fontSize != null &&
         fragment.fontSize == 14.0) {
       return _paragraphStyle!.fontSize!;
@@ -397,16 +373,12 @@ class RenderFluentParagraph extends RenderFluentNode
   /// Returns the effective inline styles for a fragment,
   /// using the paragraph style as base.
   List<String> _getEffectiveStyles(Fragment fragment) {
-    // If the style has defined styles and the fragment is empty,
-    // use the style styles
     if (_paragraphStyle?.styles != null &&
         (fragment.styles == null || fragment.styles!.isEmpty)) {
       return _paragraphStyle!.styles!;
     }
     return fragment.styles ?? [];
   }
-
-  // ─── Public API for the resolver ─────────────────────────────────
 
   /// Offset X that shifts the text for alignment (center/right).
   /// When shrinkWrap is true, alignment is managed by the parent.
@@ -426,9 +398,6 @@ class RenderFluentParagraph extends RenderFluentNode
     final globalOffset = _localToGlobal(fragmentId, localOffset);
     if (globalOffset == null) return null;
 
-    // Use the character box for precise X (left/right of the real box).
-    // More accurate than getOffsetForCaret which can round or be wrong
-    // near fragment borders or WidgetSpan.
     TextBox? charBox;
     final textLength = _painter.text?.toPlainText().length ?? 0;
     if (globalOffset > 0 && globalOffset <= textLength) {
@@ -449,7 +418,6 @@ class RenderFluentParagraph extends RenderFluentNode
       return localToGlobal(Offset(x + xAlign, 0)).dx;
     }
 
-    // Fallback
     final caretOffset = _painter.getOffsetForCaret(
       TextPosition(offset: globalOffset),
       Rect.zero,
@@ -461,7 +429,6 @@ class RenderFluentParagraph extends RenderFluentNode
     final globalOffset = _localToGlobal(fragmentId, localOffset);
     if (globalOffset == null) return null;
 
-    // 1. Find the character box at the caret to identify the line.
     TextBox? charBox;
     final textLength = _painter.text?.toPlainText().length ?? 0;
     if (globalOffset > 0 && globalOffset <= textLength) {
@@ -477,10 +444,6 @@ class RenderFluentParagraph extends RenderFluentNode
     }
 
     if (charBox != null) {
-      // 2. The baseline of the line is identical for ALL characters on the same
-      // visual line, regardless of font size. Find it with
-      // computeLineMetrics looking for the line whose baseline falls within
-      // the vertical range of the character box.
       if (_lineMetricsDirty || _cachedLineMetrics == null) {
         _cachedLineMetrics = _painter.computeLineMetrics();
         _lineMetricsDirty = false;
@@ -491,18 +454,15 @@ class RenderFluentParagraph extends RenderFluentNode
           return localToGlobal(Offset(0, lm.baseline)).dy;
         }
       }
-      // If not found (fallback), use the center of the box
       return localToGlobal(Offset(0, (charBox.top + charBox.bottom) / 2)).dy;
     }
 
-    // Fallback for empty document
     final caretOffset = _painter.getOffsetForCaret(
       TextPosition(offset: globalOffset),
       Rect.zero,
     );
     return localToGlobal(caretOffset).dy;
   }
-
 
   /// Returns a [Rect] in global screen coordinates representing the caret line
   /// at [fragmentId]/[localOffset]. Used to position the IME candidate window
@@ -560,12 +520,10 @@ class RenderFluentParagraph extends RenderFluentNode
           );
         }
       }
-      // Fallback: use charBox bounds
       final tl = localToGlobal(Offset(charBox.left + _alignmentXOffset, charBox.top));
       return Rect.fromLTWH(tl.dx, tl.dy, 1.0, charBox.bottom - charBox.top);
     }
 
-    // Empty paragraph fallback
     final caretOffset = _painter.getOffsetForCaret(
       TextPosition(offset: globalOffset), Rect.zero);
     final globalPt = localToGlobal(Offset(caretOffset.dx + _alignmentXOffset, caretOffset.dy));
@@ -577,16 +535,12 @@ class RenderFluentParagraph extends RenderFluentNode
   bool containsFragment(String fragmentId) =>
       _fragmentPositions.any((p) => p.id == fragmentId);
 
-  // ─── Layout ───────────────────────────────────────────────────────
-
   @override
   void performLayout() {
     _fragmentPositions.clear();
     _placeholderDimensions.clear();
     _scriptSpans.clear();
 
-    // 1. Pre-layout of children (inline images): need real sizes
-    //    to set PlaceholderDimensions of TextPainter.
     final childSizes = <Size>[];
     var child = firstChild;
     var placeholderIdx = 0;
@@ -596,7 +550,6 @@ class RenderFluentParagraph extends RenderFluentNode
         parentUsesSize: true,
       );
       
-      // Apply stretch logic to inline images
       var childSize = child.size;
       final inlineImages = collectInlineImages(_container);
       if (placeholderIdx < inlineImages.length) {
@@ -604,7 +557,6 @@ class RenderFluentParagraph extends RenderFluentNode
         final originalWidth = image.width ?? 300.0;
         final availableWidth = constraints.maxWidth;
         
-        // Apply stretch logic
         if (originalWidth > availableWidth && availableWidth > 0 && availableWidth != double.infinity) {
           final aspectRatio = (image.height ?? 300.0) / originalWidth;
           childSize = Size(availableWidth, availableWidth * aspectRatio);
@@ -616,8 +568,6 @@ class RenderFluentParagraph extends RenderFluentNode
       placeholderIdx++;
     }
 
-    // 2. Build the TextSpan and populate _placeholderDimensions using the
-    //    size of children (index 1:1 with visitation order).
     final textSpan = _buildTextSpanAndTrackPositions(_container, childSizes);
 
     _painter.textAlign = textAlign;
@@ -628,7 +578,6 @@ class RenderFluentParagraph extends RenderFluentNode
     _painter.layout(maxWidth: constraints.maxWidth);
     _layoutMaxWidth = constraints.maxWidth;
 
-    // Any layout change invalidates line-metrics and box caches.
     _lineMetricsDirty = true;
     _cachedSelectionBoxes = null;
     _cachedSpellBoxes = null;
@@ -636,7 +585,6 @@ class RenderFluentParagraph extends RenderFluentNode
     _cachedTextPicture?.dispose();
     _cachedTextPicture = null;
 
-    // 3. Position children at offsets calculated by TextPainter.
     final placeholderBoxes = _painter.inlinePlaceholderBoxes ?? const [];
     child = firstChild;
     var i = 0;
@@ -649,8 +597,6 @@ class RenderFluentParagraph extends RenderFluentNode
     }
 
     final width = _shrinkWrap ? _painter.width : constraints.maxWidth;
-    // Ensure empty paragraphs have at least one line of height so they
-    // remain clickable (e.g. empty table cells with a single empty fragment).
     final height = _painter.height > 0
         ? _painter.height
         : _painter.preferredLineHeight;
@@ -712,7 +658,6 @@ class RenderFluentParagraph extends RenderFluentNode
     void processNode(FNode node, TextStyle? style) {
       switch (node) {
         case FluentList _:
-          // Sublists: rendered separately, do not contribute to text
           break;
 
         case Link link:
@@ -721,18 +666,13 @@ class RenderFluentParagraph extends RenderFluentNode
             decoration: TextDecoration.underline,
             decorationColor: _linkColor,
           );
-          // Check if link contains images - if so, don't add gesture recognizer to allow image gestures
           final hasImages = link.getChildren().any((child) => child is FluentImage);
           
-          // ignore: avoid_print
           void onLinkTap() => print('Link tapped: ${link.url}');
           final recognizer = hasImages ? null : (TapGestureRecognizer()..onTap = onLinkTap);
 
           for (final child in link.getChildren()) {
             if (child is FluentImage) {
-              // Image inside a Link: WidgetSpan placeholder that occupies 1
-              // char (the ZWS) to align with the caret stops rail. The real
-              // drawing happens via the RenderBox children of the paragraph.
               final start = currentOffset;
               final end = currentOffset + child.text.length; // ZWS = 1
               _fragmentPositions.add(
@@ -798,22 +738,18 @@ class RenderFluentParagraph extends RenderFluentNode
                 backgroundColor: ColorUtils.parseColor(child.highlightColor),
               );
               
-              // Handle superscript/subscript: insert transparent text for space, paint with offset later
               if (childStyles != null && (childStyles.contains('superscript') || childStyles.contains('subscript'))) {
                 final fontSize = effectiveStyle.fontSize ?? 14;
                 final isSuperscript = childStyles.contains('superscript');
-                // Ensure the style has a color (inherit from defaultTextColor if child.color is null)
                 final scriptColor = effectiveStyle.color ?? defaultTextColor;
                 final adjustedStyle = effectiveStyle.copyWith(
                   fontSize: fontSize * 0.65,
                   color: scriptColor,
                 );
-                // Insert transparent text so it occupies the right space
                 final transparentStyle = adjustedStyle.copyWith(color: const Color(0x00000000));
                 spans.add(
                   TextSpan(text: text, style: transparentStyle, recognizer: recognizer),
                 );
-                // Track for custom paint
                 _scriptSpans.add(_ScriptSpanInfo(
                   globalStart: start,
                   globalEnd: end,
@@ -897,7 +833,6 @@ class RenderFluentParagraph extends RenderFluentNode
             }
           }
           final fontFamily = _getEffectiveFontFamily(fragment);
-          // Use fontFamily directly - fonts are bundled locally in assets/google_fonts/
           effectiveStyle = (effectiveStyle ?? const TextStyle()).copyWith(
             fontFamily: fontFamily,
             fontSize: _getEffectiveFontSize(fragment),
@@ -905,8 +840,6 @@ class RenderFluentParagraph extends RenderFluentNode
             backgroundColor: ColorUtils.parseColor(fragment.highlightColor),
           );
 
-          // If underline or strikethrough is present but no explicit decoration color
-          // is set, make the decoration inherit the text color.
           if (effectiveStyle.decoration != null &&
               effectiveStyle.decoration != TextDecoration.none &&
               effectiveStyle.decorationColor == null) {
@@ -915,15 +848,12 @@ class RenderFluentParagraph extends RenderFluentNode
             );
           }
 
-          // Handle superscript/subscript: insert transparent text for space, paint with offset later
           if (styles.contains('superscript') || styles.contains('subscript')) {
             final fontSize = effectiveStyle.fontSize ?? 14;
             final isSuperscript = styles.contains('superscript');
             final adjustedStyle = effectiveStyle.copyWith(fontSize: fontSize * 0.65);
-            // Insert transparent text so it occupies the right space
             final transparentStyle = adjustedStyle.copyWith(color: const Color(0x00000000));
             spans.add(TextSpan(text: text, style: transparentStyle));
-            // Track for custom paint
             _scriptSpans.add(_ScriptSpanInfo(
               globalStart: start,
               globalEnd: end,
@@ -956,8 +886,6 @@ class RenderFluentParagraph extends RenderFluentNode
     );
   }
 
-  // ─── Local ↔ global conversions ─────────────────────────────────
-
   int? _localToGlobal(String fragmentId, int localOffset) {
     for (final pos in _fragmentPositions) {
       if (pos.id == fragmentId) {
@@ -976,7 +904,6 @@ class RenderFluentParagraph extends RenderFluentNode
       }
     }
 
-    // If the offset is beyond the last fragment, return the end of the last
     if (_fragmentPositions.isNotEmpty) {
       final lastPos = _fragmentPositions.last;
       final totalLength = _getTotalTextLength();
@@ -1002,28 +929,15 @@ class RenderFluentParagraph extends RenderFluentNode
     );
   }
 
-  // ─── Hit testing (tap/click) ──────────────────────────────────────
-
   ({String fragmentId, int localOffset})? getFragmentAtPosition(
     Offset position,
   ) {
-    // The TextPainter works in coordinates relative to the text (x=0).
-    // Subtract the alignment offset to map the local position
-    // of the render object to TextPainter coordinates.
     final adjustedPosition = position - Offset(_alignmentXOffset, 0);
 
-    // FAST PATH: TextPainter.getPositionForOffset does a binary search
-    // internally (O(log n)) and returns the closest text position. This
-    // replaces the O(n) character-by-character loop that called
-    // getBoxesForSelection once per character — a major bottleneck during
-    // drag selection on long paragraphs (1000+ characters).
     final textPosition = _painter.getPositionForOffset(adjustedPosition);
     final result = _globalToLocal(textPosition.offset);
     if (result != null) return result;
 
-    // FALLBACK: if getPositionForOffset returns an offset that does not
-    // map to any fragment (should be rare), use line metrics to find the
-    // nearest character on the target line.
     if (_lineMetricsDirty || _cachedLineMetrics == null) {
       _cachedLineMetrics = _painter.computeLineMetrics();
       _lineMetricsDirty = false;
@@ -1101,8 +1015,6 @@ class RenderFluentParagraph extends RenderFluentNode
       return (fragmentId: bestFragmentId, localOffset: bestLocalOffset);
     }
 
-    // Fallback for empty paragraphs (e.g. empty table cells): return the
-    // first fragment at offset 0 so taps still place the cursor.
     if (_fragmentPositions.isNotEmpty) {
       return (fragmentId: _fragmentPositions.first.id, localOffset: 0);
     }
@@ -1133,8 +1045,6 @@ class RenderFluentParagraph extends RenderFluentNode
     );
   }
 
-  // ─── Cursor / Selection setters ───────────────────────────────────
-
   void setCursorOffsets(
     String anchorFragmentId,
     int anchorLocal,
@@ -1154,9 +1064,6 @@ class RenderFluentParagraph extends RenderFluentNode
     String? focusFragmentId,
     int? focusLocalOffset,
   ) {
-    // Skip repaint when the range is identical — crucial during key-hold
-    // where _syncSelectionManager touches every visible paragraph but
-    // only a few actually changed.
     if (_selAnchorFragmentId == anchorFragmentId &&
         _selAnchorLocalOffset == anchorLocalOffset &&
         _selFocusFragmentId == focusFragmentId &&
@@ -1171,8 +1078,6 @@ class RenderFluentParagraph extends RenderFluentNode
     markNeedsPaint();
   }
 
-  // ─── Paint ────────────────────────────────────────────────────────
-
   @override
   void paint(PaintingContext context, Offset offset) {
     final xOffset = _shrinkWrap
@@ -1184,27 +1089,19 @@ class RenderFluentParagraph extends RenderFluentNode
           };
     final alignedOffset = offset + Offset(xOffset, 0);
 
-    // Build the static text Picture on first paint after layout.
     _cachedTextPicture ??= _buildTextPicture(alignedOffset);
 
-    // 1. Selection "under" the text (classic look)
     _paintSelection(context.canvas, alignedOffset);
-    // 1.5 Comment highlights (under the text)
     _paintCommentHighlights(context.canvas, alignedOffset);
-    // 2. Text (cached Picture — avoids re-executing Skia text rasterisation)
     context.canvas.drawPicture(_cachedTextPicture!);
-    // 3. Inline images (RenderBox children) above placeholders
     var child = firstChild;
     while (child != null) {
       final parentData = child.parentData as FluentInlineParentData;
       context.paintChild(child, alignedOffset + parentData.offset);
       child = parentData.nextSibling;
     }
-    // 4. Selection overlay above images
     _paintSelectionOverlayOnImages(context.canvas, alignedOffset);
-    // 5. Spell check wavy underline
     _paintSpellErrors(context.canvas, alignedOffset);
-    // 6. Cursor on top of everything
     _paintCursor(context.canvas, alignedOffset);
   }
 
@@ -1289,7 +1186,6 @@ class RenderFluentParagraph extends RenderFluentNode
   /// Paints superscript/subscript fragments with vertical offset.
   void _paintScriptSpans(Canvas canvas, Offset offset) {
     for (final info in _scriptSpans) {
-      // Find the position of the first character of the span in TextPainter
       final boxes = _painter.getBoxesForSelection(
         TextSelection(baseOffset: info.globalStart, extentOffset: info.globalEnd),
       );
@@ -1297,10 +1193,8 @@ class RenderFluentParagraph extends RenderFluentNode
 
       final box = boxes.first;
       final fontSize = info.style.fontSize ?? 14;
-      // Superscript: shift up; Subscript: shift down
       final yShift = info.isSuperscript ? -(fontSize * 0.45) : (fontSize * 0.25);
       
-      // Ensure the style has a color
       final scriptColor = info.style.color ?? defaultTextColor;
       final scriptStyle = info.style.copyWith(color: scriptColor);
       
@@ -1404,18 +1298,15 @@ class RenderFluentParagraph extends RenderFluentNode
     final placeholderBoxes = _painter.inlinePlaceholderBoxes ?? const [];
     final inlineImages = collectInlineImages(_container);
 
-    // The order of placeholderBoxes matches that of inlineImages.
     final overlayPaint = Paint()
       ..color = selectionColor.withValues(alpha: 0.4);
     for (var i = 0; i < placeholderBoxes.length && i < inlineImages.length; i++) {
-      // Find the global position of the image
       final imgId = inlineImages[i].id;
       _FragmentPosition? pos;
       for (final p in _fragmentPositions) {
         if (p.id == imgId) { pos = p; break; }
       }
       if (pos == null) continue;
-      // If the placeholder is entirely inside the selection
       if (pos.start >= start && pos.end <= end) {
         canvas.drawRect(
           placeholderBoxes[i].toRect().translate(offset.dx, offset.dy),
@@ -1449,12 +1340,8 @@ class RenderFluentParagraph extends RenderFluentNode
 
     if (focusGlobal == null || focusGlobal < 0) return;
 
-    // Blink: the editor's periodic timer toggles registry.caretVisible and
-    // resets it to true on movement. Skip painting while in the hidden phase.
     if (!registry.caretVisible) return;
 
-    // If the cursor is on an inline image, draw vertical lines at the borders
-    // of the placeholder instead of the thin text line.
     _FragmentPosition? fragPos;
     for (final p in _fragmentPositions) {
       if (p.id == fragmentId) {
@@ -1481,8 +1368,6 @@ class RenderFluentParagraph extends RenderFluentNode
       }
     }
 
-    // Use the character box to correctly position the cursor
-    // both in height and vertically, adapting to the real font size.
     TextBox? charBox;
     final textLength = _painter.text?.toPlainText().length ?? 0;
     if (focusGlobal > 0 && focusGlobal <= textLength) {
@@ -1511,7 +1396,6 @@ class RenderFluentParagraph extends RenderFluentNode
       return;
     }
 
-    // Fallback for empty document
     final cursorOffset = _painter.getOffsetForCaret(
       TextPosition(offset: focusGlobal),
       Rect.zero,

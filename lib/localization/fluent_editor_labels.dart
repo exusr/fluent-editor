@@ -124,11 +124,9 @@ class FluentEditorLabels {
   final String deleteLink;
   final String goToLink;
 
-  // Table
   final String insertRowAbove;
   final String insertRowBelow;
 
-  // Comments
   final String addCommentLabel;
   final String commentDialogTitle;
   final String commentHint;
@@ -256,7 +254,6 @@ class FluentEditorLabels {
     this.insertRowAbove = 'Insert row above',
     this.insertRowBelow = 'Insert row below',
 
-    // Comments
     this.addCommentLabel = 'Add comment',
     this.commentDialogTitle = 'Add comment',
     this.commentHint = 'Write a comment...',

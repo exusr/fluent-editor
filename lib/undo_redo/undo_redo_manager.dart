@@ -56,8 +56,6 @@ class UndoRedoManager {
   int get undoCount => _undoStack.length;
   int get redoCount => _redoStack.length;
 
-  // ─── Capture / Commit (called by FluentDocument) ──────────────────
-
   /// Called BEFORE a mutation. Captures the old state of all top-level
   /// nodes so [commitSaveState] can compute a minimal delta afterwards.
   void beginSaveState(
@@ -69,9 +67,6 @@ class UndoRedoManager {
 
     final now = DateTime.now();
 
-    // If we already have a pending snapshot and the description is the
-    // same and within the grouping window, just extend the timer — the
-    // old pending snapshot is still valid because no mutation happened yet.
     if (!forceNewAction &&
         _pending != null &&
         !_forceNewAction &&
@@ -79,21 +74,16 @@ class UndoRedoManager {
         description == _currentGroupDescription &&
         _lastActionTime != null &&
         now.difference(_lastActionTime!) <= _groupingTimeout) {
-      // Same burst: update timer but keep the SAME old snapshot.
       _pending!.description = description;
       _groupingTimer?.cancel();
       _groupingTimer = Timer(_groupingTimeout, _resetGrouping);
       return;
     }
 
-    // If there's a stale pending snapshot that was never committed,
-    // drop it silently (can happen if a programmatic change skipped
-    // updateContent).
     if (_pending != null) {
       _pending = null;
     }
 
-    // Capture the old state of every top-level node.
     final nodes = document.content.nodes;
     _pending = _PendingSnapshot(
       description: description,
@@ -124,14 +114,10 @@ class UndoRedoManager {
     final changes = <NodeChange>[];
 
     if (newNodes.length == oldNodes.length) {
-      // Same node count: fast path for Paragraphs using text-length check.
-      // Only serialise nodes whose text changed or whose text is the same
-      // but styles may have changed (rare).
       for (int i = 0; i < oldNodes.length; i++) {
         final oldJson = oldNodes[i];
         final newNode = newNodes[i];
 
-        // Fast path: Paragraphs whose text length changed are definitely dirty.
         if (newNode is Paragraph) {
           final oldText = oldJson['text'] as String? ?? '';
           if (newNode.text.length != oldText.length || newNode.text != oldText) {
@@ -142,7 +128,6 @@ class UndoRedoManager {
             ));
             continue;
           }
-          // Text is identical: check alignment/indent/styles quickly.
           if (oldJson['textAlign'] != newNode.textAlign ||
               oldJson['indent'] != newNode.indent ||
               oldJson['styleName'] != newNode.styleName) {
@@ -153,11 +138,9 @@ class UndoRedoManager {
             ));
             continue;
           }
-          // Paragraph text and meta are identical: skip serialisation.
           continue;
         }
 
-        // Non-paragraph nodes: serialise and compare (rare case).
         final newJson = newNode.toJson();
         if (!_mapsEqual(oldJson, newJson)) {
           changes.add(NodeChange(
@@ -168,7 +151,6 @@ class UndoRedoManager {
         }
       }
     } else {
-      // Node count changed: must compare by serialising each new node.
       final maxLen = oldNodes.length > newNodes.length
           ? oldNodes.length
           : newNodes.length;
@@ -185,7 +167,6 @@ class UndoRedoManager {
       }
     }
 
-    // If nothing actually changed, discard the pending snapshot.
     if (changes.isEmpty) {
       _pending = null;
       return;
@@ -199,8 +180,6 @@ class UndoRedoManager {
       newCursor: CursorSnapshot.fromDocument(document),
     );
 
-    // Merge with the last delta if we are still in the same group
-    // and the action was not forced.
     if (_currentGroupDescription != null &&
         _currentGroupDescription == pending.description &&
         _undoStack.isNotEmpty &&
@@ -215,7 +194,6 @@ class UndoRedoManager {
         for (final c in delta.changes) {
           final existing = mergedChanges[c.index];
           if (existing != null) {
-            // Keep the oldest oldJson and the newest newJson.
             mergedChanges[c.index] = NodeChange(
               index: c.index,
               oldJson: existing.oldJson,
@@ -246,8 +224,6 @@ class UndoRedoManager {
     _enforceMemoryLimit();
   }
 
-  // ─── Undo / Redo ────────────────────────────────────────────────
-
   bool undo(FluentDocument document) {
     if (!canUndo) return false;
 
@@ -259,13 +235,11 @@ class UndoRedoManager {
       delta.revert(document);
     } catch (e, st) {
       print('[UNDO_ERROR] revert failed: $e\n$st');
-      // Remove the corrupted delta so it doesn't crash again.
       _redoStack.removeLast();
       return false;
     } finally {
       _isRestoringState = false;
     }
-    // Notify only the widgets whose nodes were touched by this delta.
     final affectedIds = _collectAffectedIds(delta, document);
     document.notifyDocumentChanged(affectedIds: affectedIds);
     _resetGrouping();
@@ -288,7 +262,6 @@ class UndoRedoManager {
     } finally {
       _isRestoringState = false;
     }
-    // Notify only the widgets whose nodes were touched by this delta.
     final affectedIds = _collectAffectedIds(delta, document);
     document.notifyDocumentChanged(affectedIds: affectedIds);
     _resetGrouping();
@@ -309,8 +282,6 @@ class UndoRedoManager {
         ids.add(document.content.nodes[delta.index].id);
       }
     } else if (delta is NodeDeleteDelta) {
-      // After delete, the node is gone; no ID to invalidate.
-      // The neighbouring nodes (if any) are the best approximation.
       if (delta.index < document.content.nodes.length) {
         ids.add(document.content.nodes[delta.index].id);
       }
@@ -320,8 +291,6 @@ class UndoRedoManager {
     }
     return ids;
   }
-
-  // ─── Helpers ────────────────────────────────────────────────────
 
   void clear() {
     _undoStack.clear();

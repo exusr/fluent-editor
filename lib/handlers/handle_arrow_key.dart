@@ -1,15 +1,3 @@
-// handle_arrow_key.dart
-//
-// Management of directional arrow keys. Delegates all navigation logic
-// to the pure `cursor_navigation.dart` module, and is limited to:
-//  1. Reading the current position from Cursor
-//  2. Invoking moveLeft/moveRight/moveUp/moveDown
-//  3. Applying the result to Cursor
-//
-// For Up/Down, inject document.paragraphRegistry.resolveCaretX as
-// CaretXResolver, so vertical navigation uses real x coordinates
-// instead of the stop index.
-
 import 'package:fluent_editor/factories.dart';
 import 'package:fluent_editor/fluent_document.dart';
 import 'package:fluent_editor/utils/cursor_navigation.dart';
@@ -33,9 +21,6 @@ bool executeHandleArrowKey(
   late final NavigationResult result;
   late final bool isVertical;
 
-  // When there's an active selection and shift is not pressed, arrow keys
-  // should collapse the selection to the appropriate edge rather than
-  // moving from the anchor position.
   if (!shift && !cursor.isCollapsed) {
     final anchorIdx = findStopIndex(stops, cursor.anchorId, cursor.anchorOffset);
     final focusIdx = findStopIndex(stops, cursor.focusId, cursor.focusOffset);
@@ -87,8 +72,6 @@ bool executeHandleArrowKey(
     isVertical = false;
   } else if (key == LogicalKeyboardKey.arrowUp ||
              key == LogicalKeyboardKey.arrowDown) {
-    // Check if cursor is on a block-level node (HR, Image).
-    // These nodes don't have reliable Y coordinates, so use index-based navigation.
     final currentNode = document.nodeById(current.fragmentId);
     final isBlockNode = currentNode is HorizontalRule || currentNode is FluentImage;
 
@@ -103,7 +86,6 @@ bool executeHandleArrowKey(
             result = NavigationResult.none;
           }
         } else { // arrowDown
-          // Skip all stops of the current block node
           int nextIdx = currentIdx + 1;
           while (nextIdx < allStops.length &&
                  allStops[nextIdx].fragmentId == current.fragmentId) {
@@ -118,8 +100,6 @@ bool executeHandleArrowKey(
         isVertical = true;
       }
     } else {
-      // Vertical navigation: scan only the current container + neighbours
-      // instead of every stop in the document. Reduces O(n_stops) → O(container).
       final currentContainerId = document.findLogicalContainerId(current.fragmentId);
       final containerOrder = document.containerOrder;
       final containerIdx = containerOrder.indexOf(currentContainerId ?? '');
@@ -127,11 +107,6 @@ bool executeHandleArrowKey(
       if (containerIdx >= 0) {
         candidateIds.add(containerOrder[containerIdx]);
 
-        // If inside a table or list, expand to include ALL containers in that
-        // structure so Up/Down can cross rows/items.  The immediate
-        // predecessor / successor in containerOrder are only added if they
-        // are OUTSIDE the structure, otherwise the structural expansion
-        // already covers them and they can point to the wrong column/row.
         String? _nearestStructure(String? id) {
           if (id == null) return null;
           String? pid = id;
@@ -184,7 +159,6 @@ bool executeHandleArrowKey(
                 }
                 if (rowIndex >= 0) break;
               }
-              // Current cell + cell above + cell below (same column only)
               if (rowIndex >= 0 && colIndex >= 0) {
                 for (final id in containerOrder) {
                   if (_isInsideStructure(id, currentCellId)) {
@@ -211,14 +185,12 @@ bool executeHandleArrowKey(
               }
             }
           } else if (enclosingNode is FluentList) {
-            // Lists are 1-D: full structural expansion
             for (final id in containerOrder) {
               if (_isInsideStructure(id, currentEnclosing)) {
                 candidateIds.add(id);
               }
             }
           }
-          // Find first predecessor OUTSIDE the structure (exit upward)
           if (containerIdx > 0) {
             for (int i = containerIdx - 1; i >= 0; i--) {
               final id = containerOrder[i];
@@ -228,7 +200,6 @@ bool executeHandleArrowKey(
               }
             }
           }
-          // Find first successor OUTSIDE the structure (exit downward)
           if (containerIdx < containerOrder.length - 1) {
             for (int i = containerIdx + 1; i < containerOrder.length; i++) {
               final id = containerOrder[i];
@@ -239,7 +210,6 @@ bool executeHandleArrowKey(
             }
           }
         } else {
-          // Not inside a table/list: use immediate neighbours as before.
           if (containerIdx > 0) candidateIds.add(containerOrder[containerIdx - 1]);
           if (containerIdx < containerOrder.length - 1) {
             candidateIds.add(containerOrder[containerIdx + 1]);
@@ -283,11 +253,8 @@ bool executeHandleArrowKey(
     document.syncPendingFontWithCursor();
   }
 
-  // Keep SelectionManager always in sync with cursor anchor/focus
   _syncSelectionManager(document);
 
-  // Arrow navigation never mutates content: use the cursor-only notification
-  // so the cached caret-stop rail and node index survive across key presses.
   document.cursorOnlyUpdate();
 
   return true;
@@ -308,8 +275,6 @@ double _adjustPreferredXForBlockImage(
   final node = document.nodeById(current.fragmentId);
   if (node == null) return preferredX;
   if (node is! FluentImage && node is! HorizontalRule) return preferredX;
-  // Block-level if the logical container is NOT a Paragraph
-  // (i.e. the container is the image itself, not a surrounding paragraph).
   final containerId = document.findLogicalContainerId(current.fragmentId);
   if (containerId == null) return preferredX;
   final container = document.nodeById(containerId);
@@ -362,7 +327,6 @@ void _syncSelectionManager(FluentDocument document) {
 
   final sm = document.selectionManager;
 
-  // Set fixed anchor, then update focus – batched so we notify only once.
   sm.batchUpdate(() {
     sm.startSelection(anchorNodeId, cursor.anchorId, cursor.anchorOffset);
     sm.updateFocus(focusNodeId, cursor.focusId, cursor.focusOffset);
@@ -384,7 +348,6 @@ void _syncSelectionManager(FluentDocument document) {
            eFrag: range.endFrag,   eOff: range.endOff)
         : (sFrag: null, sOff: null, eFrag: null, eOff: null);
 
-    // Skip if the range is identical to what we pushed last time.
     if (old != null &&
         old.sFrag == new_.sFrag && old.sOff == new_.sOff &&
         old.eFrag == new_.eFrag && old.eOff == new_.eOff) {
@@ -402,6 +365,5 @@ void _syncSelectionManager(FluentDocument document) {
     }
   }
 
-  // Clean up entries for nodes that scrolled out of view.
   _lastRenderRange.removeWhere((id, _) => !seenIds.contains(id));
 }

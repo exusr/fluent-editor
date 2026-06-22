@@ -98,20 +98,15 @@ class NodeReplaceDelta extends DocumentDelta {
     FluentDocument document,
     Iterable<(int, Map<String, dynamic>)> replacements,
   ) {
-    // Sort by index descending so earlier indices are not shifted
-    // by later replacements.
     final sorted = replacements.toList()
       ..sort((a, b) => b.$1.compareTo(a.$1));
 
     for (final (index, json) in sorted) {
       if (index < 0 || index >= document.content.nodes.length) {
-        // Defensive: skip out-of-bound indices that can occur when
-        // the document structure changed between capture and undo.
         continue;
       }
       final oldNode = document.content.nodes[index];
       final newNode = _deserializeNode(json);
-      // Preserve the old id so render objects / keys stay stable
       newNode.id = oldNode.id;
       document.content.nodes[index] = newNode;
     }
@@ -198,33 +193,12 @@ class NodeDeleteDelta extends DocumentDelta {
 }
 
 /// Helper: deserialize a single top-level node from JSON.
+/// Delegates to FNodeJsonConverter to avoid duplicating the type switch.
 FNode _deserializeNode(Map<String, dynamic> json) {
-  final type = json['type'] as String?;
-  switch (type) {
-    case 'paragraph':
-      return Paragraph.fromJson(json);
-    case 'link':
-      return Link.fromJson(json);
-    case 'list':
-      return FluentList.fromJson(json);
-    case 'listItem':
-      return ListItem.fromJson(json);
-    case 'row':
-      return FluentRow.fromJson(json);
-    case 'cell':
-      return FluentCell.fromJson(json);
-    case 'table':
-      return FluentTable.fromJson(json);
-    case 'image':
-      return FluentImage.fromJson(json);
-    case 'hr':
-      return HorizontalRule.fromJson(json);
-    case 'fragment':
-      return Fragment.fromJson(json);
-    default:
-      // Defensive: return an empty paragraph instead of crashing.
-      // This can happen when a delta captures an empty map or unknown type.
-      print('[UNDO_WARN] Unknown node type in delta: $type, returning empty paragraph');
-      return Paragraph();
+  try {
+    return const FNodeJsonConverter().fromJson(json);
+  } catch (_) {
+    print('[UNDO_WARN] Failed to deserialize node in delta, returning empty paragraph');
+    return Paragraph();
   }
 }
