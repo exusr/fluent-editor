@@ -10,7 +10,6 @@ import 'package:fluent_editor/factories.dart';
 import 'package:fluent_editor/fluent_document.dart';
 import 'package:fluent_editor/styles.dart';
 import 'package:fluent_editor/localization/fluent_editor_labels.dart';
-import 'package:fluent_editor/services/font_service.dart';
 import 'package:flutter/services.dart';
 
 import 'export_service_web_stub.dart'
@@ -680,7 +679,7 @@ class ExportService {
         } else if (child is Paragraph) {
           final pStyle = child.getStyle();
           final markerFont = _fontProvider.selectFont(
-            pStyle.fontFamily ?? 'Arial',
+            pStyle.fontFamily ?? 'DejaVu Sans',
             pStyle.name,
             bold: pStyle.styles?.contains('bold') ?? false,
             italic: pStyle.styles?.contains('italic') ?? false,
@@ -1252,7 +1251,7 @@ class ExportService {
       cssStyles.add('font-size:${fontSize}px');
     }
 
-    final pFontFamily = pStyle.fontFamily ?? 'Arial';
+    final pFontFamily = pStyle.fontFamily ?? 'DejaVu Sans';
     if (fragment.fontFamily.isNotEmpty && fragment.fontFamily != pFontFamily) {
       cssStyles.add("font-family:'${fragment.fontFamily}'");
     }
@@ -1393,7 +1392,7 @@ class ExportService {
   Future<String?> saveFileNative(Uint8List bytes, String defaultName, String extension) async {
     if (kIsWeb) {
       downloadFileWeb(bytes, '$defaultName.$extension');
-      return null; // Web doesn't return a path
+      return null;
     }
 
     if (Platform.isAndroid || Platform.isIOS) {

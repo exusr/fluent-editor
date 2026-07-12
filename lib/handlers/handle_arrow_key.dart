@@ -293,14 +293,9 @@ SelectionState? _lastSyncState;
 final Map<String, ({String? sFrag, int? sOff, String? eFrag, int? eOff})>
     _lastRenderRange = {};
 
-/// Synchronizes SelectionManager with the current cursor state.
-/// Called after every movement, with or without shift.
-///
-/// OPTIMISATION: instead of touching every visible render on every key
-/// press (O(visible) = ~20 ops/frame), we only touch renders whose
-/// selection range actually changed. This reduces the per-frame cost
-/// from O(visible) to O(changed), which is typically 1-2 paragraphs
-/// during a word-by-word SHIFT+arrow hold.
+/// Perf-specialized variant of [syncSelectionManager] (from handle_formats.dart)
+/// with render-range caching. Only touches renders whose selection range actually
+/// changed, reducing per-frame cost from O(visible) to O(changed).
 void _syncSelectionManager(FluentDocument document) {
   final cursor = document.cursor;
 

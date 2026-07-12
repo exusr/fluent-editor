@@ -1,6 +1,7 @@
 import 'package:characters/characters.dart';
 import 'package:fluent_editor/factories.dart';
 import 'package:fluent_editor/fluent_document.dart';
+import 'package:fluent_editor/utils/resolve_selection.dart';
 
 /// Utility functions for fragment operations.
 class FragmentOperations {
@@ -14,6 +15,20 @@ class FragmentOperations {
       for (final child in (node as InlineContainerNode).getChildren()) {
         result.addAll(collectLeafFragments(child));
       }
+    }
+    return result;
+  }
+
+  /// Collects leaf fragments within the selection range of [node],
+  /// skipping FluentImage leaves.
+  static List<Fragment> collectLeavesInRange(SelectedNode node) {
+    final leaves = collectLeafFragments(node.container as FNode);
+    final result = <Fragment>[];
+    bool inRange = false;
+    for (final leaf in leaves) {
+      if (leaf.id == node.startFragment.id) inRange = true;
+      if (inRange && leaf is! FluentImage) result.add(leaf);
+      if (leaf.id == node.endFragment.id) inRange = false;
     }
     return result;
   }
@@ -36,6 +51,16 @@ class FragmentOperations {
       ..styles = List.from(document.pendingStyles)
       ..fontFamily = document.pendingFontFamily
       ..fontSize = document.pendingFontSize
+      ..color = document.pendingColor
+      ..highlightColor = document.pendingHighlightColor;
+  }
+
+  /// Applies the document's pending styles to an existing fragment in-place.
+  static void applyPendingStyles(FluentDocument document, Fragment frag) {
+    frag
+      ..fontFamily = document.pendingFontFamily
+      ..fontSize = document.pendingFontSize
+      ..styles = List.from(document.pendingStyles)
       ..color = document.pendingColor
       ..highlightColor = document.pendingHighlightColor;
   }
@@ -171,7 +196,7 @@ class FragmentOperations {
         return pos;
       }
       if (index == nextPos) {
-        return index; // Already at a boundary
+        return index;
       }
       pos = nextPos;
     }

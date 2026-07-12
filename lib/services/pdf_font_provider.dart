@@ -131,7 +131,7 @@ class PdfFontProvider {
   /// Attempts to locate a specific variant of [fontFamily] on the current OS.
   /// [suffix] is the variant suffix: '' for regular, 'b' for bold, 'i' for italic, 'z' for bold-italic.
   Future<File?> _findFontVariant(String fontFamily, String suffix) async {
-    if (kIsWeb) return null; // Web doesn't have file system access
+    if (kIsWeb) return null;
 
     final lower = fontFamily.toLowerCase().replaceAll(' ', '');
     final windir = Platform.environment['WINDIR'] ?? r'C:\Windows';

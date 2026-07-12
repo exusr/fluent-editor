@@ -59,7 +59,7 @@ void main() {
       // is a no-op because safeSubstring adjusts the index back.
       // Known limitation: delete handler should use getGraphemeLengthAt
       // to delete the full grapheme cluster.
-      expect(frag.text, 'a😀b'); // unchanged — grapheme-safe
+      expect(frag.text, 'a😀b');
     });
   });
 
@@ -114,7 +114,6 @@ void main() {
       final linkFrag = link.fragments.first as Fragment;
       doc.cursor.moveTo(linkFrag.id, 0);
       executeHandleBackspace(doc);
-      // Link should be removed since it's empty
       final hasLink = p.fragments.whereType<Link>().isNotEmpty;
       expect(hasLink, isFalse);
     });
@@ -130,7 +129,6 @@ void main() {
       // Cursor after ZWS (offset 2: after 'a' and ZWS)
       doc.cursor.moveTo(frag.id, 2);
       executeHandleBackspace(doc);
-      // ZWS should be skipped, 'a' should be deleted
       expect(frag.text.contains('a'), isFalse);
     });
   });
@@ -155,7 +153,6 @@ void main() {
       doc.eventHandler.document = doc;
       doc.cursor.moveTo(image.id, 0);
       executeHandleBackspace(doc);
-      // Image should be removed from fragments
       final hasImage = p.fragments.whereType<FluentImage>().isNotEmpty;
       expect(hasImage, isFalse);
     });
@@ -177,8 +174,6 @@ void main() {
       final frag = p.fragments.first as Fragment;
       doc.cursor.moveTo(frag.id, 0);
       executeHandleBackspace(doc);
-      // Item should be outdented (list may be removed or item converted)
-      // After outdent, the text should still exist as a paragraph
       expect(doc.content.text, contains('item'));
     });
   });

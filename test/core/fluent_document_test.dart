@@ -68,13 +68,13 @@ void main() {
           ]
         },
         'settings': {
-          'fontFamily': 'Arial',
+          'fontFamily': 'DejaVu Sans',
           'fontSize': 20.0,
           'textAlign': 'center',
         }
       };
       final doc = FluentDocument.fromJson(json);
-      expect(doc.pendingFontFamily, 'Arial');
+      expect(doc.pendingFontFamily, 'DejaVu Sans');
       expect(doc.pendingFontSize, 20.0);
       expect(doc.pendingTextAlign, 'center');
     });
@@ -97,10 +97,6 @@ void main() {
       expect(doc.content.nodes.length, 1);
       expect(doc.content.text, 'new content');
     });
-  });
-
-  group('FluentDocument cursor', () {
-    // Test removed - cursor initialization changed
   });
 
   group('FluentDocument syncPendingFontWithCursor', () {
@@ -149,12 +145,9 @@ void main() {
       final order = doc.containerOrder;
       final cellParagraph = cell.children.first as Paragraph;
 
-      // containerOrder should contain the paragraph inside the cell,
-      // not the cell id, so that it aligns with findLogicalContainerId.
       expect(order, contains(cellParagraph.id));
       expect(order, isNot(contains(cell.id)));
 
-      // The paragraph below the table should also be present.
       expect(order, contains(below.id));
     });
 
@@ -184,7 +177,6 @@ void main() {
       final cellParagraph = cell.children.first as Paragraph;
       final frag = cellParagraph.fragments.first as Fragment;
 
-      // findLogicalContainerId and containerOrder must agree.
       expect(doc.findLogicalContainerId(frag.id), cellParagraph.id);
       expect(doc.containerOrder, contains(cellParagraph.id));
     });

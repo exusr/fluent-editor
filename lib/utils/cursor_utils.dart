@@ -126,7 +126,7 @@ int absoluteOffset(RenderFluentFragment targetRender, int localOffset, Widget wi
   
   for (final child in ((widget as FluentParagraphWidget).node as InlineContainerNode).getChildren()) {
     final result = _walkNode(child, targetRender, localOffset, absolute);
-    if (result.$1) return result.$2; // found
+    if (result.$1) return result.$2;
     absolute = result.$2;
   }
   
@@ -216,3 +216,18 @@ FNode? getNodeAtCursor(EventHandler eventHandler) {
   return eventHandler.document.nodeById(targetId);
 }
 
+/// Parses a string text-align value into a Flutter [TextAlign].
+TextAlign parseTextAlign(String value) => switch (value) {
+  'center' => TextAlign.center,
+  'right' => TextAlign.right,
+  'justify' => TextAlign.justify,
+  _ => TextAlign.left,
+};
+
+/// Serializes a Flutter [TextAlign] into its string representation.
+String serializeTextAlign(TextAlign value) => switch (value) {
+  TextAlign.center => 'center',
+  TextAlign.right => 'right',
+  TextAlign.justify => 'justify',
+  _ => 'left',
+};

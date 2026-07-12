@@ -563,7 +563,7 @@ class FluentDocument extends ChangeNotifier {
     if (cursor.isCollapsed) {
       final fragNode = nodeById(cursor.anchorId);
       final frag = fragNode is Fragment ? fragNode : null;
-      pendingFontFamily = frag?.fontFamily ?? 'Arial';
+      pendingFontFamily = frag?.fontFamily ?? 'DejaVu Sans';
       pendingFontSize = frag?.fontSize ?? 14.0;
 
       pendingColor = frag?.color;

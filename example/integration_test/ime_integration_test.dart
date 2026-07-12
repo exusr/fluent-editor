@@ -90,6 +90,5 @@ void main() {
       // model, not key events — needs a real device IME to test properly).
       expect(doc.content.text, anyOf('hel', 'hello'));
     });
-    // skip: 'Backspace on desktop is handled by IME, not key events — needs real device'
   });
 }

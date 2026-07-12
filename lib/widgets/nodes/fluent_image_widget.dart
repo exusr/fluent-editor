@@ -5,7 +5,7 @@ import 'dart:typed_data';
 
 import 'package:fluent_editor/factories.dart';
 import 'package:fluent_editor/utils/cursor_navigation.dart';
-import 'package:fluent_editor/utils/node_operations.dart';
+import 'package:fluent_editor/utils/handler_helpers.dart';
 import 'package:fluent_editor/widgets/dialogs/image_insert_dialog.dart';
 import 'package:fluent_editor/widgets/editor/fluent_context_menu.dart';
 import 'package:fluent_editor/widgets/nodes/fluent_paragraph_widget.dart';
@@ -209,23 +209,7 @@ class _FluentImageWidgetState
     final cursorBefore = cursorOnImage && cursor.anchorOffset == 0;
     final cursorAfter = cursorOnImage && cursor.anchorOffset == 1;
 
-    bool isSelected = false;
-    if (!cursor.isCollapsed) {
-      final stops = widget.document.caretStops;
-      final anchorIdx = findStopIndex(
-        stops,
-        cursor.anchorId,
-        cursor.anchorOffset,
-      );
-      final focusIdx = findStopIndex(stops, cursor.focusId, cursor.focusOffset);
-      final img0Idx = findStopIndex(stops, image.id, 0);
-      final img1Idx = findStopIndex(stops, image.id, 1);
-      if (anchorIdx >= 0 && focusIdx >= 0 && img0Idx >= 0 && img1Idx >= 0) {
-        final lo = anchorIdx < focusIdx ? anchorIdx : focusIdx;
-        final hi = anchorIdx < focusIdx ? focusIdx : anchorIdx;
-        isSelected = lo <= img0Idx && img1Idx <= hi;
-      }
-    }
+    final isSelected = isNodeInSelectionRange(widget.document.caretStops, cursor, image.id);
 
     final showHandles = _isResizeMode;
 
@@ -563,11 +547,7 @@ class _FluentImageWidgetState
         FluentContextMenuItem(
           icon: Icons.delete,
           label: widget.document.labels?.deleteImage ?? 'Delete',
-          onPressed: () {
-            widget.document.saveState(description: 'Delete image', forceNewAction: true);
-            removeNode(widget.document.content, widget.node);
-            widget.document.updateContent();
-          },
+          onPressed: () => saveAndDeleteNode(widget.document, widget.node, description: 'Delete image'),
         ),
       ],
     );

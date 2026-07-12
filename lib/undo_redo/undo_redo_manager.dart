@@ -105,7 +105,7 @@ class UndoRedoManager {
   /// builds a minimal [DocumentDelta], and pushes it onto the undo stack.
   void commitSaveState(FluentDocument document) {
     if (_isRestoringState) return;
-    if (_pending == null) return; // no pending snapshot = nothing to commit
+    if (_pending == null) return;
 
     final pending = _pending!;
     final newNodes = document.content.nodes;

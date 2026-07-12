@@ -12,7 +12,8 @@ import 'package:fluent_editor/spell_check/spell_annotation.dart';
 import 'package:fluent_editor/spell_check/spell_check_provider.dart';
 import 'package:fluent_editor/styles.dart';
 import 'package:fluent_editor/utils/fragment_operations.dart';
-import 'package:fluent_editor/utils/node_operations.dart';
+import 'package:fluent_editor/utils/handler_helpers.dart';
+import 'package:fluent_editor/utils/cursor_utils.dart';
 import 'package:fluent_editor/widgets/editor/fluent_link_dialog.dart';
 import 'package:fluent_editor/widgets/editor/fluent_context_menu.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -191,15 +192,6 @@ class FluentParagraphWidgetState<T extends FluentParagraphWidget> extends State<
     }
   }
 
-  TextAlign _parseTextAlign(String value) {
-    return switch (value) {
-      'center' => TextAlign.center,
-      'right' => TextAlign.right,
-      'justify' => TextAlign.justify,
-      _ => TextAlign.left,
-    };
-  }
-
   @override
   Widget build(BuildContext context) {
     final cursor = widget.document.cursor;
@@ -329,7 +321,7 @@ class FluentParagraphWidgetState<T extends FluentParagraphWidget> extends State<
           node: container,
           registry: widget.document.paragraphRegistry,
           lineHeight: style?.lineHeight ?? widget.document.pendingLineHeight,
-          textAlign: _parseTextAlign((widget.node as Paragraph).textAlign),
+          textAlign: parseTextAlign((widget.node as Paragraph).textAlign),
           shrinkWrap: widget.shrinkWrap,
           paragraphStyle: style, // Pass the style for fallbacks
           defaultTextColor: Theme.of(context).colorScheme.onSurface,
@@ -555,16 +547,7 @@ class FluentParagraphWidgetState<T extends FluentParagraphWidget> extends State<
 
   void _applyCorrection(SpellAnnotation ann, String correction) {
     final paragraph = widget.node as Paragraph;
-    final fragments = <Fragment>[];
-    for (final child in paragraph.fragments) {
-      if (child is Fragment) {
-        fragments.add(child);
-      } else if (child is Link) {
-        for (final linkChild in child.fragments) {
-          if (linkChild is Fragment) fragments.add(linkChild);
-        }
-      }
-    }
+    final fragments = FragmentOperations.collectLeafFragments(paragraph);
     int currentOffset = 0;
     for (final frag in fragments) {
       final fragEnd = currentOffset + frag.text.length;
@@ -580,6 +563,16 @@ class FluentParagraphWidgetState<T extends FluentParagraphWidget> extends State<
       }
       currentOffset = fragEnd;
     }
+  }
+
+  void _copyUrlAndNotify(String url, String message) {
+    Clipboard.setData(ClipboardData(text: url));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        duration: const Duration(seconds: 2),
+      ),
+    );
   }
 
   void _showLinkContextMenu(Offset globalPosition, Link link) {
@@ -599,13 +592,7 @@ class FluentParagraphWidgetState<T extends FluentParagraphWidget> extends State<
             final uri = Uri.tryParse(link.url);
             if (uri != null) {
               if (!kIsWeb && Platform.isLinux) {
-                await Clipboard.setData(ClipboardData(text: link.url));
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text('URL copied to clipboard.'),
-                    duration: const Duration(seconds: 2),
-                  ),
-                );
+                _copyUrlAndNotify(link.url, 'URL copied to clipboard.');
                 return;
               }
 
@@ -615,22 +602,10 @@ class FluentParagraphWidgetState<T extends FluentParagraphWidget> extends State<
                   webOnlyWindowName: kIsWeb ? '_blank' : null,
                 );
                 if (!launched) {
-                  await Clipboard.setData(ClipboardData(text: link.url));
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text('Could not open link. URL copied to clipboard.'),
-                      duration: const Duration(seconds: 2),
-                    ),
-                  );
+                  _copyUrlAndNotify(link.url, 'Could not open link. URL copied to clipboard.');
                 }
-              } catch (e) {
-                await Clipboard.setData(ClipboardData(text: link.url));
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text('Could not open link. URL copied to clipboard.'),
-                    duration: const Duration(seconds: 2),
-                  ),
-                );
+              } catch (_) {
+                _copyUrlAndNotify(link.url, 'Could not open link. URL copied to clipboard.');
               }
             }
           },
@@ -661,11 +636,7 @@ class FluentParagraphWidgetState<T extends FluentParagraphWidget> extends State<
         FluentContextMenuItem(
           icon: Icons.delete,
           label: widget.document.labels?.deleteLink ?? 'Delete',
-          onPressed: () {
-            widget.document.saveState(description: 'Delete link', forceNewAction: true);
-            removeNode(widget.document.content, link);
-            widget.document.updateContent();
-          },
+          onPressed: () => saveAndDeleteNode(widget.document, link, description: 'Delete link'),
         ),
       ],
     );

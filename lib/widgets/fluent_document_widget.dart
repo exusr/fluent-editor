@@ -388,7 +388,7 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
 
       if (nodeStart >= viewportStart + margin &&
           nodeEnd   <= viewportEnd   - margin) {
-        return; // Already well inside viewport — nothing to do.
+        return;
       }
 
       double scrollTarget;

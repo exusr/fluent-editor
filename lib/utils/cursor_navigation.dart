@@ -1,3 +1,4 @@
+import 'package:fluent_editor/cursor.dart';
 import 'package:fluent_editor/factories.dart';
 import 'package:fluent_editor/utils/fragment_operations.dart';
 
@@ -698,7 +699,7 @@ NavigationResult moveWordRight(Root root, CaretStop current, {
 
   final startChar = ch(idx);
 
-  if (startChar == null) return NavigationResult.none; // end of document
+  if (startChar == null) return NavigationResult.none;
 
   if (_isSpaceChar(startChar)) {
     while (idx < stops_.length - 1 && _isSpaceChar(ch(idx) ?? '')) {
@@ -787,7 +788,7 @@ String? _charRight(
     if (stop.offset < frag.text.length) return frag.text[stop.offset];
     i++; // end of fragment: look at the next stop on the same line
   }
-  return null; // end of document
+  return null;
 }
 
 /// Character to the left of [startIdx].
@@ -917,4 +918,22 @@ NavigationResult movePageDown(
   final best = _stopNearestX(targetLine.stops, x, resolveX);
 
   return NavigationResult(position: best, preferredX: x);
+}
+
+/// Checks whether [nodeId] (with its two caret stops at offset 0 and 1)
+/// falls within the current selection range defined by [cursor].
+bool isNodeInSelectionRange(
+  List<CaretStop> stops,
+  Cursor cursor,
+  String nodeId,
+) {
+  if (cursor.isCollapsed) return false;
+  final anchorIdx = findStopIndex(stops, cursor.anchorId, cursor.anchorOffset);
+  final focusIdx = findStopIndex(stops, cursor.focusId, cursor.focusOffset);
+  final node0Idx = findStopIndex(stops, nodeId, 0);
+  final node1Idx = findStopIndex(stops, nodeId, 1);
+  if (anchorIdx < 0 || focusIdx < 0 || node0Idx < 0 || node1Idx < 0) return false;
+  final lo = anchorIdx < focusIdx ? anchorIdx : focusIdx;
+  final hi = anchorIdx < focusIdx ? focusIdx : anchorIdx;
+  return lo <= node0Idx && node1Idx <= hi;
 }

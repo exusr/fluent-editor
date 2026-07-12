@@ -6,6 +6,7 @@ import 'package:fluent_editor/fluent_document.dart';
 import 'package:fluent_editor/handlers/handle_insert_character.dart';
 import 'package:fluent_editor/handlers/handle_replace_selection.dart';
 import 'package:fluent_editor/utils/fragment_operations.dart';
+import 'package:fluent_editor/utils/handler_helpers.dart';
 import 'package:fluent_editor/utils/node_operations.dart';
 import 'package:fluent_editor/utils/resolve_selection.dart';
 import 'package:flutter/services.dart';
@@ -35,15 +36,7 @@ Future<void> executeHandleCopy(FluentDocument document) async {
   final cursor = document.cursor;
   if (cursor.isCollapsed) return;
 
-  final sel = resolveSelection(
-    document.content,
-    cursor.anchorId,
-    cursor.anchorOffset,
-    cursor.focusId,
-    cursor.focusOffset,
-    cachedStops: document.caretStops,
-    cachedLines: document.logicalLines,
-  );
+  final sel = resolveSelectionFromCursor(document);
 
   if (sel == null) return;
 
@@ -292,11 +285,7 @@ void _insertParagraphBreak(FluentDocument document) {
     indent: (container is Paragraph) ? container.indent : 0,
   );
   final firstFrag = newParagraph.fragments.first as Fragment;
-  firstFrag.fontFamily = document.pendingFontFamily;
-  firstFrag.fontSize = document.pendingFontSize;
-  firstFrag.styles = List<String>.from(document.pendingStyles);
-  firstFrag.color = document.pendingColor;
-  firstFrag.highlightColor = document.pendingHighlightColor;
+  FragmentOperations.applyPendingStyles(document, firstFrag);
 
   final topLevel = _findTopLevelParent(root, cursor.anchorId);
   if (topLevel != null) {

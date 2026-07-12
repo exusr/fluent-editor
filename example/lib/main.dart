@@ -20,46 +20,81 @@ Future<void> main() async {
     return true;
   };
 
-  // Load bundled Google Fonts on web platform
-  if (kIsWeb) {
-    await _loadBundledFonts();
-  }
+  await loadBundledFonts();
 
   runApp(const MyApp());
 }
 
-/// Loads bundled Google Fonts from local assets.
-/// On Flutter Web, this ensures fonts are available before the app starts.
-Future<void> _loadBundledFonts() async {
-  const bundledFonts = [
-    'Crimson Text', 'Fira Sans', 'Lato', 'Poppins', 'Titillium Web',
+/// Loads all bundled fonts from the fluent_editor package assets.
+/// Includes DejaVu family, Google Fonts, and NotoColorEmoji.
+Future<void> loadBundledFonts() async {
+  // DejaVu family (in assets/fonts/)
+  const dejavuFonts = [
+    ('DejaVu Sans', [
+      'DejaVuSans.ttf',
+      'DejaVuSans-Oblique.ttf',
+      'DejaVuSans-Bold.ttf',
+      'DejaVuSans-BoldOblique.ttf',
+    ]),
+    ('DejaVu Sans Mono', [
+      'DejaVuSansMono.ttf',
+      'DejaVuSansMono-Bold.ttf',
+    ]),
+    ('DejaVu Serif', [
+      'DejaVuSerif.ttf',
+      'DejaVuSerif-Italic.ttf',
+      'DejaVuSerif-Bold.ttf',
+      'DejaVuSerif-BoldItalic.ttf',
+    ]),
   ];
 
-  for (final fontName in bundledFonts) {
-    final fontLoader = FontLoader(fontName);
-    final fileName = fontName.replaceAll(' ', '');
+  for (final (familyName, files) in dejavuFonts) {
+    final loader = FontLoader(familyName);
     var loadedAny = false;
-    
-    for (final suffix in ['-Regular.ttf', '-Italic.ttf', '-Bold.ttf', '-BoldItalic.ttf']) {
+    for (final file in files) {
       try {
-        final fontData = await rootBundle.load(
-          'packages/fluent_editor/assets/google_fonts/$fileName$suffix',
-        );
-        fontLoader.addFont(Future.value(fontData));
+        final data = await rootBundle.load('packages/fluent_editor/assets/fonts/$file');
+        loader.addFont(Future.value(data));
         loadedAny = true;
-      } catch (_) {
-        // Variant not available, skip
-      }
+      } catch (_) {}
     }
-    
     if (loadedAny) {
-      try {
-        await fontLoader.load();
-      } catch (_) {
-        // Font loading failed, will fall back to default
-      }
+      try { await loader.load(); } catch (_) {}
     }
   }
+
+  // Google Fonts (in assets/fonts/)
+  const googleFonts = [
+    'Crimson Text', 'Fira Sans', 'Lato', 'Poppins', 'Titillium Web',
+    'Barlow', 'SpaceMono',
+  ];
+
+  for (final fontName in googleFonts) {
+    final loader = FontLoader(fontName);
+    final fileName = fontName.replaceAll(' ', '');
+    var loadedAny = false;
+
+    for (final suffix in ['-Regular.ttf', '-Italic.ttf', '-Bold.ttf', '-BoldItalic.ttf']) {
+      try {
+        final data = await rootBundle.load(
+          'packages/fluent_editor/assets/fonts/$fileName$suffix',
+        );
+        loader.addFont(Future.value(data));
+        loadedAny = true;
+      } catch (_) {}
+    }
+
+    if (loadedAny) {
+      try { await loader.load(); } catch (_) {}
+    }
+  }
+
+  // NotoColorEmoji (in assets/fonts/)
+  try {
+    final emojiLoader = FontLoader('NotoColorEmoji')
+      ..addFont(rootBundle.load('packages/fluent_editor/assets/fonts/NotoColorEmoji.ttf'));
+    await emojiLoader.load();
+  } catch (_) {}
 }
 
 class MyApp extends StatefulWidget {

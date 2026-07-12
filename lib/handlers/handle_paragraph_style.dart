@@ -1,8 +1,8 @@
 import 'package:fluent_editor/factories.dart';
 import 'package:fluent_editor/fluent_document.dart';
 import 'package:fluent_editor/styles.dart';
+import 'package:fluent_editor/utils/handler_helpers.dart';
 import 'package:fluent_editor/utils/node_operations.dart';
-import 'package:fluent_editor/utils/resolve_selection.dart';
 
 /// Applies a paragraph style to the current paragraph or selection.
 /// The style works as a "base" - explicit fragment customizations
@@ -17,15 +17,7 @@ bool executeHandleParagraphStyle(
   final cursor = document.cursor;
 
   if (!cursor.isCollapsed) {
-    final selection = resolveSelection(
-      root,
-      cursor.anchorId,
-      cursor.anchorOffset,
-      cursor.focusId,
-      cursor.focusOffset,
-      cachedStops: document.caretStops,
-      cachedLines: document.logicalLines,
-    );
+    final selection = resolveSelectionFromCursor(document);
 
     if (selection != null) {
       for (final node in selection.nodes) {

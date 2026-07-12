@@ -91,19 +91,7 @@ class _FluentHrWidgetState extends State<FluentHrWidget> {
     final cursorBefore = cursorOnHr && cursor.anchorOffset == 0;
     final cursorAfter  = cursorOnHr && cursor.anchorOffset == 1;
 
-    bool isSelected = false;
-    if (!cursor.isCollapsed) {
-      final stops = widget.document.caretStops;
-      final anchorIdx = findStopIndex(stops, cursor.anchorId, cursor.anchorOffset);
-      final focusIdx  = findStopIndex(stops, cursor.focusId,  cursor.focusOffset);
-      final hr0Idx    = findStopIndex(stops, node.id, 0);
-      final hr1Idx    = findStopIndex(stops, node.id, 1);
-      if (anchorIdx >= 0 && focusIdx >= 0 && hr0Idx >= 0 && hr1Idx >= 0) {
-        final lo = anchorIdx < focusIdx ? anchorIdx : focusIdx;
-        final hi = anchorIdx < focusIdx ? focusIdx  : anchorIdx;
-        isSelected = lo <= hr0Idx && hr1Idx <= hi;
-      }
-    }
+    final isSelected = isNodeInSelectionRange(widget.document.caretStops, cursor, node.id);
 
     return GestureDetector(
       onTapDown: _onTapDown,

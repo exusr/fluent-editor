@@ -8,7 +8,6 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:fluent_editor/factories.dart';
 import 'package:fluent_editor/fluent_document.dart';
 import 'package:fluent_editor/styles.dart';
-import 'package:fluent_editor/services/font_service.dart';
 
 class _CommentSeg {
   final int start;
@@ -116,7 +115,7 @@ class DocxExporter {
 
   /// Attempts to find a TTF/OTF file for [fontName] on the current OS.
   Future<Uint8List?> _findSystemFontBytes(String fontName) async {
-    if (kIsWeb) return null; // Web doesn't have file system access
+    if (kIsWeb) return null;
 
     final lower = fontName.toLowerCase().replaceAll(' ', '');
     final candidates = <String>[];

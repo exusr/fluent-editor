@@ -42,7 +42,7 @@ bool executeHandleBackspace(FluentDocument document, {bool ctrl = false, bool li
   if (container == null) return false;
 
   if (container is Paragraph && container.text.isEmpty &&
-      findAncestorCell(root, container as FNode) == null) {
+      findAncestor<FluentCell>(root, container as FNode) == null) {
     final prevStop = moveLeft(
       root, CaretStop(cursor.anchorId, 0),
       stops: document.caretStops,
@@ -61,7 +61,7 @@ bool executeHandleBackspace(FluentDocument document, {bool ctrl = false, bool li
     return removeNodeAndReposition(document, currentFrag);
   }
 
-  if (findAncestorCell(root, currentFrag) != null &&
+  if (findAncestor<FluentCell>(root, currentFrag) != null &&
       currentFrag.text.isNotEmpty &&
       currentFrag.text.replaceAll('\u200B', '').isEmpty) {
     return true;
@@ -74,7 +74,7 @@ bool executeHandleBackspace(FluentDocument document, {bool ctrl = false, bool li
   int newOffset = FragmentOperations.getPreviousGraphemeOffsetSkippingZWS(currentFrag.text, cursor.anchorOffset);
   final deleteCount = cursor.anchorOffset - newOffset;
 
-  final cellParent = findAncestorCell(root, currentFrag);
+  final cellParent = findAncestor<FluentCell>(root, currentFrag);
 
   FragmentOperations.deleteTextInFragment(currentFrag, newOffset, count: deleteCount);
 
@@ -86,28 +86,7 @@ bool executeHandleBackspace(FluentDocument document, {bool ctrl = false, bool li
   }
 
   if (currentFrag.text.isEmpty) {
-    final flat = flattenInlineChildren(container);
-    if (flat.length > 1) {
-      int fragIdx = flat.indexWhere((f) => f.id == currentFrag.id);
-
-      final parent = findParent(root, currentFrag);
-      removeNode(root, currentFrag);
-      cleanupEmptyInlineParents(root, parent);
-
-      if (fragIdx > 0) {
-        final pred = findPredecessorFragment(flat, fragIdx);
-        if (pred != null) {
-          cursor.moveTo(pred.id, pred.text.length);
-        }
-      } else if (fragIdx == 0 && flat.length > 1) {
-        final next = flat[1];
-        if (next is Fragment && next is! InlineContainerNode) {
-          cursor.moveTo(next.id, 0);
-        }
-      }
-      if (cursor.anchorId == currentFrag.id) {
-        fallbackRepositionCursor(document);
-      }
+    if (_removeEmptyFragmentAndReposition(document, container, currentFrag)) {
       document.updateContent();
       return true;
     }
@@ -131,37 +110,14 @@ bool _handleBackspaceAtStart(
   final cursor = document.cursor;
 
   if (currentFrag.text.isEmpty) {
-    final flat = flattenInlineChildren(container);
-    if (flat.length > 1) {
-      int fragIdx = flat.indexWhere((f) => f.id == currentFrag.id);
-      final parent = findParent(root, currentFrag);
-      removeNode(root, currentFrag);
-      cleanupEmptyInlineParents(root, parent);
-      if (fragIdx > 0) {
-        final pred = findPredecessorFragment(flat, fragIdx);
-        if (pred != null) {
-          cursor.moveTo(pred.id, pred.text.length);
-          document.updateContent();
-          return true;
-        }
-      }
-      if (fragIdx >= 0 && fragIdx < flat.length - 1) {
-        final next = flat[fragIdx + 1];
-        if (next is Fragment && next is! InlineContainerNode) {
-          cursor.moveTo(next.id, 0);
-          document.updateContent();
-          return true;
-        }
-      }
-      if (cursor.anchorId == currentFrag.id) {
-        fallbackRepositionCursor(document);
-      }
+    if (_removeEmptyFragmentAndReposition(document, container, currentFrag)) {
       document.updateContent();
       return true;
     }
 
+    final flat = flattenInlineChildren(container);
     if (flat.length == 1) {
-      if (findAncestorCell(root, container as FNode) != null) {
+      if (findAncestor<FluentCell>(root, container as FNode) != null) {
         return true;
       }
       final prevStop = moveLeft(
@@ -207,7 +163,7 @@ bool _handleBackspaceAtStart(
   if (prevContainer == null) return false;
 
   if (cursor.anchorOffset == 0) {
-    final ancestorItem = findAncestorListItem(root, container as FNode);
+    final ancestorItem = findAncestor<ListItem>(root, container as FNode);
     if (ancestorItem != null && ancestorItem.children.isNotEmpty &&
         ancestorItem.children.first.id == (container as FNode).id) {
       return _handleListItemOutdent(document, ancestorItem, prevContainer);
@@ -392,9 +348,7 @@ bool _mergeListItems(
     cursor.moveTo(cursorFragId, cursorOffset);
   }
 
-  recalculateListIndices(root);
-
-  document.updateContent();
+  recalculateAndUpdate(document);
   return true;
 }
 
@@ -461,6 +415,47 @@ bool _mergeContainers(
   removeNode(root, currentContainer as FNode);
 
   mergeAtJunction(document, prevContainer, junctionFrag, prevChildrenBefore.length);
+  return true;
+}
+
+/// Removes an empty [currentFrag] from [container] when there are siblings,
+/// repositions the cursor to the predecessor or successor, and returns true.
+/// Returns false if the container has only one child (caller handles that case).
+bool _removeEmptyFragmentAndReposition(
+  FluentDocument document,
+  InlineContainerNode container,
+  Fragment currentFrag,
+) {
+  final root = document.content;
+  final cursor = document.cursor;
+
+  final flat = flattenInlineChildren(container);
+  if (flat.length <= 1) return false;
+
+  int fragIdx = flat.indexWhere((f) => f.id == currentFrag.id);
+  final parent = findParent(root, currentFrag);
+  removeNode(root, currentFrag);
+  cleanupEmptyInlineParents(root, parent);
+
+  if (fragIdx > 0) {
+    final pred = findPredecessorFragment(flat, fragIdx);
+    if (pred != null) {
+      cursor.moveTo(pred.id, pred.text.length);
+      return true;
+    }
+  }
+
+  if (fragIdx >= 0 && fragIdx < flat.length - 1) {
+    final next = flat[fragIdx + 1];
+    if (next is Fragment && next is! InlineContainerNode) {
+      cursor.moveTo(next.id, 0);
+      return true;
+    }
+  }
+
+  if (cursor.anchorId == currentFrag.id) {
+    fallbackRepositionCursor(document);
+  }
   return true;
 }
 

@@ -7,6 +7,132 @@ import 'package:fluent_editor/utils/fragment_operations.dart';
 import 'package:fluent_editor/utils/node_operations.dart';
 import 'package:fluent_editor/utils/resolve_selection.dart';
 
+/// Resolves the current cursor selection using cached stops and lines.
+/// Returns null if the cursor is collapsed or the selection is invalid.
+ResolvedSelection? resolveSelectionFromCursor(FluentDocument document) {
+  final cursor = document.cursor;
+  return resolveSelection(
+    document.content,
+    cursor.anchorId,
+    cursor.anchorOffset,
+    cursor.focusId,
+    cursor.focusOffset,
+    cachedStops: document.caretStops,
+    cachedLines: document.logicalLines,
+  );
+}
+
+/// Recalculates list indices and triggers a content update.
+void recalculateAndUpdate(FluentDocument document) {
+  recalculateListIndices(document.content);
+  document.updateContent();
+}
+
+/// Saves undo state, removes [node] from the document, and updates content.
+void saveAndDeleteNode(FluentDocument document, FNode node, {required String description}) {
+  document.saveState(description: description, forceNewAction: true);
+  removeNode(document.content, node);
+  document.updateContent();
+}
+
+/// Splits fragments at selection boundaries, then calls [modify] on each
+/// leaf fragment in the resulting range (skipping FluentImage).
+/// Returns the first and last modified fragments, or nulls if none modified.
+({Fragment? firstModified, Fragment? lastModified}) splitAndApplyToLeaves(
+  FluentDocument document,
+  ResolvedSelection selection, {
+  required void Function(Fragment leaf) modify,
+}) {
+  final root = document.content;
+  Fragment? firstModified;
+  Fragment? lastModified;
+
+  for (final node in selection.nodes) {
+    final container = node.container;
+
+    final startParent = findParent(root, node.startFragment);
+    final endParent   = findParent(root, node.endFragment);
+
+    late Fragment actualStartFrag;
+    late Fragment actualEndFrag;
+
+    if (node.startFragment.id == node.endFragment.id) {
+      final frag = node.startFragment;
+      if (node.startOffset > 0 && node.endOffset < frag.text.length) {
+        final before = frag.text.substring(0, node.startOffset);
+        final mid    = frag.text.substring(node.startOffset, node.endOffset);
+        final after  = frag.text.substring(node.endOffset);
+        frag.text = before;
+        final midFrag = FragmentOperations.cloneFragment(frag, text: mid);
+        if (startParent != null) insertAfter(startParent, frag, midFrag);
+        if (after.isNotEmpty && startParent != null) {
+          final afterFrag = FragmentOperations.cloneFragment(frag, text: after);
+          insertAfter(startParent, midFrag, afterFrag);
+        }
+        actualStartFrag = midFrag;
+        actualEndFrag   = midFrag;
+      } else if (node.startOffset > 0) {
+        final before = frag.text.substring(0, node.startOffset);
+        final after  = frag.text.substring(node.startOffset);
+        frag.text = before;
+        final newFrag = FragmentOperations.cloneFragment(frag, text: after);
+        if (startParent != null) insertAfter(startParent, frag, newFrag);
+        actualStartFrag = newFrag;
+        actualEndFrag   = newFrag;
+      } else if (node.endOffset < frag.text.length) {
+        final selected = frag.text.substring(0, node.endOffset);
+        final after    = frag.text.substring(node.endOffset);
+        frag.text = selected;
+        final afterFrag = FragmentOperations.cloneFragment(frag, text: after);
+        if (startParent != null) insertAfter(startParent, frag, afterFrag);
+        actualStartFrag = frag;
+        actualEndFrag   = frag;
+      } else {
+        actualStartFrag = frag;
+        actualEndFrag   = frag;
+      }
+    } else {
+      final first = node.startFragment;
+      if (node.startOffset > 0 && node.startOffset < first.text.length) {
+        final before = first.text.substring(0, node.startOffset);
+        final after  = first.text.substring(node.startOffset);
+        first.text = before;
+        final newFrag = FragmentOperations.cloneFragment(first, text: after);
+        if (startParent != null) insertAfter(startParent, first, newFrag);
+        actualStartFrag = newFrag;
+      } else {
+        actualStartFrag = first;
+      }
+
+      final last = node.endFragment;
+      if (node.endOffset > 0 && node.endOffset < last.text.length) {
+        final selected = last.text.substring(0, node.endOffset);
+        final after    = last.text.substring(node.endOffset);
+        last.text = selected;
+        final afterFrag = FragmentOperations.cloneFragment(last, text: after);
+        if (endParent != null) insertAfter(endParent, last, afterFrag);
+        actualEndFrag = last;
+      } else {
+        actualEndFrag = last;
+      }
+    }
+
+    final leaves = FragmentOperations.collectLeafFragments(container as FNode);
+    bool inRange = false;
+    for (final leaf in leaves) {
+      if (leaf.id == actualStartFrag.id) inRange = true;
+      if (inRange && leaf is! FluentImage) {
+        modify(leaf);
+        firstModified ??= leaf;
+        lastModified = leaf;
+      }
+      if (leaf.id == actualEndFrag.id) inRange = false;
+    }
+  }
+
+  return (firstModified: firstModified, lastModified: lastModified);
+}
+
 /// Removes [node] from the tree and repositions the cursor to the
 /// adjacent caret stop (previous when [forward] is false, next when true).
 /// Calls [document.updateContent] and returns true.
@@ -145,24 +271,13 @@ void mergeAtJunction(
     moveCursorToFirstFragment(cursor, targetContainer);
   }
 
-  recalculateListIndices(root);
-  document.updateContent();
+  recalculateAndUpdate(document);
 }
 
 /// If there's an active selection, deletes it by replacing with empty string.
 /// Returns true if a selection was deleted, false otherwise.
 bool deleteSelectionIfExists(FluentDocument document) {
-  final root = document.content;
-  final cursor = document.cursor;
-  final selection = resolveSelection(
-    root,
-    cursor.anchorId,
-    cursor.anchorOffset,
-    cursor.focusId,
-    cursor.focusOffset,
-    cachedStops: document.caretStops,
-    cachedLines: document.logicalLines,
-  );
+  final selection = resolveSelectionFromCursor(document);
   if (selection != null) {
     executeHandleReplaceSelection('', document);
     return true;
@@ -189,4 +304,34 @@ void notifyTextMutation(
       document.notifyTextMutation((container as FNode).id, globalOffset, delta);
     }
   }
+}
+
+/// Generic helper for applying a style property to the selection or cursor.
+/// When a selection exists, [modifyLeaf] is applied to each leaf fragment
+/// and the cursor moves to the end of the modified range.
+/// When collapsed, [setPending] stores the value for subsequently typed text.
+bool applyStyleProperty<T>(
+  FluentDocument document,
+  T value, {
+  required void Function(Fragment leaf, T value) modifyLeaf,
+  required void Function(FluentDocument document, T value) setPending,
+}) {
+  final selection = resolveSelectionFromCursor(document);
+  if (selection != null) {
+    final cursor = document.cursor;
+    final result = splitAndApplyToLeaves(
+      document,
+      selection,
+      modify: (leaf) => modifyLeaf(leaf, value),
+    );
+    if (result.lastModified != null) {
+      cursor.moveTo(result.lastModified!.id, result.lastModified!.text.length);
+    }
+    setPending(document, value);
+    document.updateContent();
+    return true;
+  }
+  setPending(document, value);
+  document.updateContent();
+  return true;
 }

@@ -1,7 +1,7 @@
 import 'package:fluent_editor/factories.dart';
 import 'package:fluent_editor/fluent_document.dart';
 import 'package:fluent_editor/utils/fragment_operations.dart';
-import 'package:fluent_editor/utils/resolve_selection.dart';
+import 'package:fluent_editor/utils/handler_helpers.dart';
 import 'package:flutter/material.dart';
 
 const _fontSizes = <int>[
@@ -55,29 +55,14 @@ class _FluentFontSizeSelectorWidgetState extends State<FluentFontSizeSelectorWid
   int _resolveCurrentSize() {
     final document = widget.document;
     final cursor = document.cursor;
-    final root = document.content;
 
     if (cursor.anchorId != cursor.focusId || cursor.anchorOffset != cursor.focusOffset) {
-      final selection = resolveSelection(
-        root,
-        cursor.anchorId,
-        cursor.anchorOffset,
-        cursor.focusId,
-        cursor.focusOffset,
-        cachedStops: document.caretStops,
-        cachedLines: document.logicalLines,
-      );
+      final selection = resolveSelectionFromCursor(document);
       if (selection != null) {
         final sizes = <double?>{};
         for (final node in selection.nodes) {
-          final leaves = FragmentOperations.collectLeafFragments(node.container as FNode);
-          bool inRange = false;
-          for (final leaf in leaves) {
-            if (leaf.id == node.startFragment.id) inRange = true;
-            if (inRange && leaf is! FluentImage) {
-              sizes.add(leaf.fontSize);
-            }
-            if (leaf.id == node.endFragment.id) inRange = false;
+          for (final leaf in FragmentOperations.collectLeavesInRange(node)) {
+            sizes.add(leaf.fontSize);
           }
         }
         if (sizes.length == 1) {

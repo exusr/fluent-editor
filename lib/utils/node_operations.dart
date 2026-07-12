@@ -51,21 +51,11 @@ FNode? findParent(FNode root, FNode target) {
   return null;
 }
 
-/// Climbs up the tree from [node] looking for a [FluentCell] ancestor.
-FluentCell? findAncestorCell(FNode root, FNode node) {
+/// Climbs up the tree from [node] looking for an ancestor of type [T].
+T? findAncestor<T extends FNode>(FNode root, FNode node) {
   FNode? current = node;
   while (current != null) {
-    if (current is FluentCell) return current;
-    current = findParent(root, current);
-  }
-  return null;
-}
-
-/// Climbs up the tree from [node] looking for a [ListItem] ancestor.
-ListItem? findAncestorListItem(FNode root, FNode node) {
-  FNode? current = node;
-  while (current != null) {
-    if (current is ListItem) return current;
+    if (current is T) return current;
     current = findParent(root, current);
   }
   return null;
@@ -384,7 +374,7 @@ bool mergeWithNext(InlineContainerNode container, Fragment fragment) {
 /// Always leaves at least one Fragment to keep the container valid.
 void pruneEmptyFragments(InlineContainerNode container) {
   final children = container.getChildren();
-  if (children.length <= 1) return; // don't remove the last
+  if (children.length <= 1) return;
   children.removeWhere((c) {
     if (c is FluentList || c is InlineContainerNode) return false;
     return c is Fragment && c.text.isEmpty;

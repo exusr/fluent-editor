@@ -5,14 +5,14 @@ import 'package:flutter/services.dart';
 import 'package:fluent_editor/factories.dart';
 import 'package:fluent_editor/fluent_document.dart';
 import 'package:fluent_editor/utils/fragment_operations.dart';
-import 'package:fluent_editor/utils/resolve_selection.dart';
+import 'package:fluent_editor/utils/handler_helpers.dart';
 import 'package:flutter/material.dart';
 
 const _channel = MethodChannel('com.fluenteditor/fonts');
 
 /// Fallback for unsupported platforms or in case of error.
 const _fallbackFonts = <String>[
-  'Arial',
+  'DejaVu Sans',
   'Calibri',
   'Cambria',
   'Comic Sans MS',
@@ -29,7 +29,7 @@ const _fallbackFonts = <String>[
 ];
 
 /// Curated list of popular Google Fonts for web.
-/// These fonts are bundled locally in assets/google_fonts/.
+/// These fonts are bundled locally in assets/fonts/.
 /// To add more fonts, place .ttf files in that directory and update this list.
 const _googleFontsForWeb = <String>[
   'DejaVu Sans',
@@ -79,10 +79,17 @@ final _nonLatinNamePatterns = <RegExp>[
 
 /// Returns the list of Google Fonts bundled locally for web.
 /// These fonts are registered in pubspec.yaml and loaded from
-/// assets/google_fonts/ without network requests.
+/// assets/fonts/ without network requests.
 List<String> _getWebFonts() {
   return _googleFontsForWeb;
 }
+
+/// Fonts bundled with the fluent_editor package, always available.
+const _bundledFonts = <String>[
+  'DejaVu Sans', 'DejaVu Serif', 'DejaVu Sans Mono',
+  'Crimson Text', 'Fira Sans', 'Lato', 'Poppins', 'Titillium Web',
+  'Barlow', 'SpaceMono',
+];
 
 /// Retrieves available font families on the current system.
 /// Returns an ordered, deduplicated, and filtered list.
@@ -103,19 +110,21 @@ Future<List<String>> getSystemFonts() async {
     return _fallbackFonts;
   }
 
-  if (raw.isEmpty) return _fallbackFonts;
+  if (raw.isEmpty) return [..._bundledFonts, ..._fallbackFonts];
 
-  return _postProcess(raw);
+  return _postProcess([..._bundledFonts, ...raw]);
 }
 
-/// Mobile: uses Platform Channel; fallback to minimal list.
+/// Mobile: uses Platform Channel; fallback to bundled + common fonts.
 Future<List<String>> _getMobileFonts() async {
   try {
     final List<dynamic> fonts = await _channel.invokeMethod('getSystemFonts');
     return fonts.cast<String>();
   } catch (_) {
     return const [
-      'Arial', 'Roboto', 'Courier New', 'Georgia',
+      'DejaVu Sans', 'DejaVu Serif', 'DejaVu Sans Mono',
+      'Crimson Text', 'Fira Sans', 'Lato', 'Poppins', 'Titillium Web',
+      'DejaVu Sans', 'Roboto', 'Courier New', 'Georgia',
       'Times New Roman', 'Verdana', 'Tahoma',
     ];
   }
@@ -289,7 +298,7 @@ class FluentFontSelectorWidget extends StatefulWidget {
 }
 
 class _FluentFontSelectorWidgetState extends State<FluentFontSelectorWidget> {
-  String _currentFont = 'Arial';
+  String _currentFont = 'DejaVu Sans';
   List<String> _availableFonts = _fallbackFonts;
 
   _FluentFontSelectorWidgetState() {
@@ -335,42 +344,26 @@ class _FluentFontSelectorWidgetState extends State<FluentFontSelectorWidget> {
   void _updateFont() {
     final font = _resolveCurrentFont();
     if (font != _currentFont) {
-      setState(() => _currentFont = font.isEmpty ? 'Arial' : font);
+      setState(() => _currentFont = font.isEmpty ? 'DejaVu Sans' : font);
     }
   }
 
   String _resolveCurrentFont() {
     final document = widget.document;
     final cursor = document.cursor;
-    final root = document.content;
 
     if (cursor.anchorId != cursor.focusId ||
         cursor.anchorOffset != cursor.focusOffset) {
-      final selection = resolveSelection(
-        root,
-        cursor.anchorId,
-        cursor.anchorOffset,
-        cursor.focusId,
-        cursor.focusOffset,
-        cachedStops: document.caretStops,
-        cachedLines: document.logicalLines,
-      );
+      final selection = resolveSelectionFromCursor(document);
       if (selection != null) {
         final fonts = <String?>{};
         for (final node in selection.nodes) {
-          final leaves =
-              FragmentOperations.collectLeafFragments(node.container as FNode);
-          bool inRange = false;
-          for (final leaf in leaves) {
-            if (leaf.id == node.startFragment.id) inRange = true;
-            if (inRange && leaf is! FluentImage) {
-              fonts.add(leaf.fontFamily);
-            }
-            if (leaf.id == node.endFragment.id) inRange = false;
+          for (final leaf in FragmentOperations.collectLeavesInRange(node)) {
+            fonts.add(leaf.fontFamily);
           }
         }
-        if (fonts.length == 1) return fonts.single ?? 'Arial';
-        return 'Arial';
+        if (fonts.length == 1) return fonts.single ?? 'DejaVu Sans';
+        return 'DejaVu Sans';
       }
     }
 
@@ -380,10 +373,10 @@ class _FluentFontSelectorWidgetState extends State<FluentFontSelectorWidget> {
   }
 
   /// Returns the safe value for the DropdownButton.
-  /// Priority: current font → Arial → first available font → null.
+  /// Priority: current font → DejaVu Sans → first available font → null.
   String? _getDropdownValue() {
     if (_availableFonts.contains(_currentFont)) return _currentFont;
-    if (_availableFonts.contains('Arial')) return 'Arial';
+    if (_availableFonts.contains('DejaVu Sans')) return 'DejaVu Sans';
     return _availableFonts.isNotEmpty ? _availableFonts.first : null;
   }
 

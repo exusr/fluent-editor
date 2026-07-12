@@ -26,7 +26,6 @@ void main() {
       final rootId = document.content.nodes.first.id;
       final co = CursorOffset(id: rootId, offset: 2);
       co.localToGlobal(document, forward: true);
-      // When id matches a top-level node, the method returns early
       expect(co.id, rootId);
       expect(co.offset, 2);
     });

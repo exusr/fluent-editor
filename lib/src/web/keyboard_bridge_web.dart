@@ -23,7 +23,7 @@ class MobileKeyboardBridgeImpl {
     _hiddenInput!.style.fontSize = '16px'; // Prevents iOS zoom
     _hiddenInput!.style.width = '1px';
     _hiddenInput!.style.height = '1px';
-    _hiddenInput!.style.pointerEvents = 'none'; // Don't intercept pointer events
+    _hiddenInput!.style.pointerEvents = 'none';
     _hiddenInput!.setAttribute('autocorrect', 'off');
     _hiddenInput!.setAttribute('autocapitalize', 'off');
     _hiddenInput!.setAttribute('spellcheck', 'false');

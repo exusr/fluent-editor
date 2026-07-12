@@ -4,25 +4,62 @@ import 'package:fluent_editor/utils/color_utils.dart';
 import 'package:fluent_editor/widgets/shared/color_picker_widgets.dart';
 import 'package:flutter/material.dart';
 
-class FluentTextColorButton extends StatelessWidget {
+/// A reusable color picker button for text color or highlight color.
+class FluentColorButton extends StatelessWidget {
   final FluentDocument document;
   final FluentEditorLabels? labels;
 
-  const FluentTextColorButton({super.key, required this.document, this.labels});
+  /// Dialog title and tooltip text.
+  final String title;
 
-  String? _resolveCurrentColor() {
-    return document.pendingColor;
-  }
+  /// Label for the "none/auto" chip.
+  final String noneLabel;
+
+  /// Preset color hex list to show as chips.
+  final List<String> presets;
+
+  /// Description used in saveState.
+  final String saveStateDescription;
+
+  /// Default color for the custom color picker.
+  final Color defaultCustomColor;
+
+  /// Title for the custom color dialog.
+  final String customDialogTitle;
+
+  /// Icon to display.
+  final IconData icon;
+
+  /// Resolves the current color from the document.
+  final String? Function(FluentDocument) resolveColor;
+
+  /// Applies the selected color via the event handler.
+  final void Function(String?) handleColor;
+
+  const FluentColorButton({
+    super.key,
+    required this.document,
+    this.labels,
+    required this.title,
+    required this.noneLabel,
+    required this.presets,
+    required this.saveStateDescription,
+    required this.defaultCustomColor,
+    required this.customDialogTitle,
+    required this.icon,
+    required this.resolveColor,
+    required this.handleColor,
+  });
 
   void _showColorPicker(BuildContext context) {
-    final currentColor = _resolveCurrentColor();
-    final labels = this.labels ?? document.labels ?? const FluentEditorLabels();
+    final currentColor = resolveColor(document);
+    final effectiveLabels = labels ?? document.labels ?? const FluentEditorLabels();
 
     showDialog(
       context: context,
       builder: (dialogContext) {
         return AlertDialog(
-          title: Text(labels.textColor),
+          title: Text(title),
           content: SizedBox(
             width: 400,
             child: Column(
@@ -33,22 +70,22 @@ class FluentTextColorButton extends StatelessWidget {
                   runSpacing: 8,
                   children: [
                     ColorChip(
-                      label: 'Auto',
+                      label: noneLabel,
                       isSelected: currentColor == null || currentColor.isEmpty,
                       onTap: () {
-                        document.saveState(description: 'Text color', forceNewAction: true);
-                        document.eventHandler.handleTextColor(null);
+                        document.saveState(description: saveStateDescription, forceNewAction: true);
+                        handleColor(null);
                         document.requestEditorFocus();
                         Navigator.of(dialogContext).pop();
                       },
                     ),
-                    for (final hex in presetColors)
+                    for (final hex in presets)
                       ColorChip(
                         color: ColorUtils.parseColor(hex),
                         isSelected: currentColor == hex,
                         onTap: () {
-                          document.saveState(description: 'Text color', forceNewAction: true);
-                          document.eventHandler.handleTextColor(hex);
+                          document.saveState(description: saveStateDescription, forceNewAction: true);
+                          handleColor(hex);
                           document.requestEditorFocus();
                           Navigator.of(dialogContext).pop();
                         },
@@ -66,7 +103,7 @@ class FluentTextColorButton extends StatelessWidget {
           actions: [
             TextButton(
               onPressed: () => Navigator.of(dialogContext).pop(),
-              child: Text(labels.cancel),
+              child: Text(effectiveLabels.cancel),
             ),
           ],
         );
@@ -75,7 +112,7 @@ class FluentTextColorButton extends StatelessWidget {
   }
 
   void _showCustomColorPicker(BuildContext context, String? currentColor) {
-    final initialColor = ColorUtils.parseColor(currentColor) ?? Colors.black;
+    final initialColor = ColorUtils.parseColor(currentColor) ?? defaultCustomColor;
     Color selectedColor = initialColor;
 
     showDialog(
@@ -84,7 +121,7 @@ class FluentTextColorButton extends StatelessWidget {
         return StatefulBuilder(
           builder: (context, setState) {
             return AlertDialog(
-              title: const Text('Custom color'),
+              title: Text(customDialogTitle),
               content: SizedBox(
                 width: 300,
                 child: Column(
@@ -152,9 +189,9 @@ class FluentTextColorButton extends StatelessWidget {
                 ),
                 FilledButton(
                   onPressed: () {
-                    document.saveState(description: 'Text color', forceNewAction: true);
+                    document.saveState(description: saveStateDescription, forceNewAction: true);
                     final hexColor = ColorUtils.colorToHex(selectedColor);
-                    document.eventHandler.handleTextColor(hexColor);
+                    handleColor(hexColor);
                     document.requestEditorFocus();
                     Navigator.of(dialogContext).pop();
                     Navigator.of(context).pop();
@@ -171,11 +208,11 @@ class FluentTextColorButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final currentColor = _resolveCurrentColor();
+    final currentColor = resolveColor(document);
     final colorSwatch = ColorUtils.parseColor(currentColor);
 
     return Tooltip(
-      message: 'Text color',
+      message: title,
       child: Material(
         color: Colors.transparent,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
@@ -185,7 +222,7 @@ class FluentTextColorButton extends StatelessWidget {
           mouseCursor: SystemMouseCursors.click,
           child: Padding(
             padding: const EdgeInsets.all(8),
-            child: Icon(Icons.format_color_text, size: 20, color: colorSwatch),
+            child: Icon(icon, size: 20, color: colorSwatch),
           ),
         ),
       ),

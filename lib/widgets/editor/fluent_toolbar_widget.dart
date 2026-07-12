@@ -15,16 +15,17 @@ import 'package:fluent_editor/handlers/handle_clipboard.dart';
 import 'package:fluent_editor/handlers/handle_select_all.dart';
 import 'package:fluent_editor/localization/fluent_editor_labels.dart';
 import 'package:fluent_editor/utils/fragment_operations.dart';
-import 'package:fluent_editor/utils/resolve_selection.dart';
+import 'package:fluent_editor/utils/handler_helpers.dart';
+import 'package:fluent_editor/utils/cursor_utils.dart';
+import 'package:fluent_editor/utils/color_utils.dart';
 import 'package:fluent_editor/widgets/dialogs/author_info_dialog.dart';
 import 'package:fluent_editor/widgets/editor/fluent_font_selector_widget.dart';
 import 'package:fluent_editor/widgets/editor/fluent_font_size_selector_widget.dart';
 import 'package:fluent_editor/widgets/editor/fluent_paragraph_style_selector.dart';
 import 'package:fluent_editor/widgets/editor/fluent_paragraph_spacing_button.dart';
-import 'package:fluent_editor/widgets/editor/fluent_text_color_button.dart';
+import 'package:fluent_editor/widgets/editor/fluent_color_button.dart';
 import 'package:fluent_editor/controllers/document_language_controller.dart';
 import 'package:fluent_editor/models/document_language.dart';
-import 'package:fluent_editor/widgets/editor/fluent_highlight_color_button.dart';
 import 'package:fluent_editor/widgets/toolbar/language_selector_widget.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
@@ -139,18 +140,9 @@ class _FluentToolbarState extends State<FluentToolbar> {
         .findLogicalContainerId(widget.document.cursor.anchorId);
     if (containerId == null) return TextAlign.left;
     final container = widget.document.nodeById(containerId);
-    if (container is Paragraph) return _parseTextAlign(container.textAlign);
-    if (container is FluentImage) return _parseTextAlign(container.textAlign);
+    if (container is Paragraph) return parseTextAlign(container.textAlign);
+    if (container is FluentImage) return parseTextAlign(container.textAlign);
     return TextAlign.left;
-  }
-
-  TextAlign _parseTextAlign(String value) {
-    return switch (value) {
-      'center' => TextAlign.center,
-      'right' => TextAlign.right,
-      'justify' => TextAlign.justify,
-      _ => TextAlign.left,
-    };
   }
 
   bool _hasSelection() => !widget.document.cursor.isCollapsed;
@@ -169,24 +161,13 @@ class _FluentToolbarState extends State<FluentToolbar> {
   bool _hasClipboardContent() => widget.document.clipboardPayload != null;
 
   bool _checkStyle(String styleName) {
-    final root = widget.document.content;
     final cursor = widget.document.cursor;
     if (!cursor.isCollapsed) {
-      final selection = resolveSelection(
-        root, cursor.anchorId, cursor.anchorOffset, cursor.focusId, cursor.focusOffset,
-        cachedStops: widget.document.caretStops,
-        cachedLines: widget.document.logicalLines,
-      );
+      final selection = resolveSelectionFromCursor(widget.document);
       if (selection != null) {
         for (final node in selection.nodes) {
-          final leaves = FragmentOperations.collectLeafFragments(node.container as FNode);
-          bool inRange = false;
-          for (final leaf in leaves) {
-            if (leaf.id == node.startFragment.id) inRange = true;
-            if (inRange && leaf is! FluentImage) {
-              if (leaf.styles?.contains(styleName) ?? false) return true;
-            }
-            if (leaf.id == node.endFragment.id) inRange = false;
+          for (final leaf in FragmentOperations.collectLeavesInRange(node)) {
+            if (leaf.styles?.contains(styleName) ?? false) return true;
           }
         }
         return false;
@@ -205,19 +186,107 @@ class _FluentToolbarState extends State<FluentToolbar> {
           ? Theme.of(context).colorScheme.primaryContainer.withAlpha(180)
           : null,
       onPressed: () {
-        widget.document.eventHandler.handleTextAlign(_serializeTextAlign(align));
+        widget.document.eventHandler.handleTextAlign(serializeTextAlign(align));
         widget.document.requestEditorFocus();
       },
     );
   }
 
-  String _serializeTextAlign(TextAlign value) {
-    return switch (value) {
-      TextAlign.center => 'center',
-      TextAlign.right => 'right',
-      TextAlign.justify => 'justify',
-      _ => 'left',
-    };
+  /// Picks a file using the platform-appropriate dialog.
+  /// Returns content as text and/or bytes depending on [binary].
+  Future<({String? content, Uint8List? bytes})> _pickFile({
+    required String label,
+    required List<String> extensions,
+    required String title,
+    bool binary = false,
+  }) async {
+    if (kIsWeb) {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: extensions,
+        withData: true,
+      );
+      if (!mounted) return (content: null, bytes: null);
+      if (result != null && result.files.isNotEmpty) {
+        final file = result.files.first;
+        final bytes = file.bytes;
+        if (bytes != null) {
+          if (binary) return (content: null, bytes: bytes);
+          return (content: utf8.decode(bytes, allowMalformed: true), bytes: bytes);
+        }
+      }
+      return (content: null, bytes: null);
+    }
+
+    if (Platform.isLinux) {
+      try {
+        final env = Map<String, String>.from(Platform.environment);
+        env['GTK_THEME'] = 'Adwaita';
+        final filter = extensions.map((e) => '*.$e').join(' ');
+        final result = await Process.run('zenity', [
+          '--file-selection',
+          '--file-filter=$label | $filter',
+          '--title=$title',
+        ], environment: env);
+        if (result.exitCode == 0) {
+          final path = (result.stdout as String).trim();
+          if (path.isNotEmpty) {
+            final file = File(path);
+            if (binary) {
+              return (content: null, bytes: await file.readAsBytes());
+            }
+            return (content: await file.readAsString(), bytes: null);
+          }
+        }
+      } catch (_) {}
+      return (content: null, bytes: null);
+    }
+
+    if (Platform.isMacOS || Platform.isWindows) {
+      final typeGroup = XTypeGroup(
+        label: label,
+        extensions: extensions,
+      );
+      final file = await openFile(acceptedTypeGroups: [typeGroup]);
+      if (!mounted) return (content: null, bytes: null);
+      if (file != null) {
+        if (binary) {
+          return (content: null, bytes: Uint8List.fromList(await file.readAsBytes()));
+        }
+        return (content: await file.readAsString(), bytes: null);
+      }
+      return (content: null, bytes: null);
+    }
+
+    // Fallback for other platforms
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.any,
+      withData: true,
+    );
+    if (!mounted) return (content: null, bytes: null);
+    if (result != null && result.files.isNotEmpty) {
+      final file = result.files.first;
+      if (file.path != null) {
+        final path = file.path!;
+        final valid = extensions.any((e) => path.endsWith('.$e'));
+        if (!valid) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('${_labels.fileLoadError}: Please select a .${extensions.first} file')),
+          );
+          return (content: null, bytes: null);
+        }
+      }
+      final bytes = file.bytes;
+      if (bytes != null) {
+        if (binary) return (content: null, bytes: bytes);
+        return (content: utf8.decode(bytes, allowMalformed: true), bytes: bytes);
+      } else if (!kIsWeb && file.path != null) {
+        final fileOnDisk = File(file.path!);
+        if (binary) return (content: null, bytes: await fileOnDisk.readAsBytes());
+        return (content: await fileOnDisk.readAsString(), bytes: null);
+      }
+    }
+    return (content: null, bytes: null);
   }
 
   Future<void> _saveFluentFile() async {
@@ -235,74 +304,12 @@ class _FluentToolbarState extends State<FluentToolbar> {
 
   Future<void> _loadFluentFile() async {
     try {
-      String? jsonContent;
-
-      if (kIsWeb) {
-        final result = await FilePicker.platform.pickFiles(
-          type: FileType.custom,
-          allowedExtensions: ['fluent', 'json'],
-          withData: true,
-        );
-        if (!mounted) return;
-        if (result != null && result.files.isNotEmpty) {
-          final file = result.files.first;
-          if (file.bytes != null) {
-            jsonContent = utf8.decode(file.bytes!);
-          }
-        }
-      }
-      else if (Platform.isLinux) {
-        try {
-          final env = Map<String, String>.from(Platform.environment);
-          env['GTK_THEME'] = 'Adwaita';
-
-          final result = await Process.run('zenity', [
-            '--file-selection',
-            '--file-filter=Fluent Editor | *.fluent *.json',
-            '--title=Open file',
-          ], environment: env);
-          if (result.exitCode == 0) {
-            final path = (result.stdout as String).trim();
-            if (path.isNotEmpty) {
-              jsonContent = File(path).readAsStringSync();
-            }
-          }
-        } catch (_) {}
-      } else if (Platform.isMacOS || Platform.isWindows) {
-        const typeGroup = XTypeGroup(
-          label: 'Fluent documents',
-          extensions: ['fluent', 'json'],
-        );
-        final file = await openFile(acceptedTypeGroups: [typeGroup]);
-        if (!mounted) return;
-        if (file != null) {
-          jsonContent = await file.readAsString();
-        }
-      } else {
-        final result = await FilePicker.platform.pickFiles(
-          type: FileType.any,
-          withData: true,
-        );
-        if (!mounted) return;
-        if (result != null && result.files.isNotEmpty) {
-          final file = result.files.first;
-          if (file.path != null) {
-            final path = file.path!;
-            if (!path.endsWith('.fluent') && !path.endsWith('.json')) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(content: Text('${_labels.fileLoadError}: Please select a .fluent or .json file')),
-              );
-              return;
-            }
-          }
-          if (file.bytes != null) {
-            jsonContent = utf8.decode(file.bytes!);
-          } else if (!kIsWeb && file.path != null) {
-            jsonContent = File(file.path!).readAsStringSync();
-          }
-        }
-      }
-      
+      final picked = await _pickFile(
+        label: 'Fluent Editor',
+        extensions: ['fluent', 'json'],
+        title: 'Open file',
+      );
+      final jsonContent = picked.content;
       if (jsonContent == null) return;
       if (!mounted) return;
       final jsonMap = jsonDecode(jsonContent) as Map<String, dynamic>;
@@ -374,78 +381,15 @@ class _FluentToolbarState extends State<FluentToolbar> {
 
   Future<void> _importDocument(String format) async {
     try {
-      String? content;
-      Uint8List? bytes;
-
-      if (kIsWeb) {
-        final result = await FilePicker.platform.pickFiles(
-          type: FileType.custom,
-          allowedExtensions: [format],
-          withData: true,
-        );
-        if (!mounted) return;
-        if (result != null && result.files.isNotEmpty) {
-          final file = result.files.first;
-          bytes = file.bytes;
-          if (bytes != null && format != 'docx' && format != 'odt') {
-            content = utf8.decode(bytes, allowMalformed: true);
-          }
-        }
-      } else if (Platform.isLinux) {
-        try {
-          final env = Map<String, String>.from(Platform.environment);
-          env['GTK_THEME'] = 'Adwaita';
-          final result = await Process.run('zenity', [
-            '--file-selection',
-            '--file-filter=${format.toUpperCase()} | *.$format',
-            '--title=Import file',
-          ], environment: env);
-          if (result.exitCode == 0) {
-            final path = (result.stdout as String).trim();
-            if (path.isNotEmpty) {
-              final file = File(path);
-              if (format == 'docx' || format == 'odt') {
-                bytes = await file.readAsBytes();
-              } else {
-                content = await file.readAsString();
-              }
-            }
-          }
-        } catch (_) {}
-      } else if (Platform.isMacOS || Platform.isWindows) {
-        final typeGroup = XTypeGroup(
-          label: format.toUpperCase(),
-          extensions: [format],
-        );
-        final file = await openFile(acceptedTypeGroups: [typeGroup]);
-        if (!mounted) return;
-        if (file != null) {
-          if (format == 'docx' || format == 'odt') {
-            bytes = Uint8List.fromList(await file.readAsBytes());
-          } else {
-            content = await file.readAsString();
-          }
-        }
-      } else {
-        final result = await FilePicker.platform.pickFiles(
-          type: FileType.any,
-          withData: true,
-        );
-        if (!mounted) return;
-        if (result != null && result.files.isNotEmpty) {
-          final file = result.files.first;
-          if (file.path != null && !file.path!.endsWith('.$format')) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text('${_labels.fileLoadError}: Please select a .$format file')),
-            );
-            return;
-          }
-          bytes = file.bytes;
-          if (bytes != null && format != 'docx' && format != 'odt') {
-            content = utf8.decode(bytes, allowMalformed: true);
-          }
-        }
-      }
+      final isBinary = format == 'docx' || format == 'odt';
+      final picked = await _pickFile(
+        label: format.toUpperCase(),
+        extensions: [format],
+        title: 'Import file',
+        binary: isBinary,
+      );
+      final content = picked.content;
+      final bytes = picked.bytes;
 
       if (content == null && bytes == null) return;
       if (!mounted) return;
@@ -756,70 +700,49 @@ class _FluentToolbarState extends State<FluentToolbar> {
                     _withClickCursor(SubmenuButton(
                       leadingIcon: const Icon(Icons.text_format),
                       menuChildren: [
-                        _withClickCursor(MenuItemButton(
-                          leadingIcon: const Icon(Icons.format_bold),
-                          trailingIcon: _isBold ? const Icon(Icons.check, size: 18) : null,
-                          onPressed: _hasSelection() ? () {
-                            widget.document.eventHandler.handleBold();
-                            widget.document.requestEditorFocus();
-                          } : null,
-                          child: Text(_labels.bold),
-                        )),
-                        _withClickCursor(MenuItemButton(
-                          leadingIcon: const Icon(Icons.format_italic),
-                          trailingIcon: _isItalic ? const Icon(Icons.check, size: 18) : null,
-                          onPressed: _hasSelection() ? () {
-                            widget.document.eventHandler.handleItalic();
-                            widget.document.requestEditorFocus();
-                          } : null,
-                          child: Text(_labels.italic),
-                        )),
-                        _withClickCursor(MenuItemButton(
-                          leadingIcon: const Icon(Icons.format_underline),
-                          trailingIcon: _isUnderline ? const Icon(Icons.check, size: 18) : null,
-                          onPressed: _hasSelection() ? () {
-                            widget.document.eventHandler.handleUnderline();
-                            widget.document.requestEditorFocus();
-                          } : null,
-                          child: Text(_labels.underline),
-                        )),
-                        _withClickCursor(MenuItemButton(
-                          leadingIcon: const Icon(Icons.format_strikethrough),
-                          trailingIcon: _isStrikethrough ? const Icon(Icons.check, size: 18) : null,
-                          onPressed: _hasSelection() ? () {
-                            widget.document.eventHandler.handleStrikethrough();
-                            widget.document.requestEditorFocus();
-                          } : null,
-                          child: Text(_labels.strikethrough),
-                        )),
-                        _withClickCursor(MenuItemButton(
-                          leadingIcon: const Icon(Icons.text_fields),
-                          trailingIcon: _isSmallCaps ? const Icon(Icons.check, size: 18) : null,
-                          onPressed: _hasSelection() ? () {
-                            widget.document.eventHandler.handleSmallCaps();
-                            widget.document.requestEditorFocus();
-                          } : null,
-                          child: Text(_labels.smallCaps),
-                        )),
+                        _buildFormatMenuItem(
+                          icon: Icons.format_bold,
+                          label: _labels.bold,
+                          isActive: _isBold,
+                          handler: widget.document.eventHandler.handleBold,
+                        ),
+                        _buildFormatMenuItem(
+                          icon: Icons.format_italic,
+                          label: _labels.italic,
+                          isActive: _isItalic,
+                          handler: widget.document.eventHandler.handleItalic,
+                        ),
+                        _buildFormatMenuItem(
+                          icon: Icons.format_underline,
+                          label: _labels.underline,
+                          isActive: _isUnderline,
+                          handler: widget.document.eventHandler.handleUnderline,
+                        ),
+                        _buildFormatMenuItem(
+                          icon: Icons.format_strikethrough,
+                          label: _labels.strikethrough,
+                          isActive: _isStrikethrough,
+                          handler: widget.document.eventHandler.handleStrikethrough,
+                        ),
+                        _buildFormatMenuItem(
+                          icon: Icons.text_fields,
+                          label: _labels.smallCaps,
+                          isActive: _isSmallCaps,
+                          handler: widget.document.eventHandler.handleSmallCaps,
+                        ),
                         const Divider(height: 1),
-                        _withClickCursor(MenuItemButton(
-                          leadingIcon: const Icon(Icons.superscript),
-                          trailingIcon: _isSuperscript ? const Icon(Icons.check, size: 18) : null,
-                          onPressed: _hasSelection() ? () {
-                            widget.document.eventHandler.handleSuperscript();
-                            widget.document.requestEditorFocus();
-                          } : null,
-                          child: Text(_labels.superscript),
-                        )),
-                        _withClickCursor(MenuItemButton(
-                          leadingIcon: const Icon(Icons.subscript),
-                          trailingIcon: _isSubscript ? const Icon(Icons.check, size: 18) : null,
-                          onPressed: _hasSelection() ? () {
-                            widget.document.eventHandler.handleSubscript();
-                            widget.document.requestEditorFocus();
-                          } : null,
-                          child: Text(_labels.subscript),
-                        )),
+                        _buildFormatMenuItem(
+                          icon: Icons.superscript,
+                          label: _labels.superscript,
+                          isActive: _isSuperscript,
+                          handler: widget.document.eventHandler.handleSuperscript,
+                        ),
+                        _buildFormatMenuItem(
+                          icon: Icons.subscript,
+                          label: _labels.subscript,
+                          isActive: _isSubscript,
+                          handler: widget.document.eventHandler.handleSubscript,
+                        ),
                       ],
                       child: Text(_labels.text),
                     )),
@@ -1008,41 +931,50 @@ class _FluentToolbarState extends State<FluentToolbar> {
                 const SizedBox(width: 4),
                 FluentFontSizeSelectorWidget(document: widget.document),
                 _buildVerticalDivider(),
-                _buildToolbarButton(
+                _buildFormatButton(
                   icon: Icons.format_bold,
                   tooltip: "Bold (Ctrl+B)",
-                  iconColor: _isBold ? Theme.of(context).colorScheme.primary : null,
-                  backgroundColor: _isBold
-                      ? Theme.of(context).colorScheme.primaryContainer.withAlpha(180) : null,
-                  onPressed: () {
-                    widget.document.eventHandler.handleBold();
-                    widget.document.requestEditorFocus();
-                  },
+                  isActive: _isBold,
+                  handler: widget.document.eventHandler.handleBold,
                 ),
-                _buildToolbarButton(
+                _buildFormatButton(
                   icon: Icons.format_italic,
                   tooltip: "Italic (Ctrl+I)",
-                  iconColor: _isItalic ? Theme.of(context).colorScheme.primary : null,
-                  backgroundColor: _isItalic
-                      ? Theme.of(context).colorScheme.primaryContainer.withAlpha(180) : null,
-                  onPressed: () {
-                    widget.document.eventHandler.handleItalic();
-                    widget.document.requestEditorFocus();
-                  },
+                  isActive: _isItalic,
+                  handler: widget.document.eventHandler.handleItalic,
                 ),
-                _buildToolbarButton(
+                _buildFormatButton(
                   icon: Icons.format_underline,
                   tooltip: "Underline (Ctrl+U)",
-                  iconColor: _isUnderline ? Theme.of(context).colorScheme.primary : null,
-                  backgroundColor: _isUnderline
-                      ? Theme.of(context).colorScheme.primaryContainer.withAlpha(180) : null,
-                  onPressed: () {
-                    widget.document.eventHandler.handleUnderline();
-                    widget.document.requestEditorFocus();
-                  },
+                  isActive: _isUnderline,
+                  handler: widget.document.eventHandler.handleUnderline,
                 ),
-                FluentTextColorButton(document: widget.document, labels: widget.labels),
-                FluentHighlightColorButton(document: widget.document, labels: widget.labels),
+                FluentColorButton(
+                  document: widget.document,
+                  labels: widget.labels,
+                  title: widget.labels?.textColor ?? 'Text color',
+                  noneLabel: 'Auto',
+                  presets: presetColors,
+                  saveStateDescription: 'Text color',
+                  defaultCustomColor: Colors.black,
+                  customDialogTitle: 'Custom color',
+                  icon: Icons.format_color_text,
+                  resolveColor: (doc) => doc.pendingColor,
+                  handleColor: (c) => widget.document.eventHandler.handleTextColor(c),
+                ),
+                FluentColorButton(
+                  document: widget.document,
+                  labels: widget.labels,
+                  title: widget.labels?.highlightColor ?? 'Highlight',
+                  noneLabel: 'None',
+                  presets: presetHighlightColors,
+                  saveStateDescription: 'Highlight color',
+                  defaultCustomColor: const Color(0xFFFFFF00),
+                  customDialogTitle: 'Custom highlight color',
+                  icon: Icons.border_color,
+                  resolveColor: (doc) => doc.pendingHighlightColor,
+                  handleColor: (c) => widget.document.eventHandler.handleHighlightColor(c),
+                ),
                 _buildVerticalDivider(),
                 _buildToolbarButton(
                   icon: Icons.link,
@@ -1144,5 +1076,42 @@ class _FluentToolbarState extends State<FluentToolbar> {
         ),
       ),
     );
+  }
+
+  Widget _buildFormatButton({
+    required IconData icon,
+    required String tooltip,
+    required bool isActive,
+    required VoidCallback handler,
+  }) {
+    return _buildToolbarButton(
+      icon: icon,
+      tooltip: tooltip,
+      iconColor: isActive ? Theme.of(context).colorScheme.primary : null,
+      backgroundColor: isActive
+          ? Theme.of(context).colorScheme.primaryContainer.withAlpha(180)
+          : null,
+      onPressed: () {
+        handler();
+        widget.document.requestEditorFocus();
+      },
+    );
+  }
+
+  Widget _buildFormatMenuItem({
+    required IconData icon,
+    required String label,
+    required bool isActive,
+    required VoidCallback handler,
+  }) {
+    return _withClickCursor(MenuItemButton(
+      leadingIcon: Icon(icon),
+      trailingIcon: isActive ? const Icon(Icons.check, size: 18) : null,
+      onPressed: _hasSelection() ? () {
+        handler();
+        widget.document.requestEditorFocus();
+      } : null,
+      child: Text(label),
+    ));
   }
 }

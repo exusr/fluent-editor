@@ -6,7 +6,6 @@ import 'package:fluent_editor/services/export_service.dart';
 void main() {
   group('ExportService Markdown export', () {
     test('headings are exported correctly', () {
-      // Create document with headings
       final root = Root(nodes: [
         Paragraph(text: 'Heading 1', styleName: 'heading1'),
         Paragraph(text: 'Heading 2', styleName: 'heading2'),
@@ -21,9 +20,6 @@ void main() {
       final exportService = ExportService(doc);
       final md = exportService.exportToMarkdown();
 
-      print('Exported Markdown:\n$md');
-
-      // Check headings are exported with correct level
       expect(md.contains('# Heading 1'), true, reason: 'h1 should be exported');
       expect(md.contains('## Heading 2'), true, reason: 'h2 should be exported');
       expect(md.contains('### Heading 3'), true, reason: 'h3 should be exported');

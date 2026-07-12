@@ -11,9 +11,7 @@ class TestDocumentGenerator {
     for (int i = 0; i < paragraphCount; i++) {
       final paragraph = Paragraph();
       
-      // Add different types of content to make it realistic
       if (i % 10 == 0) {
-        // Every 10th paragraph, add a heading style
         final headingFragment = Fragment(
           "Paragraph ${i + 1} - Heading Style Content",
           styles: ['bold'],
@@ -21,7 +19,6 @@ class TestDocumentGenerator {
         );
         paragraph.fragments.add(headingFragment);
       } else if (i % 7 == 0) {
-        // Every 7th paragraph, add italic content
         final italicFragment = Fragment(
           "This is paragraph number ${i + 1} with italic text for testing purposes. "
           "Lorem ipsum dolor sit amet, consectetur adipiscing elit. "
@@ -30,7 +27,6 @@ class TestDocumentGenerator {
         );
         paragraph.fragments.add(italicFragment);
       } else if (i % 5 == 0) {
-        // Every 5th paragraph, add a link
         final textFragment = Fragment("This is paragraph ${i + 1} with a ");
         paragraph.fragments.add(textFragment);
         
@@ -47,8 +43,7 @@ class TestDocumentGenerator {
         );
         paragraph.fragments.add(afterLinkFragment);
       } else {
-        // Regular paragraph with varying length
-        final length = (i % 3) + 1; // Vary length from 1-3 sentences
+        final length = (i % 3) + 1;
         final text = _generateParagraphText(i + 1, length);
         final fragment = Fragment(text);
         paragraph.fragments.add(fragment);
@@ -56,20 +51,16 @@ class TestDocumentGenerator {
       
       document.content.nodes.add(paragraph);
       
-      // Occasionally add other elements for variety
       if (i % 20 == 0 && i > 0) {
-        // Add a horizontal rule every 20 paragraphs
         document.content.nodes.add(HorizontalRule());
       }
       
       if (i % 25 == 0 && i > 0) {
-        // Add an image every 25 paragraphs
         final image = FluentImage("https://picsum.photos/seed/test${i}/600/400.jpg");
         document.content.nodes.add(image);
       }
       
       if (i % 30 == 0 && i > 0) {
-        // Add a list every 30 paragraphs
         final list = FluentList(listType: 'bullet');
         for (int j = 0; j < 3; j++) {
           final listItem = ListItem(bulletType: 'disc', indexList: [j + 1]);
@@ -116,7 +107,6 @@ class TestDocumentGenerator {
     final document = FluentDocument();
     
     for (int i = 0; i < sections; i++) {
-      // Add heading
       final headingParagraph = Paragraph();
       final headingFragment = Fragment(
         "Section ${i + 1}",
@@ -126,7 +116,6 @@ class TestDocumentGenerator {
       headingParagraph.fragments.add(headingFragment);
       document.content.nodes.add(headingParagraph);
       
-      // Add subheading
       final subheadingParagraph = Paragraph();
       final subheadingFragment = Fragment(
         "Subtitle for section ${i + 1}",
@@ -136,7 +125,6 @@ class TestDocumentGenerator {
       subheadingParagraph.fragments.add(subheadingFragment);
       document.content.nodes.add(subheadingParagraph);
       
-      // Add several content paragraphs
       for (int j = 0; j < 5; j++) {
         final contentParagraph = Paragraph();
         final contentFragment = Fragment(
@@ -149,7 +137,6 @@ class TestDocumentGenerator {
         document.content.nodes.add(contentParagraph);
       }
       
-      // Add variety elements
       if (i % 3 == 0) {
         final list = FluentList(listType: 'bullet');
         for (int j = 0; j < 4; j++) {

@@ -308,7 +308,7 @@ class ImportHtmlService {
       final height = double.tryParse(heightAttr);
       if (height != null) img.height = height;
     }
-    img.text = '\u200b'; // Zero-width space
+    img.text = '\u200b';
     img.textAlign = 'left';
     img.styles = null;
     img.fontFamily = 'DejaVu Sans';

@@ -2,6 +2,7 @@ import 'package:fluent_editor/factories.dart';
 import 'package:fluent_editor/fluent_document.dart';
 import 'package:fluent_editor/styles.dart';
 import 'package:fluent_editor/utils/fragment_operations.dart';
+import 'package:fluent_editor/utils/handler_helpers.dart';
 import 'package:fluent_editor/utils/node_operations.dart';
 import 'package:fluent_editor/utils/resolve_selection.dart';
 
@@ -13,15 +14,7 @@ bool executeHandleClearFormatting(FluentDocument document) {
   final root = document.content;
   final cursor = document.cursor;
 
-  final selection = resolveSelection(
-    root,
-    cursor.anchorId,
-    cursor.anchorOffset,
-    cursor.focusId,
-    cursor.focusOffset,
-    cachedStops: document.caretStops,
-    cachedLines: document.logicalLines,
-  );
+  final selection = resolveSelectionFromCursor(document);
 
   if (selection != null) {
     return _clearFormattingFromSelection(document, selection);
@@ -29,7 +22,7 @@ bool executeHandleClearFormatting(FluentDocument document) {
 
   if (cursor.isCollapsed) {
     document.pendingStyles = [];
-    document.pendingFontFamily = 'Arial';
+    document.pendingFontFamily = 'DejaVu Sans';
     document.pendingFontSize = 14.0;
     document.pendingColor = null;
     document.pendingHighlightColor = null;
@@ -73,7 +66,7 @@ bool _clearFormattingFromSelection(FluentDocument document, ResolvedSelection se
 
       if (inRange && leaf is! FluentImage) {
         leaf.styles = [];
-        leaf.fontFamily = 'Arial';
+        leaf.fontFamily = 'DejaVu Sans';
         leaf.fontSize = 14.0;
         leaf.color = null;
         leaf.highlightColor = null;

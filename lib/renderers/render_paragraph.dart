@@ -357,7 +357,7 @@ class RenderFluentParagraph extends RenderFluentNode
     if (_paragraphStyle?.fontFamily != null) {
       return _paragraphStyle!.fontFamily!;
     }
-    return 'Arial';
+    return 'DejaVu Sans';
   }
 
   /// Returns the effective font size for a fragment,
@@ -733,6 +733,7 @@ class RenderFluentParagraph extends RenderFluentNode
               }
               effectiveStyle = effectiveStyle.copyWith(
                 fontFamily: _getEffectiveFontFamily(child),
+                fontFamilyFallback: const ['NotoColorEmoji', 'Roboto'],
                 fontSize: _getEffectiveFontSize(child),
                 color: ColorUtils.parseColor(child.color) ?? effectiveStyle.color,
                 backgroundColor: ColorUtils.parseColor(child.highlightColor),
@@ -832,9 +833,9 @@ class RenderFluentParagraph extends RenderFluentNode
               );
             }
           }
-          final fontFamily = _getEffectiveFontFamily(fragment);
           effectiveStyle = (effectiveStyle ?? const TextStyle()).copyWith(
-            fontFamily: fontFamily,
+            fontFamily: _getEffectiveFontFamily(fragment),
+            fontFamilyFallback: const ['NotoColorEmoji', 'Roboto'],
             fontSize: _getEffectiveFontSize(fragment),
             color: ColorUtils.parseColor(fragment.color),
             backgroundColor: ColorUtils.parseColor(fragment.highlightColor),
@@ -882,7 +883,11 @@ class RenderFluentParagraph extends RenderFluentNode
 
     return TextSpan(
       children: spans,
-      style: TextStyle(height: lineHeight, color: _defaultTextColor),
+      style: TextStyle(
+        height: lineHeight,
+        color: _defaultTextColor,
+        fontFamilyFallback: const ['NotoColorEmoji'],
+      ),
     );
   }
 

@@ -4,12 +4,13 @@ import 'package:fluent_editor/factories.dart';
 import 'package:fluent_editor/fluent_document.dart';
 import 'package:fluent_editor/renderers/render_fluent_node.dart';
 import 'package:fluent_editor/widgets/node_widget_builder.dart';
+import 'package:fluent_editor/utils/handler_helpers.dart';
 import 'package:fluent_editor/utils/node_operations.dart';
 import 'package:fluent_editor/widgets/editor/fluent_context_menu.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 
-const double _kHandleHitSize  = 8.0;  // clickable area of the handle
+const double _kHandleHitSize  = 8.0;
 const double _kMinColWidth     = 30.0;
 const double _kMinRowHeight    = 20.0;
 
@@ -506,88 +507,92 @@ class _TableWithHandlesState extends State<_TableWithHandles> {
       context: context,
       globalPosition: globalPosition,
       items: [
-        FluentContextMenuItem(
+        _saveAndRun(
           icon: Icons.table_rows,
           label: widget.document.labels?.insertRowAbove ?? 'Insert row above',
-          onPressed: () {
-            widget.document.saveState(description: 'Insert table row above', forceNewAction: true);
-            _insertRowAbove();
-          },
+          description: 'Insert table row above',
+          enabled: true,
+          action: _insertRowAbove,
         ),
-        FluentContextMenuItem(
+        _saveAndRun(
           icon: Icons.table_rows,
           label: widget.document.labels?.insertRowBelow ?? 'Insert row below',
-          onPressed: () {
-            widget.document.saveState(description: 'Insert table row below', forceNewAction: true);
-            _insertRowBelow();
-          },
+          description: 'Insert table row below',
+          enabled: true,
+          action: _insertRowBelow,
         ),
-        FluentContextMenuItem(
+        _saveAndRun(
           icon: Icons.view_column,
           label: 'Insert column',
-          onPressed: () {
-            widget.document.saveState(description: 'Insert table column', forceNewAction: true);
-            _insertColumn();
-          },
+          description: 'Insert table column',
+          enabled: true,
+          action: _insertColumn,
         ),
-        FluentContextMenuItem(
+        _saveAndRun(
           icon: Icons.delete_outline,
           label: 'Remove row',
-          onPressed: widget.node.rows.length > 1 ? () {
-            widget.document.saveState(description: 'Remove table row', forceNewAction: true);
-            _removeRow();
-          } : null,
+          description: 'Remove table row',
+          enabled: widget.node.rows.length > 1,
+          action: _removeRow,
         ),
-        FluentContextMenuItem(
+        _saveAndRun(
           icon: Icons.delete_outline,
           label: 'Remove column',
-          onPressed: _getNumCols() > 1 ? () {
-            widget.document.saveState(description: 'Remove table column', forceNewAction: true);
-            _removeColumn();
-          } : null,
+          description: 'Remove table column',
+          enabled: _getNumCols() > 1,
+          action: _removeColumn,
         ),
-        FluentContextMenuItem(
+        _saveAndRun(
           icon: Icons.merge_type,
           label: 'Increase colspan',
-          onPressed: canIncreaseColspan ? () {
-            widget.document.saveState(description: 'Increase colspan', forceNewAction: true);
-            _increaseColspan();
-          } : null,
+          description: 'Increase colspan',
+          enabled: canIncreaseColspan,
+          action: _increaseColspan,
         ),
-        FluentContextMenuItem(
+        _saveAndRun(
           icon: Icons.call_split,
           label: 'Decrease colspan',
-          onPressed: canDecreaseColspan ? () {
-            widget.document.saveState(description: 'Decrease colspan', forceNewAction: true);
-            _decreaseColspan();
-          } : null,
+          description: 'Decrease colspan',
+          enabled: canDecreaseColspan,
+          action: _decreaseColspan,
         ),
-        FluentContextMenuItem(
+        _saveAndRun(
           icon: Icons.merge_type,
           label: 'Increase rowspan',
-          onPressed: canIncreaseRowspan ? () {
-            widget.document.saveState(description: 'Increase rowspan', forceNewAction: true);
-            _increaseRowspan();
-          } : null,
+          description: 'Increase rowspan',
+          enabled: canIncreaseRowspan,
+          action: _increaseRowspan,
         ),
-        FluentContextMenuItem(
+        _saveAndRun(
           icon: Icons.call_split,
           label: 'Decrease rowspan',
-          onPressed: canDecreaseRowspan ? () {
-            widget.document.saveState(description: 'Decrease rowspan', forceNewAction: true);
-            _decreaseRowspan();
-          } : null,
+          description: 'Decrease rowspan',
+          enabled: canDecreaseRowspan,
+          action: _decreaseRowspan,
         ),
         FluentContextMenuItem(
           icon: Icons.delete,
           label: 'Delete table',
-          onPressed: () {
-            widget.document.saveState(description: 'Delete table', forceNewAction: true);
-            removeNode(widget.document.content, widget.node);
-            widget.document.updateContent();
-          },
+          onPressed: () => saveAndDeleteNode(widget.document, widget.node, description: 'Delete table'),
         ),
       ],
+    );
+  }
+
+  FluentContextMenuItem _saveAndRun({
+    required IconData icon,
+    required String label,
+    required String description,
+    required bool enabled,
+    required VoidCallback action,
+  }) {
+    return FluentContextMenuItem(
+      icon: icon,
+      label: label,
+      onPressed: enabled ? () {
+        widget.document.saveState(description: description, forceNewAction: true);
+        action();
+      } : null,
     );
   }
 

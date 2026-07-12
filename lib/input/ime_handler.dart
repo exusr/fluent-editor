@@ -4,7 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:fluent_editor/fluent_document.dart';
-import 'package:fluent_editor/factories.dart' show Fragment;
+import 'package:fluent_editor/factories.dart' show Fragment, FluentCell;
 import 'package:fluent_editor/handlers/handle_insert_character.dart';
 import 'package:fluent_editor/handlers/handle_replace_selection.dart';
 import 'package:fluent_editor/handlers/handle_enter.dart';
@@ -1051,7 +1051,7 @@ class FluentTextInputHandler with DeltaTextInputClient {
           final fragId = doc.cursor.focusId.isNotEmpty ? doc.cursor.focusId : doc.cursor.anchorId;
           final node = doc.nodeById(fragId);
           if (node is Fragment) {
-            final cellParent = findAncestorCell(doc.content, node);
+            final cellParent = findAncestor<FluentCell>(doc.content, node);
             if (cellParent != null) {
               node.text = '\u200B';
               doc.cursor.moveTo(fragId, 0);

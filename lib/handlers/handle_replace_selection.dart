@@ -1,6 +1,7 @@
 import 'package:fluent_editor/core/constants.dart';
 import 'package:fluent_editor/factories.dart';
 import 'package:fluent_editor/fluent_document.dart';
+import 'package:fluent_editor/utils/handler_helpers.dart';
 import 'package:fluent_editor/utils/node_operations.dart';
 import 'package:fluent_editor/utils/resolve_selection.dart';
 
@@ -49,15 +50,7 @@ Fragment? _setFragText(Fragment frag, String newText, Root root) {
 }
 
 void executeHandleReplaceSelection(String character, FluentDocument document) {
-  final sel = resolveSelection(
-    document.content,
-    document.cursor.anchorId,
-    document.cursor.anchorOffset,
-    document.cursor.focusId,
-    document.cursor.focusOffset,
-    cachedStops: document.caretStops,
-    cachedLines: document.logicalLines,
-  );
+  final sel = resolveSelectionFromCursor(document);
 
   if (sel == null) return;
 
@@ -252,18 +245,18 @@ void _removeFragmentsBetween(
   _removeEmptyLinks(container, root);
 }
 
-/// Removes from the tree all children of [container] that come
-/// AFTER [pivot] (pivot excluded). Traverses Links transparently.
-void _removeFragmentsAfter(
+/// Removes from the tree all children of [container] in the range
+/// [startIdx, endIdx) (exclusive). Traverses Links transparently.
+void _removeFragmentsRange(
   InlineContainerNode container,
-  Fragment pivot,
+  int startIdx,
+  int endIdx,
   Root root,
 ) {
   final flat = flattenInlineChildren(container);
-  final pivotIdx = flat.indexWhere((c) => c.id == pivot.id);
-  if (pivotIdx < 0) return;
+  if (startIdx < 0 || endIdx > flat.length || startIdx >= endIdx) return;
 
-  final toRemove = flat.sublist(pivotIdx + 1).toList();
+  final toRemove = flat.sublist(startIdx, endIdx).toList();
   for (final node in toRemove) {
     if (node is FluentList) continue;
     if (node is FluentTable) {
@@ -281,6 +274,19 @@ void _removeFragmentsAfter(
 }
 
 /// Removes from the tree all children of [container] that come
+/// AFTER [pivot] (pivot excluded). Traverses Links transparently.
+void _removeFragmentsAfter(
+  InlineContainerNode container,
+  Fragment pivot,
+  Root root,
+) {
+  final flat = flattenInlineChildren(container);
+  final pivotIdx = flat.indexWhere((c) => c.id == pivot.id);
+  if (pivotIdx < 0) return;
+  _removeFragmentsRange(container, pivotIdx + 1, flat.length, root);
+}
+
+/// Removes from the tree all children of [container] that come
 /// BEFORE [pivot] (pivot excluded). Traverses Links transparently.
 void _removeFragmentsBefore(
   InlineContainerNode container,
@@ -290,22 +296,7 @@ void _removeFragmentsBefore(
   final flat = flattenInlineChildren(container);
   final pivotIdx = flat.indexWhere((c) => c.id == pivot.id);
   if (pivotIdx < 0) return;
-
-  final toRemove = flat.sublist(0, pivotIdx).toList();
-  for (final node in toRemove) {
-    if (node is FluentList) continue;
-    if (node is FluentTable) {
-      _clearTableContents(node, root);
-      continue;
-    }
-    if (node is FluentRow) continue;
-    if (node is FluentCell) {
-      clearCellKeepingEmptyFragment(node, root);
-      continue;
-    }
-    removeNode(root, node);
-  }
-  _removeEmptyLinks(container, root);
+  _removeFragmentsRange(container, 0, pivotIdx, root);
 }
 
 /// Removes Links that remained without any child fragment.

@@ -42,10 +42,8 @@ class _VirtualizationTestPageState extends State<VirtualizationTestPage> {
 
   void _loadDocument() {
     if (_useLargeDocument) {
-      // Load a very large document to test virtualization
       _document = TestDocumentGenerator.generateLargeDocument(paragraphCount: 1000);
     } else {
-      // Load a small document for normal testing
       _document = TestDocumentGenerator.generateMixedContentDocument(sections: 5);
     }
   }

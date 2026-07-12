@@ -2,6 +2,7 @@ import 'package:fluent_editor/cursor.dart';
 import 'package:fluent_editor/factories.dart';
 import 'package:fluent_editor/fluent_document.dart';
 import 'package:fluent_editor/utils/fragment_operations.dart';
+import 'package:fluent_editor/utils/handler_helpers.dart';
 import 'package:fluent_editor/utils/node_operations.dart';
 
 /// Handles the TAB and SHIFT+TAB keys.
@@ -23,7 +24,7 @@ bool executeHandleOutdent(FluentDocument document) {
   final cursor = document.cursor;
   final container = findLogicalContainer(root, cursor.anchorId);
   if (container == null) return false;
-  final ancestorItem = _findAncestor<ListItem>(root, container as FNode);
+  final ancestorItem = findAncestor<ListItem>(root, container as FNode);
   if (ancestorItem == null) return false;
   return executeHandleOutdentItem(document, ancestorItem);
 }
@@ -41,7 +42,7 @@ bool executeHandleTab(FluentDocument document, {bool shift = false}) {
   if (container == null) return true;
 
   final containerNode = container as FNode;
-  final ancestorItem = _findAncestor<ListItem>(root, containerNode);
+  final ancestorItem = findAncestor<ListItem>(root, containerNode);
   if (ancestorItem != null) {
     shift
         ? _handleListOutdent(document, ancestorItem)
@@ -49,7 +50,7 @@ bool executeHandleTab(FluentDocument document, {bool shift = false}) {
     return true;
   }
 
-  final ancestorCell = _findAncestor<FluentCell>(root, containerNode);
+  final ancestorCell = findAncestor<FluentCell>(root, containerNode);
   if (ancestorCell != null) {
     shift
         ? _handleTablePreviousCell(document, ancestorCell)
@@ -65,16 +66,6 @@ bool executeHandleTab(FluentDocument document, {bool shift = false}) {
   }
 
   return true;
-}
-
-/// Climbs the tree looking for an ancestor of type [T].
-T? _findAncestor<T extends FNode>(Root root, FNode node) {
-  FNode? current = node;
-  while (current != null) {
-    if (current is T) return current;
-    current = findParent(root, current);
-  }
-  return null;
 }
 
 /// Indent: moves the current item as a sub-item of the previous one.
@@ -108,9 +99,7 @@ bool _handleListIndent(FluentDocument document, ListItem currentItem) {
   }
 
   mergeConsecutiveLists(root);
-  recalculateListIndices(root);
-
-  document.updateContent();
+  recalculateAndUpdate(document);
   return true;
 }
 
@@ -241,13 +230,13 @@ bool _handleTableNextCell(FluentDocument document, FluentCell currentCell) {
 
   if (cellIndex < row.cells.length - 1) {
     final nextCell = row.cells[cellIndex + 1];
-    return _moveCursorToCellStart(cursor, nextCell);
+    return _moveCursorToCell(cursor, nextCell);
   }
 
   if (rowIndex < table.rows.length - 1) {
     final nextRow = table.rows[rowIndex + 1];
     if (nextRow.cells.isNotEmpty) {
-      return _moveCursorToCellStart(cursor, nextRow.cells.first);
+      return _moveCursorToCell(cursor, nextRow.cells.first);
     }
   }
 
@@ -272,38 +261,25 @@ bool _handleTablePreviousCell(FluentDocument document, FluentCell currentCell) {
 
   if (cellIndex > 0) {
     final prevCell = row.cells[cellIndex - 1];
-    return _moveCursorToCellEnd(cursor, prevCell);
+    return _moveCursorToCell(cursor, prevCell, toEnd: true);
   }
 
   if (rowIndex > 0) {
     final prevRow = table.rows[rowIndex - 1];
     if (prevRow.cells.isNotEmpty) {
-      return _moveCursorToCellEnd(cursor, prevRow.cells.last);
+      return _moveCursorToCell(cursor, prevRow.cells.last, toEnd: true);
     }
   }
 
   return false;
 }
 
-/// Moves the cursor to the start of a cell.
-bool _moveCursorToCellStart(Cursor cursor, FluentCell cell) {
+/// Moves the cursor to the start or end of a cell.
+bool _moveCursorToCell(Cursor cursor, FluentCell cell, {bool toEnd = false}) {
   final leaves = FragmentOperations.collectLeafFragments(cell);
   if (leaves.isNotEmpty) {
-    cursor.moveTo(leaves.first.id, 0);
-    return true;
-  }
-  final emptyFrag = Fragment('');
-  appendChild(cell, emptyFrag);
-  cursor.moveTo(emptyFrag.id, 0);
-  return true;
-}
-
-/// Moves the cursor to the end of a cell.
-bool _moveCursorToCellEnd(Cursor cursor, FluentCell cell) {
-  final leaves = FragmentOperations.collectLeafFragments(cell);
-  if (leaves.isNotEmpty) {
-    final last = leaves.last;
-    cursor.moveTo(last.id, last.text.length);
+    final target = toEnd ? leaves.last : leaves.first;
+    cursor.moveTo(target.id, toEnd ? target.text.length : 0);
     return true;
   }
   final emptyFrag = Fragment('');
@@ -334,5 +310,5 @@ bool _createNewRowInTable(
   final newRow = FluentRow(cells: newCells);
   appendChild(table, newRow);
 
-  return _moveCursorToCellStart(cursor, newCells.first);
+  return _moveCursorToCell(cursor, newCells.first);
 }

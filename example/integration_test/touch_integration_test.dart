@@ -116,7 +116,6 @@ void main() {
       await gesture.moveBy(const Offset(20, 0));
       await tester.pump(const Duration(milliseconds: 50));
 
-      // Continue dragging to extend selection
       for (int i = 0; i < 4; i++) {
         await gesture.moveBy(const Offset(30, 0));
         await tester.pump(const Duration(milliseconds: 30));
@@ -143,7 +142,6 @@ void main() {
       await tester.tapAt(center);
       await tester.pumpAndSettle();
 
-      // After tap, cursor should be placed (focus requested)
       expect(doc.cursor.anchorId, isNotEmpty);
     });
   });

@@ -4,6 +4,7 @@ import 'package:fluent_editor/factories.dart';
 import 'package:fluent_editor/fluent_document.dart';
 import 'package:fluent_editor/handlers/handle_replace_selection.dart';
 import 'package:fluent_editor/utils/cursor_navigation.dart';
+import 'package:fluent_editor/utils/handler_helpers.dart';
 import 'package:fluent_editor/utils/node_operations.dart';
 import 'package:fluent_editor/utils/resolve_selection.dart';
 
@@ -21,15 +22,7 @@ void handleInsertNodeExceution(
   final cursor = document.cursor;
 
   if (!cursor.isCollapsed && nodeType == 'list') {
-    final sel = resolveSelection(
-      root,
-      cursor.anchorId,
-      cursor.anchorOffset,
-      cursor.focusId,
-      cursor.focusOffset,
-      cachedStops: document.caretStops,
-      cachedLines: document.logicalLines,
-    );
+    final sel = resolveSelectionFromCursor(document);
     if (sel != null && sel.nodes.isNotEmpty) {
       final items = <ListItem>[];
       for (final node in sel.nodes) {
@@ -123,9 +116,7 @@ void _insertLinkInline(
 
   _moveCursorToNodeStart(cursor, newLink);
 
-  recalculateListIndices(root);
-
-  document.updateContent();
+  recalculateAndUpdate(document);
 }
 
 /// Inserts an image.
@@ -152,8 +143,7 @@ void _insertImage(
           container.getChildren().first.id == cursor.anchorId;
       if (atStart) {
         insertBefore(root, container, newImage);
-        recalculateListIndices(root);
-        document.updateContent();
+        recalculateAndUpdate(document);
         return;
       }
       if (atEnd) {
@@ -162,8 +152,7 @@ void _insertImage(
         insertAfter(root, newImage, newParagraph);
         final firstFrag = newParagraph.getChildren().first;
         cursor.moveTo(firstFrag.id, 0);
-        recalculateListIndices(root);
-        document.updateContent();
+        recalculateAndUpdate(document);
         return;
       }
     }
@@ -191,8 +180,7 @@ void _insertImage(
     cursor.moveTo(currentFrag.id, beforeText.length);
   }
 
-  recalculateListIndices(root);
-  document.updateContent();
+  recalculateAndUpdate(document);
 }
 
 /// Inserts a block node after the current container.
@@ -209,7 +197,7 @@ void _insertBlockNode(
   if (newNode is FluentTable) {
     final container = findLogicalContainer(root, cursor.anchorId) as FNode?;
     if (container != null) {
-      final listItem = findAncestorListItem(root, container);
+      final listItem = findAncestor<ListItem>(root, container);
       if (listItem != null) return;
     }
   }
@@ -218,28 +206,25 @@ void _insertBlockNode(
   if (container == null) {
     appendChild(root, newNode);
     _moveCursorToNodeStart(cursor, newNode);
-    recalculateListIndices(root);
-    document.updateContent();
+    recalculateAndUpdate(document);
     return;
   }
 
-  final cell = findAncestorCell(root, container);
+  final cell = findAncestor<FluentCell>(root, container);
   if (cell != null) {
     if (newNode is FluentTable) return;
     appendChild(cell, newNode);
     _moveCursorToNodeStart(cursor, newNode);
-    recalculateListIndices(root);
-    document.updateContent();
+    recalculateAndUpdate(document);
     return;
   }
 
-  final listItem = findAncestorListItem(root, container);
+  final listItem = findAncestor<ListItem>(root, container);
   if (listItem != null) {
     if (newNode is FluentTable) return;
     appendChild(listItem, newNode);
     _moveCursorToNodeStart(cursor, newNode);
-    recalculateListIndices(root);
-    document.updateContent();
+    recalculateAndUpdate(document);
     return;
   }
 
@@ -253,8 +238,7 @@ void _insertBlockNode(
     if (parent != null) {
       insertAfter(parent, current as FNode, newNode);
       _moveCursorToNodeStart(cursor, newNode);
-      recalculateListIndices(root);
-      document.updateContent();
+      recalculateAndUpdate(document);
       return;
     }
   }
@@ -271,15 +255,13 @@ void _insertBlockNode(
     if (atEnd) {
       insertAfter(root, container, newNode);
       _moveCursorToNodeStart(cursor, newNode);
-      recalculateListIndices(root);
-      document.updateContent();
+      recalculateAndUpdate(document);
       return;
     }
     if (atStart) {
       insertBefore(root, container, newNode);
       _moveCursorToNodeStart(cursor, newNode);
-      recalculateListIndices(root);
-      document.updateContent();
+      recalculateAndUpdate(document);
       return;
     }
     _splitParagraphAtCursor(root, cursor, container, newNode, document);
@@ -300,9 +282,7 @@ void _insertBlockNode(
 
   _moveCursorToNodeStart(cursor, newNode);
 
-  recalculateListIndices(root);
-
-  document.updateContent();
+  recalculateAndUpdate(document);
 }
 
 /// Verifies if the cursor is at the last stop of [container].
@@ -365,8 +345,7 @@ void _splitParagraphAtCursor(
   insertAfter(root, newNode, afterParagraph);
 
   _moveCursorToNodeStart(cursor, newNode);
-  recalculateListIndices(root);
-  document.updateContent();
+  recalculateAndUpdate(document);
 }
 
 /// Moves the cursor to the start of a newly created node.

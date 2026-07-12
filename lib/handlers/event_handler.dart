@@ -92,7 +92,7 @@ class EventHandler {
         document.cursor.moveTo(node.id, start);
         document.cursor.focusTo(node.id, end);
 
-        _syncSelectionManager(document);
+        syncSelectionManager(document);
 
         document.cursorOnlyUpdate();
       }
@@ -111,7 +111,7 @@ class EventHandler {
     document.cursor.moveTo(bounds.startFrag, bounds.startOff);
     document.cursor.focusTo(bounds.endFrag, bounds.endOff);
 
-    _syncSelectionManager(document);
+    syncSelectionManager(document);
     document.syncPendingFontWithCursor();
     document.cursorOnlyUpdate();
   }
@@ -123,37 +123,6 @@ class EventHandler {
 
   bool _isWordChar(String char) {
     return _wordCharRe.hasMatch(char);
-  }
-
-  /// Synchronizes SelectionManager with the current cursor state.
-  /// Called after every movement, with or without shift.
-  void _syncSelectionManager(FluentDocument document) {
-    final cursor = document.cursor;
-
-    if (cursor.isCollapsed) {
-      document.selectionManager.collapse();
-      return;
-    }
-
-    final anchorNodeId = document.findLogicalContainerId(cursor.anchorId);
-    final focusNodeId  = document.findLogicalContainerId(cursor.focusId);
-
-    if (anchorNodeId == null || focusNodeId == null) {
-      document.selectionManager.collapse();
-      return;
-    }
-
-    document.selectionManager.startSelection(
-      anchorNodeId,
-      cursor.anchorId,
-      cursor.anchorOffset,
-    );
-
-    document.selectionManager.updateFocus(
-      focusNodeId,
-      cursor.focusId,
-      cursor.focusOffset,
-    );
   }
 
   void updateModifiers(KeyEvent event) {
@@ -282,7 +251,7 @@ class EventHandler {
       if (result.position != null) {
         if (isShiftPressed) {
           cursor.focusTo(result.position!.fragmentId, result.position!.offset);
-          _syncSelectionManager(document);
+          syncSelectionManager(document);
         } else {
           cursor.moveTo(result.position!.fragmentId, result.position!.offset);
           document.selectionManager.collapse();
@@ -307,7 +276,7 @@ class EventHandler {
       if (result.position != null) {
         if (isShiftPressed) {
           cursor.focusTo(result.position!.fragmentId, result.position!.offset);
-          _syncSelectionManager(document);
+          syncSelectionManager(document);
         } else {
           cursor.moveTo(result.position!.fragmentId, result.position!.offset);
           document.selectionManager.collapse();
@@ -338,7 +307,7 @@ class EventHandler {
       if (result.position != null) {
         if (isShiftPressed) {
           cursor.focusTo(result.position!.fragmentId, result.position!.offset);
-          _syncSelectionManager(document);
+          syncSelectionManager(document);
         } else {
           cursor.moveTo(result.position!.fragmentId, result.position!.offset);
           document.selectionManager.collapse();
@@ -370,7 +339,7 @@ class EventHandler {
       if (result.position != null) {
         if (isShiftPressed) {
           cursor.focusTo(result.position!.fragmentId, result.position!.offset);
-          _syncSelectionManager(document);
+          syncSelectionManager(document);
         } else {
           cursor.moveTo(result.position!.fragmentId, result.position!.offset);
           document.selectionManager.collapse();

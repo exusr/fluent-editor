@@ -3,6 +3,7 @@ import 'package:fluent_editor/fluent_document.dart';
 import 'package:fluent_editor/handlers/handle_replace_selection.dart';
 import 'package:fluent_editor/handlers/handle_tab.dart';
 import 'package:fluent_editor/utils/fragment_operations.dart';
+import 'package:fluent_editor/utils/handler_helpers.dart';
 import 'package:fluent_editor/utils/node_operations.dart';
 
 /// Handles the ENTER key.
@@ -26,11 +27,11 @@ bool executeHandleEnter(FluentDocument document) {
   }
 
   if (container is Paragraph) {
-    final ancestorItem = findAncestorListItem(root, container);
+    final ancestorItem = findAncestor<ListItem>(root, container);
     if (ancestorItem != null) {
       return _handleListEnter(document, ancestorItem, container);
     }
-    final ancestorCell = findAncestorCell(root, container);
+    final ancestorCell = findAncestor<FluentCell>(root, container);
     if (ancestorCell != null) {
       return _handleCellEnter(document, ancestorCell);
     }
@@ -128,8 +129,7 @@ bool _handleListEnter(
 
   cursor.moveTo(cursorTarget.id, 0);
 
-  recalculateListIndices(root);
-  document.updateContent();
+  recalculateAndUpdate(document);
   return true;
 }
 
@@ -323,11 +323,7 @@ bool _insertNewParagraphAfter(
     styleName: newStyleName,
   );
   final firstFrag = newParagraph.fragments.first as Fragment;
-  firstFrag.fontFamily = document.pendingFontFamily;
-  firstFrag.fontSize = document.pendingFontSize;
-  firstFrag.styles = List.from(document.pendingStyles);
-  firstFrag.color = document.pendingColor;
-  firstFrag.highlightColor = document.pendingHighlightColor;
+  FragmentOperations.applyPendingStyles(document, firstFrag);
 
   insertAfter(parent, container as FNode, newParagraph);
 

@@ -294,11 +294,11 @@ class _ListMarker extends StatelessWidget {
   }
 
   String _toAlpha(int number) {
-    return String.fromCharCode(96 + number); // a, b, c, ...
+    return String.fromCharCode(96 + number);
   }
 
   String _toAlphaUpper(int number) {
-    return String.fromCharCode(64 + number); // A, B, C, ...
+    return String.fromCharCode(64 + number);
   }
 
   String _toRoman(int number) {
