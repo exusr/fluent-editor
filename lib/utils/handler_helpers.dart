@@ -9,9 +9,16 @@ import 'package:fluent_editor/utils/resolve_selection.dart';
 
 /// Resolves the current cursor selection using cached stops and lines.
 /// Returns null if the cursor is collapsed or the selection is invalid.
+/// Caches the result on the document so multiple widgets in the same
+/// cursor-change cycle reuse the same ResolvedSelection.
 ResolvedSelection? resolveSelectionFromCursor(FluentDocument document) {
   final cursor = document.cursor;
-  return resolveSelection(
+  final key = '${cursor.anchorId}:${cursor.anchorOffset}:'
+      '${cursor.focusId}:${cursor.focusOffset}';
+  if (key == document.cachedSelectionKey) {
+    return document.cachedSelection as ResolvedSelection?;
+  }
+  final result = resolveSelection(
     document.content,
     cursor.anchorId,
     cursor.anchorOffset,
@@ -21,6 +28,9 @@ ResolvedSelection? resolveSelectionFromCursor(FluentDocument document) {
     cachedLines: document.logicalLines,
     document: document,
   );
+  document.cachedSelectionKey = key;
+  document.cachedSelection = result;
+  return result;
 }
 
 /// Recalculates list indices and triggers a content update.
@@ -44,15 +54,14 @@ void saveAndDeleteNode(FluentDocument document, FNode node, {required String des
   ResolvedSelection selection, {
   required void Function(Fragment leaf) modify,
 }) {
-  final root = document.content;
   Fragment? firstModified;
   Fragment? lastModified;
 
   for (final node in selection.nodes) {
     final container = node.container;
 
-    final startParent = findParent(root, node.startFragment);
-    final endParent   = findParent(root, node.endFragment);
+    final startParent = findParentCached(document, node.startFragment);
+    final endParent   = findParentCached(document, node.endFragment);
 
     late Fragment actualStartFrag;
     late Fragment actualEndFrag;

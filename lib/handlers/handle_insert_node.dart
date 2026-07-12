@@ -84,7 +84,7 @@ void _insertLinkInline(
   Link newLink,
   FluentDocument document,
 ) {
-  final currentFrag = findNode(root, (n) => n.id == cursor.anchorId) as Fragment?;
+  final currentFrag = document.nodeById(cursor.anchorId) as Fragment?;
   if (currentFrag == null) {
     _insertBlockNode(root, cursor, newLink, document);
     return;
@@ -132,7 +132,7 @@ void _insertImage(
 ) {
   final container = document.findLogicalContainerCached(cursor.anchorId) as FNode?;
   if (container is Paragraph) {
-    final containerParent = findParent(root, container);
+    final containerParent = findParentCached(document, container);
     if (containerParent is Root) {
       final atEnd = _isCursorAtEndOfContainer(
         root, cursor, container,
@@ -160,7 +160,7 @@ void _insertImage(
 
   final currentFrag = document.nodeById(cursor.anchorId) as Fragment?;
   if (currentFrag == null) return;
-  final parent = findParent(root, currentFrag);
+  final parent = findParentCached(document, currentFrag);
   if (parent == null) return;
 
   final offset = cursor.anchorOffset;
@@ -197,7 +197,7 @@ void _insertBlockNode(
   if (newNode is FluentTable) {
     final container = document.findLogicalContainerCached(cursor.anchorId) as FNode?;
     if (container != null) {
-      final listItem = findAncestor<ListItem>(root, container);
+      final listItem = findAncestorCached<ListItem>(document, container);
       if (listItem != null) return;
     }
   }
@@ -210,7 +210,7 @@ void _insertBlockNode(
     return;
   }
 
-  final cell = findAncestor<FluentCell>(root, container);
+  final cell = findAncestorCached<FluentCell>(document, container);
   if (cell != null) {
     if (newNode is FluentTable) return;
     appendChild(cell, newNode);
@@ -219,7 +219,7 @@ void _insertBlockNode(
     return;
   }
 
-  final listItem = findAncestor<ListItem>(root, container);
+  final listItem = findAncestorCached<ListItem>(document, container);
   if (listItem != null) {
     if (newNode is FluentTable) return;
     appendChild(listItem, newNode);
@@ -230,10 +230,10 @@ void _insertBlockNode(
 
   if (container is Link) {
     FNode? current = container;
-    FNode? parent = findParent(root, current);
+    FNode? parent = findParentCached(document, current);
     while (parent != null && parent is! Paragraph && parent is! ListItem) {
       current = parent;
-      parent = findParent(root, current);
+      parent = findParentCached(document, current);
     }
     if (parent != null) {
       insertAfter(parent, current as FNode, newNode);
@@ -243,7 +243,7 @@ void _insertBlockNode(
     }
   }
 
-  final containerParent = findParent(root, container);
+  final containerParent = findParentCached(document, container);
   if (container is Paragraph && containerParent is Root) {
     final atEnd = _isCursorAtEndOfContainer(
       root, cursor, container,
@@ -268,10 +268,10 @@ void _insertBlockNode(
     return;
   }
 
-  FNode? parent = findParent(root, container);
+  FNode? parent = findParentCached(document, container);
   while (parent != null && parent is! Root && parent is! FluentList) {
     container = parent;
-    parent = findParent(root, container);
+    parent = findParentCached(document, container);
   }
 
   if (parent == null) {

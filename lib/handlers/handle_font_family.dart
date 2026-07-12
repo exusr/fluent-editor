@@ -1,7 +1,6 @@
 import 'package:fluent_editor/factories.dart';
 import 'package:fluent_editor/fluent_document.dart';
 import 'package:fluent_editor/utils/handler_helpers.dart';
-import 'package:fluent_editor/utils/node_operations.dart';
 import 'package:fluent_editor/utils/resolve_selection.dart';
 
 bool executeHandleFontFamily(FluentDocument document, String fontFamily) {
@@ -45,9 +44,8 @@ bool _applyFontFamilyToSelection(
 /// text will inherit this font (Word/Google Docs model).
 /// Also applies the font to the entire current fragment for immediate visual feedback.
 bool _applyFontFamilyAtCursor(FluentDocument document, String fontFamily) {
-  final root = document.content;
   final cursor = document.cursor;
-  final frag = findById(root, cursor.anchorId);
+  final frag = document.nodeById(cursor.anchorId);
 
   if (frag is Fragment) {
     final originalAnchorId = cursor.anchorId;

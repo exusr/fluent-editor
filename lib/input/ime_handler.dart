@@ -541,6 +541,18 @@ class FluentTextInputHandler with DeltaTextInputClient {
         if (deltas.length == 1 && deltas.first is TextEditingDeltaReplacement) {
           final rd = deltas.first as TextEditingDeltaReplacement;
           if (rd.replacementText.isNotEmpty) {
+            // With an active selection the replacement must go through the
+            // document-level handler: the buffer-based fast path below only
+            // knows the current fragment, so it would rewrite the wrong text
+            // for multi-fragment/multi-node selections and leave the
+            // SelectionManager highlight dangling.
+            if (!_document!.cursor.isCollapsed) {
+              _document!.saveState(
+                  description: 'Replace selection', forceNewAction: false);
+              _insertTextOrReplaceSelection(rd.replacementText, _document!);
+              syncImeBufferToFragment();
+              return;
+            }
             final currentFragText = _getCurrentFragmentText() ?? '';
             final oldBufText = rd.oldText;
             final replacedRange = rd.replacedRange;
@@ -1051,7 +1063,7 @@ class FluentTextInputHandler with DeltaTextInputClient {
           final fragId = doc.cursor.focusId.isNotEmpty ? doc.cursor.focusId : doc.cursor.anchorId;
           final node = doc.nodeById(fragId);
           if (node is Fragment) {
-            final cellParent = findAncestor<FluentCell>(doc.content, node);
+            final cellParent = findAncestorCached<FluentCell>(doc, node);
             if (cellParent != null) {
               node.text = '\u200B';
               doc.cursor.moveTo(fragId, 0);
@@ -1467,6 +1479,9 @@ class FluentTextInputHandler with DeltaTextInputClient {
     node.text = cleanText;
     final finalOffset = _snapCursorOffset(cleanText, cursorOffset ?? cleanText.length);
     doc.cursor.moveTo(fragId, finalOffset);
+    // Keep the visual selection in sync with the now-collapsed cursor,
+    // otherwise a stale highlight would remain after the replacement.
+    doc.selectionManager.collapse();
     doc.updateContent();
     syncImeBufferToFragment();
   }

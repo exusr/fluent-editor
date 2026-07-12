@@ -179,6 +179,11 @@ class ParagraphStyle {
     code,
   ];
 
+  /// O(1) lookup map for predefined styles by name.
+  static final Map<String, ParagraphStyle> styleByName = {
+    for (final s in predefinedStyles) s.name: s,
+  };
+
   factory ParagraphStyle.fromJson(Map<String, dynamic> json) =>
       _$ParagraphStyleFromJson(json);
 

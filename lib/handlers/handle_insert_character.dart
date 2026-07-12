@@ -54,7 +54,7 @@ void executeHandleInsertCharacter(String character, FluentDocument document) {
   }
 
   if (node is HorizontalRule) {
-    final parent = findParent(document.content, node);
+    final parent = findParentCached(document, node);
     if (parent != null) {
       final newFrag = FragmentOperations.createFragmentWithPendingStyles(document, character);
       final offset = document.cursor.anchorOffset;
@@ -79,7 +79,7 @@ void executeHandleInsertCharacter(String character, FluentDocument document) {
   }
 
   if (node is FluentImage) {
-    final parent = findParent(document.content, node);
+    final parent = findParentCached(document, node);
     if (parent != null) {
       final newFrag = FragmentOperations.createFragmentWithPendingStyles(document, character);
       final offset = document.cursor.anchorOffset;
@@ -148,7 +148,7 @@ void executeHandleInsertCharacter(String character, FluentDocument document) {
 
     final fragId = document.cursor.anchorId;
     final frag = document.nodeById(fragId);
-    final parent = frag != null ? findParent(document.content, frag) : null;
+    final parent = frag != null ? findParentCached(document, frag) : null;
     if (parent is Paragraph) {
       final globalOffset = document.getGlobalOffsetInParagraph(
         parent.id,
@@ -172,10 +172,10 @@ bool _shouldApplyPendingFont(FluentDocument document, Fragment frag) {
 
 bool _stylesEqual(List<String> a, List<String> b) {
   if (a.length != b.length) return false;
-  final sortedA = List<String>.from(a)..sort();
-  final sortedB = List<String>.from(b)..sort();
-  for (var i = 0; i < sortedA.length; i++) {
-    if (sortedA[i] != sortedB[i]) return false;
+  // Styles lists are typically 0-3 items; linear contains is cheaper
+  // than allocating + sorting two lists on every keystroke.
+  for (final s in a) {
+    if (!b.contains(s)) return false;
   }
   return true;
 }
@@ -189,7 +189,7 @@ void _insertWithPendingFont(
   Fragment frag,
   int offset,
 ) {
-  final parent = findParent(document.content, frag);
+  final parent = findParentCached(document, frag);
   if (parent == null) return;
 
   if (offset == 0) {

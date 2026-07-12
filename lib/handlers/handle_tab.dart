@@ -20,11 +20,10 @@ import 'package:fluent_editor/utils/node_operations.dart';
 ///   - SHIFT+TAB: decreases indentation (min 0)
 /// Executes outdent of the current ListItem (also used by Enter on empty item).
 bool executeHandleOutdent(FluentDocument document) {
-  final root = document.content;
   final cursor = document.cursor;
   final container = document.findLogicalContainerCached(cursor.anchorId);
   if (container == null) return false;
-  final ancestorItem = findAncestor<ListItem>(root, container as FNode);
+  final ancestorItem = findAncestorCached<ListItem>(document, container as FNode);
   if (ancestorItem == null) return false;
   return executeHandleOutdentItem(document, ancestorItem);
 }
@@ -35,14 +34,13 @@ bool executeHandleOutdentItem(FluentDocument document, ListItem item) {
 }
 
 bool executeHandleTab(FluentDocument document, {bool shift = false}) {
-  final root = document.content;
   final cursor = document.cursor;
 
   final container = document.findLogicalContainerCached(cursor.anchorId);
   if (container == null) return true;
 
   final containerNode = container as FNode;
-  final ancestorItem = findAncestor<ListItem>(root, containerNode);
+  final ancestorItem = findAncestorCached<ListItem>(document, containerNode);
   if (ancestorItem != null) {
     shift
         ? _handleListOutdent(document, ancestorItem)
@@ -50,7 +48,7 @@ bool executeHandleTab(FluentDocument document, {bool shift = false}) {
     return true;
   }
 
-  final ancestorCell = findAncestor<FluentCell>(root, containerNode);
+  final ancestorCell = findAncestorCached<FluentCell>(document, containerNode);
   if (ancestorCell != null) {
     shift
         ? _handleTablePreviousCell(document, ancestorCell)
@@ -72,7 +70,7 @@ bool executeHandleTab(FluentDocument document, {bool shift = false}) {
 bool _handleListIndent(FluentDocument document, ListItem currentItem) {
   final root = document.content;
 
-  final listParent = findParent(root, currentItem);
+  final listParent = findParentCached(document, currentItem);
   if (listParent == null || listParent is! FluentList) return false;
 
   final currentIndex = listParent.items.indexOf(currentItem);
@@ -107,10 +105,10 @@ bool _handleListIndent(FluentDocument document, ListItem currentItem) {
 bool _handleListOutdent(FluentDocument document, ListItem currentItem) {
   final root = document.content;
 
-  final listParent = findParent(root, currentItem);
+  final listParent = findParentCached(document, currentItem);
   if (listParent == null || listParent is! FluentList) return false;
 
-  final grandparent = findParent(root, listParent);
+  final grandparent = findParentCached(document, listParent);
   if (grandparent == null) return false;
 
   final cursor = document.cursor;
@@ -118,7 +116,7 @@ bool _handleListOutdent(FluentDocument document, ListItem currentItem) {
   final savedOffset = cursor.anchorOffset;
 
   if (grandparent is ListItem) {
-    final greatGrandparent = findParent(root, grandparent);
+    final greatGrandparent = findParentCached(document, grandparent);
     if (greatGrandparent == null || greatGrandparent is! FluentList) return false;
 
     final currentIndexInSub = listParent.items.indexOf(currentItem);
@@ -173,7 +171,7 @@ bool _handleListOutdent(FluentDocument document, ListItem currentItem) {
     return true;
   }
 
-  final newParagraph = outdentListItemToParagraph(root, listParent, currentItem);
+  final newParagraph = outdentListItemToParagraph(root, listParent, currentItem, document: document);
   if (newParagraph == null) return false;
 
   final originalFrag = document.nodeById(savedFragId);
@@ -214,13 +212,12 @@ bool _handleParagraphOutdent(FluentDocument document, Paragraph paragraph) {
 /// Moves the cursor to the next cell (right, then down).
 /// If last cell, creates a new row.
 bool _handleTableNextCell(FluentDocument document, FluentCell currentCell) {
-  final root = document.content;
   final cursor = document.cursor;
 
-  final row = findParent(root, currentCell);
+  final row = findParentCached(document, currentCell);
   if (row == null || row is! FluentRow) return false;
 
-  final table = findParent(root, row);
+  final table = findParentCached(document, row);
   if (table == null || table is! FluentTable) return false;
 
   final rowIndex = table.rows.indexOf(row);
@@ -245,13 +242,12 @@ bool _handleTableNextCell(FluentDocument document, FluentCell currentCell) {
 
 /// Moves the cursor to the previous cell (left, then up).
 bool _handleTablePreviousCell(FluentDocument document, FluentCell currentCell) {
-  final root = document.content;
   final cursor = document.cursor;
 
-  final row = findParent(root, currentCell);
+  final row = findParentCached(document, currentCell);
   if (row == null || row is! FluentRow) return false;
 
-  final table = findParent(root, row);
+  final table = findParentCached(document, row);
   if (table == null || table is! FluentTable) return false;
 
   final rowIndex = table.rows.indexOf(row);

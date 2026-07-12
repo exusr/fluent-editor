@@ -10,7 +10,7 @@ import 'package:fluent_editor/utils/resolve_selection.dart';
 /// it contains only the ZWS the image stays intact, otherwise we replace it
 /// with a normal text Fragment.
 /// Returns the actual Fragment after the operation (or null if removed).
-Fragment? _setFragText(Fragment frag, String newText, Root root) {
+Fragment? _setFragText(FluentDocument document, Fragment frag, String newText, Root root) {
   if (frag is HorizontalRule) {
     if (newText.isEmpty) {
       removeNode(root, frag);
@@ -33,7 +33,7 @@ Fragment? _setFragText(Fragment frag, String newText, Root root) {
     if (newText == Whitespaces.zws) {
       return frag; // image survives intact
     }
-    final parent = findParent(root, frag);
+    final parent = findParentCached(document, frag);
     final isBlockLevel = parent is! Paragraph; // Link is Paragraph
     if (isBlockLevel) {
       final innerFrag = Fragment(newText);
@@ -57,15 +57,27 @@ void executeHandleReplaceSelection(String character, FluentDocument document) {
   final root = document.content;
 
   final cursorTarget = sel.isSingleNode
-      ? _replaceSingleNode(sel, character, root)
-      : _replaceMultiNode(sel, character, root);
+      ? _replaceSingleNode(document, sel, character, root)
+      : _replaceMultiNode(document, sel, character, root);
+
+  // Tree structure and text changed: invalidate caches now so cursor and
+  // selection updates work against the current document state.
+  document.invalidateNodeIndex();
 
   document.cursor.moveTo(
     cursorTarget.fragId,
     cursorTarget.offset,
   );
 
-  document.selectionManager.collapse();
+  // Move the SelectionManager to the same collapsed position as the cursor,
+  // discarding the old selection range instead of keeping its stale anchor.
+  final newContainerId = document.findLogicalContainerId(cursorTarget.fragId) ??
+      (sel.base.container as FNode).id;
+  document.selectionManager.startSelection(
+    newContainerId,
+    cursorTarget.fragId,
+    cursorTarget.offset,
+  );
 
   if (sel.isSingleNode && sel.base.fragment.id == sel.extent.fragment.id) {
     final paragraphId = (sel.base.container as FNode).id;
@@ -83,13 +95,15 @@ void executeHandleReplaceSelection(String character, FluentDocument document) {
   recalculateListIndicesFor(
     root,
     sel.nodes.map((n) => n.container as FNode).toSet(),
+    document: document,
   );
 
   document.updateContent();
+  document.cursorOnlyUpdate();
 }
 
 ({String fragId, int offset}) _replaceSingleNode(
-    ResolvedSelection sel, String character, Root root) {
+    FluentDocument document, ResolvedSelection sel, String character, Root root) {
   final baseFrag = sel.base.fragment;
   final extFrag  = sel.extent.fragment;
   final baseOff  = sel.base.offset.clamp(0, baseFrag.text.length);
@@ -99,15 +113,15 @@ void executeHandleReplaceSelection(String character, FluentDocument document) {
     final newText = baseFrag.text.substring(0, baseOff) +
         character +
         baseFrag.text.substring(extOff);
-    final newFrag = _setFragText(baseFrag, newText, root) ?? baseFrag;
+    final newFrag = _setFragText(document, baseFrag, newText, root) ?? baseFrag;
     return (fragId: newFrag.id, offset: baseOff + character.length);
   }
 
   final newBaseText = baseFrag.text.substring(0, baseOff) + character;
-  final newBaseFrag = _setFragText(baseFrag, newBaseText, root) ?? baseFrag;
+  final newBaseFrag = _setFragText(document, baseFrag, newBaseText, root) ?? baseFrag;
 
   final newExtText = extFrag.text.substring(extOff);
-  final newExtFrag = _setFragText(extFrag, newExtText, root);
+  final newExtFrag = _setFragText(document, extFrag, newExtText, root);
 
   if (newExtFrag != null) {
     _removeFragmentsBetween(sel.base.container, newBaseFrag, newExtFrag, root);
@@ -124,7 +138,7 @@ void executeHandleReplaceSelection(String character, FluentDocument document) {
 }
 
 ({String fragId, int offset}) _replaceMultiNode(
-    ResolvedSelection sel, String character, Root root) {
+    FluentDocument document, ResolvedSelection sel, String character, Root root) {
   final baseNode = sel.nodes.first;
   final extNode  = sel.nodes.last;
   final baseFrag = sel.base.fragment;
@@ -133,7 +147,7 @@ void executeHandleReplaceSelection(String character, FluentDocument document) {
   final extOff   = sel.extent.offset.clamp(0, extFrag.text.length);
 
   final newBaseText = baseFrag.text.substring(0, baseOff) + character;
-  final newBaseFrag = _setFragText(baseFrag, newBaseText, root) ?? baseFrag;
+  final newBaseFrag = _setFragText(document, baseFrag, newBaseText, root) ?? baseFrag;
   _removeFragmentsAfter(baseNode.container, newBaseFrag, root);
 
   for (int i = 1; i < sel.nodes.length - 1; i++) {
@@ -160,29 +174,49 @@ void executeHandleReplaceSelection(String character, FluentDocument document) {
   }
 
   final newExtText = extFrag.text.substring(extOff);
-  final newExtFrag = _setFragText(extFrag, newExtText, root);
+  final newExtFrag = _setFragText(document, extFrag, newExtText, root);
 
   if (newExtFrag != null) {
     _removeFragmentsBefore(extNode.container, newExtFrag, root);
   }
 
-  final toMove = extNode.container
-      .getChildren()
-      .where((c) => c is Fragment && c is! InlineContainerNode)
-      .toList();
+  // Only merge remaining fragments from the extent container into the base
+  // container when both share the same parent. This merges adjacent top-level
+  // paragraphs (or multiple paragraphs inside the same cell/list item), but
+  // keeps separate structural units such as different list items or cells.
+  final baseContainer = baseNode.container as FNode;
+  final extContainer = extNode.container as FNode;
+  final baseParent = findParentCached(document, baseContainer);
+  final extParent = findParentCached(document, extContainer);
+  final shouldMerge = baseParent != null &&
+                      extParent != null &&
+                      baseParent.id == extParent.id;
+  if (shouldMerge) {
+    final toMove = extNode.container
+        .getChildren()
+        .where((c) => c is Fragment && c is! InlineContainerNode)
+        .toList();
 
-  for (final frag in toMove) {
-    removeNode(root, frag);
-    appendChild(baseNode.container as FNode, frag);
-  }
+    for (final frag in toMove) {
+      removeNode(root, frag);
+      appendChild(baseNode.container as FNode, frag);
+    }
 
-  if (newExtFrag != null && newExtFrag.text.isEmpty && toMove.length > 1) {
-    removeNode(root, newExtFrag);
-  }
+    if (newExtFrag != null && newExtFrag.text.isEmpty && toMove.length > 1) {
+      removeNode(root, newExtFrag);
+    }
 
-  if (extNode.container.getChildren()
-      .every((c) => c is FluentList)) {
-    removeNode(root, extNode.container as FNode);
+    if (extNode.container.getChildren()
+        .every((c) => c is FluentList)) {
+      removeNode(root, extNode.container as FNode);
+    }
+  } else if (newExtFrag != null && newExtFrag.text.isEmpty) {
+    // In table cells: if the remaining text is empty, remove the empty
+    // fragment but keep the cell with at least one empty paragraph.
+    final siblings = extNode.container.getChildren();
+    if (siblings.length > 1) {
+      removeNode(root, newExtFrag);
+    }
   }
 
   _cleanupEmptyListContainers(root);
@@ -198,7 +232,10 @@ void _cleanupEmptyListContainers(Root root) {
     final emptyItems = <ListItem>[];
     final emptyLists = <FluentList>[];
     walkTree(root, (node, _) {
-      if (node is ListItem && !node.children.any((c) => c is Paragraph)) {
+      // FluentList extends Paragraph, so we must exclude it: a ListItem
+      // whose only child is a sublist is structurally empty.
+      if (node is ListItem &&
+          !node.children.any((c) => c is Paragraph && c is! FluentList)) {
         emptyItems.add(node);
       } else if (node is FluentList && node.items.isEmpty) {
         emptyLists.add(node);
@@ -206,6 +243,19 @@ void _cleanupEmptyListContainers(Root root) {
       return true;
     });
     for (final n in emptyItems) {
+      // If the only child is a non-empty sublist, promote it to the
+      // parent list in place of the empty item instead of removing both.
+      final sublists = n.children.whereType<FluentList>().toList();
+      if (sublists.length == 1 && sublists.first.items.isNotEmpty) {
+        final parent = findParent(root, n);
+        if (parent is FluentList) {
+          final idx = parent.items.indexOf(n);
+          parent.items.removeAt(idx);
+          parent.items.insertAll(idx, sublists.first.items);
+          removed = true;
+          continue;
+        }
+      }
       if (removeNode(root, n)) removed = true;
     }
     for (final n in emptyLists) {

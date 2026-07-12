@@ -110,13 +110,54 @@ class _FluentToolbarState extends State<FluentToolbar> {
   void _onCursorChanged() => _updateFormats();
 
   void _updateFormats() {
-    final newBold = _checkStyle('bold');
-    final newItalic = _checkStyle('italic');
-    final newUnderline = _checkStyle('underline');
-    final newStrikethrough = _checkStyle('strikethrough');
-    final newSmallCaps = _checkStyle('smallcaps');
-    final newSuperscript = _checkStyle('superscript');
-    final newSubscript = _checkStyle('subscript');
+    final cursor = widget.document.cursor;
+    final pendingStyles = widget.document.pendingStyles;
+
+    if (cursor.isCollapsed) {
+      final newBold = pendingStyles.contains('bold');
+      final newItalic = pendingStyles.contains('italic');
+      final newUnderline = pendingStyles.contains('underline');
+      final newStrikethrough = pendingStyles.contains('strikethrough');
+      final newSmallCaps = pendingStyles.contains('smallcaps');
+      final newSuperscript = pendingStyles.contains('superscript');
+      final newSubscript = pendingStyles.contains('subscript');
+      final newTextAlign = _resolveTextAlign();
+
+      if (newBold != _isBold || newItalic != _isItalic || newUnderline != _isUnderline ||
+          newStrikethrough != _isStrikethrough || newSmallCaps != _isSmallCaps ||
+          newSuperscript != _isSuperscript || newSubscript != _isSubscript || newTextAlign != _textAlign) {
+        setState(() {
+          _isBold = newBold;
+          _isItalic = newItalic;
+          _isUnderline = newUnderline;
+          _isStrikethrough = newStrikethrough;
+          _isSmallCaps = newSmallCaps;
+          _isSuperscript = newSuperscript;
+          _isSubscript = newSubscript;
+          _textAlign = newTextAlign;
+        });
+      }
+      return;
+    }
+
+    final selection = resolveSelectionFromCursor(widget.document);
+    final allLeaves = <Fragment>[];
+    if (selection != null) {
+      for (final node in selection.nodes) {
+        allLeaves.addAll(FragmentOperations.collectLeavesInRange(node));
+      }
+    }
+
+    bool hasStyle(String name) =>
+        allLeaves.any((leaf) => leaf.styles?.contains(name) ?? false);
+
+    final newBold = hasStyle('bold');
+    final newItalic = hasStyle('italic');
+    final newUnderline = hasStyle('underline');
+    final newStrikethrough = hasStyle('strikethrough');
+    final newSmallCaps = hasStyle('smallcaps');
+    final newSuperscript = hasStyle('superscript');
+    final newSubscript = hasStyle('subscript');
     final newTextAlign = _resolveTextAlign();
 
     if (newBold != _isBold || newItalic != _isItalic || newUnderline != _isUnderline ||
@@ -159,22 +200,6 @@ class _FluentToolbarState extends State<FluentToolbar> {
   }
 
   bool _hasClipboardContent() => widget.document.clipboardPayload != null;
-
-  bool _checkStyle(String styleName) {
-    final cursor = widget.document.cursor;
-    if (!cursor.isCollapsed) {
-      final selection = resolveSelectionFromCursor(widget.document);
-      if (selection != null) {
-        for (final node in selection.nodes) {
-          for (final leaf in FragmentOperations.collectLeavesInRange(node)) {
-            if (leaf.styles?.contains(styleName) ?? false) return true;
-          }
-        }
-        return false;
-      }
-    }
-    return widget.document.pendingStyles.contains(styleName);
-  }
 
   Widget _buildAlignButton(IconData icon, TextAlign align, String tooltip) {
     final isActive = _textAlign == align;

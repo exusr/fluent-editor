@@ -147,38 +147,45 @@ bool executeHandleArrowKey(
             final currentCellId = _cellFor(currentContainerId);
             if (currentCellId != null) {
               int rowIndex = -1;
-              int colIndex = -1;
+              int logicalCol = -1;
               for (int r = 0; r < table.rows.length; r++) {
                 final row = table.rows[r];
+                int col = 0;
                 for (int c = 0; c < row.cells.length; c++) {
                   if (row.cells[c].id == currentCellId) {
                     rowIndex = r;
-                    colIndex = c;
+                    logicalCol = col;
                     break;
                   }
+                  col += row.cells[c].colSpan;
                 }
                 if (rowIndex >= 0) break;
               }
-              if (rowIndex >= 0 && colIndex >= 0) {
+              if (rowIndex >= 0 && logicalCol >= 0) {
                 for (final id in containerOrder) {
                   if (_isInsideStructure(id, currentCellId)) {
                     candidateIds.add(id);
                   }
                 }
-                if (rowIndex > 0 && colIndex < table.rows[rowIndex - 1].cells.length) {
-                  final aboveCellId = table.rows[rowIndex - 1].cells[colIndex].id;
-                  for (final id in containerOrder) {
-                    if (_isInsideStructure(id, aboveCellId)) {
-                      candidateIds.add(id);
+                if (rowIndex > 0) {
+                  final aboveCellId = _findCellAtLogicalCol(
+                    table.rows[rowIndex - 1], logicalCol);
+                  if (aboveCellId != null) {
+                    for (final id in containerOrder) {
+                      if (_isInsideStructure(id, aboveCellId)) {
+                        candidateIds.add(id);
+                      }
                     }
                   }
                 }
-                if (rowIndex < table.rows.length - 1 &&
-                    colIndex < table.rows[rowIndex + 1].cells.length) {
-                  final belowCellId = table.rows[rowIndex + 1].cells[colIndex].id;
-                  for (final id in containerOrder) {
-                    if (_isInsideStructure(id, belowCellId)) {
-                      candidateIds.add(id);
+                if (rowIndex < table.rows.length - 1) {
+                  final belowCellId = _findCellAtLogicalCol(
+                    table.rows[rowIndex + 1], logicalCol);
+                  if (belowCellId != null) {
+                    for (final id in containerOrder) {
+                      if (_isInsideStructure(id, belowCellId)) {
+                        candidateIds.add(id);
+                      }
                     }
                   }
                 }
@@ -225,11 +232,17 @@ bool executeHandleArrowKey(
       if (key == LogicalKeyboardKey.arrowUp) {
         result = moveUp(root, current, pref,
             document.resolveCaretX, document.resolveCaretY,
-            stops: candidateStops, allStops: stops);
+            stops: candidateStops, allStops: stops,
+            parentResolver: document.findParentCached,
+            containerResolver: document.findLogicalContainerId,
+            topLevelIndexResolver: document.topLevelIndexOf);
       } else {
         result = moveDown(root, current, pref,
             document.resolveCaretX, document.resolveCaretY,
-            stops: candidateStops, allStops: stops);
+            stops: candidateStops, allStops: stops,
+            parentResolver: document.findParentCached,
+            containerResolver: document.findLogicalContainerId,
+            topLevelIndexResolver: document.topLevelIndexOf);
       }
       isVertical = true;
     }
@@ -361,4 +374,18 @@ void _syncSelectionManager(FluentDocument document) {
   }
 
   _lastRenderRange.removeWhere((id, _) => !seenIds.contains(id));
+}
+
+/// Finds the cell ID in [row] that occupies the given [logicalCol] position.
+/// Accounts for colSpan: a cell with colSpan=3 occupies logical columns
+/// col, col+1, col+2.
+String? _findCellAtLogicalCol(FluentRow row, int logicalCol) {
+  int col = 0;
+  for (final cell in row.cells) {
+    if (col <= logicalCol && logicalCol < col + cell.colSpan) {
+      return cell.id;
+    }
+    col += cell.colSpan;
+  }
+  return null;
 }

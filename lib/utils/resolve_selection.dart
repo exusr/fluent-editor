@@ -153,8 +153,8 @@ ResolvedSelection? resolveSelection(
   final baseIdx   = baseIsAnchor ? anchorIdx : focusIdx;
   final extentIdx = baseIsAnchor ? focusIdx  : anchorIdx;
 
-  final anchorFragResolved = findById(root, anchorFragmentId);
-  final focusFragResolved  = findById(root, focusFragmentId);
+  final anchorFragResolved = document?.nodeById(anchorFragmentId) ?? findById(root, anchorFragmentId);
+  final focusFragResolved  = document?.nodeById(focusFragmentId)  ?? findById(root, focusFragmentId);
   if (anchorFragResolved is! Fragment || focusFragResolved is! Fragment) return null;
 
   final anchorContainer = document?.findLogicalContainerCached(anchorFragmentId) ??
@@ -202,7 +202,7 @@ ResolvedSelection? resolveSelection(
       startOff  = baseEndpoint.offset;
     } else {
       final firstStop = line.stops.first;
-      final firstNode = findById(root, firstStop.fragmentId);
+      final firstNode = document?.nodeById(firstStop.fragmentId) ?? findById(root, firstStop.fragmentId);
       if (firstNode is! Fragment) continue;
       final frag = firstNode;
       startFrag = frag;
@@ -217,7 +217,7 @@ ResolvedSelection? resolveSelection(
       endOff  = extentEndpoint.offset;
     } else {
       final lastStop = line.stops.last;
-      final lastNode = findById(root, lastStop.fragmentId);
+      final lastNode = document?.nodeById(lastStop.fragmentId) ?? findById(root, lastStop.fragmentId);
       if (lastNode is! Fragment) continue;
       final frag = lastNode;
       endFrag = frag;

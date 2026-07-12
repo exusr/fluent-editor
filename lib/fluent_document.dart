@@ -26,6 +26,10 @@ class FluentDocument extends ChangeNotifier {
   /// Used to prevent text selection from interfering with image resize.
   bool isResizingImage = false;
 
+  /// True when a table column/row/table resize handle is being dragged.
+  /// Used to prevent text selection from interfering with table resize.
+  bool isResizingTable = false;
+
   /// Active font size for collapsed cursor.
   double pendingFontSize = 14.0;
 
@@ -75,6 +79,13 @@ class FluentDocument extends ChangeNotifier {
 
   late Root _content;
 
+  /// Cached resolved selection keyed by cursor state. Populated by
+  /// resolveSelectionFromCursor in handler_helpers.dart so multiple
+  /// widgets (toolbar, font selector, font size selector) reuse the
+  /// same ResolvedSelection instead of re-resolving O(n) each time.
+  String? cachedSelectionKey;
+  dynamic cachedSelection;
+
   /// Monotonically incremented every time the document *content* (nodes/text)
   /// changes. Cursor movements alone do NOT bump it, allowing the widget to
   /// skip the expensive global setState when only the caret moved.
@@ -91,9 +102,6 @@ class FluentDocument extends ChangeNotifier {
   /// has changed since the last lookup.
   FNode? nodeById(String id) {
     if (_nodeIndexDirty) _rebuildNodeIndex();
-    final cached = _nodeById[id];
-    if (cached != null) return cached;
-    _rebuildNodeIndex();
     return _nodeById[id];
   }
 
@@ -104,7 +112,11 @@ class FluentDocument extends ChangeNotifier {
     _nodeById.clear();
     _nodePositionIndex.clear();
     _parentCache.clear();
+    _topLevelIndex.clear();
     int pos = 0;
+    for (int i = 0; i < _content.nodes.length; i++) {
+      _topLevelIndex[_content.nodes[i].id] = i;
+    }
     walkTree(_content, (node, parent) {
       _nodeById[node.id] = node;
       _nodePositionIndex[node.id] = pos++;
@@ -123,6 +135,17 @@ class FluentDocument extends ChangeNotifier {
     return _parentCache[childId];
   }
 
+  /// O(1) lookup of the top-level index for a node id, or -1 if not found.
+  /// Uses [findLogicalContainerId] to resolve fragments to their container.
+  int topLevelIndexOf(String fragmentOrNodeId) {
+    if (_nodeIndexDirty) _rebuildNodeIndex();
+    final idx = _topLevelIndex[fragmentOrNodeId];
+    if (idx != null) return idx;
+    final containerId = findLogicalContainerId(fragmentOrNodeId);
+    if (containerId != null) return _topLevelIndex[containerId] ?? -1;
+    return -1;
+  }
+
   /// Marks the id→node index as stale so it gets rebuilt on next lookup.
   void invalidateNodeIndex() {
     _nodeIndexDirty = true;
@@ -134,6 +157,8 @@ class FluentDocument extends ChangeNotifier {
     _flattenedCache = null;
     _flattenedByFragIdCache = null;
     _logicalContainerCache.clear();
+    cachedSelectionKey = null;
+    cachedSelection = null;
   }
 
   /// Linear position of each node in the document order (pre-order DFS).
@@ -149,6 +174,10 @@ class FluentDocument extends ChangeNotifier {
   /// menu on right-click to detect if a fragment is inside a Link).
   final Map<String, String?> _parentCache = {};
   bool _parentCacheDirty = true;
+
+  /// Top-level node id → index in root.nodes. Built during _rebuildNodeIndex
+  /// so widget scroll-to-cursor can skip its own separate cache.
+  final Map<String, int> _topLevelIndex = {};
 
   /// Memoized fragmentId → logical-container-id lookups. Resolving a logical
   /// container walks the whole tree (O(n)); caching makes repeated lookups
@@ -558,6 +587,8 @@ class FluentDocument extends ChangeNotifier {
     _cachedCursorContainerId = cursor.focusId.isNotEmpty
         ? findLogicalContainerId(cursor.focusId)
         : null;
+    cachedSelectionKey = null;
+    cachedSelection = null;
 
     cursor.notifyListeners();
     notifyListeners();

@@ -357,16 +357,22 @@ class _TableWithHandlesState extends State<_TableWithHandles> {
             behavior: HitTestBehavior.translucent,
             onHorizontalDragStart: _hasActiveSelection
                 ? null
-                : (_) => setState(() => _draggingCol = capturedI),
+                : (_) {
+                    widget.document.isResizingTable = true;
+                    setState(() => _draggingCol = capturedI);
+                  },
             onHorizontalDragUpdate: _hasActiveSelection
                 ? null
                 : (d) => widget.onColDragUpdate(capturedI, d),
             onHorizontalDragEnd: _hasActiveSelection
                 ? null
-                : (_) => setState(() {
-                    _draggingCol = -1;
-                    _hoveredCol = -1;
-                  }),
+                : (_) {
+                    widget.document.isResizingTable = false;
+                    setState(() {
+                      _draggingCol = -1;
+                      _hoveredCol = -1;
+                    });
+                  },
             child: Stack(
               alignment: Alignment.center,
               children: [
@@ -419,16 +425,22 @@ class _TableWithHandlesState extends State<_TableWithHandles> {
             behavior: HitTestBehavior.translucent,
             onVerticalDragStart: _hasActiveSelection
                 ? null
-                : (_) => setState(() => _draggingRow = capturedI),
+                : (_) {
+                    widget.document.isResizingTable = true;
+                    setState(() => _draggingRow = capturedI);
+                  },
             onVerticalDragUpdate: _hasActiveSelection
                 ? null
                 : (d) => widget.onRowDragUpdate(capturedI, d),
             onVerticalDragEnd: _hasActiveSelection
                 ? null
-                : (_) => setState(() {
-                    _draggingRow = -1;
-                    _hoveredRow = -1;
-                  }),
+                : (_) {
+                    widget.document.isResizingTable = false;
+                    setState(() {
+                      _draggingRow = -1;
+                      _hoveredRow = -1;
+                    });
+                  },
             child: Stack(
               alignment: Alignment.center,
               children: [
@@ -468,16 +480,22 @@ class _TableWithHandlesState extends State<_TableWithHandles> {
           behavior: HitTestBehavior.translucent,
           onHorizontalDragStart: _hasActiveSelection
               ? null
-              : (_) => setState(() => _draggingTable = true),
+              : (_) {
+                  widget.document.isResizingTable = true;
+                  setState(() => _draggingTable = true);
+                },
           onHorizontalDragUpdate: _hasActiveSelection
               ? null
               : widget.onTableDragUpdate,
           onHorizontalDragEnd: _hasActiveSelection
               ? null
-              : (_) => setState(() {
-                  _draggingTable = false;
-                  _hoveredTable = false;
-                }),
+              : (_) {
+                  widget.document.isResizingTable = false;
+                  setState(() {
+                    _draggingTable = false;
+                    _hoveredTable = false;
+                  });
+                },
           child: Stack(
             alignment: Alignment.center,
             children: [
@@ -1167,27 +1185,29 @@ class RenderFluentTable extends RenderFluentNode
     final int numRows = node.rows.length;
 
     int numCols = 0;
-    {
-      final List<List<bool>> occ = List.generate(numRows, (_) => []);
-      for (int r = 0; r < numRows; r++) {
-        int logCol = 0;
-        for (final cell in node.rows[r].cells) {
-          while (logCol < occ[r].length && occ[r][logCol]) {
-            logCol++;
-          }
-          final endCol = logCol + cell.colSpan;
-          final endRow = math.min(r + cell.rowSpan, numRows);
-          for (int rr = r; rr < endRow; rr++) {
-            while (occ[rr].length < endCol) {
-              occ[rr].add(false);
-            }
-            for (int cc = logCol; cc < endCol; cc++) {
-              occ[rr][cc] = true;
-            }
-          }
-          if (endCol > numCols) numCols = endCol;
-          logCol = endCol;
+    final cellPositions = <(int, int, int, FluentCell)>[];
+    final List<List<bool>> occ = List.generate(numRows, (_) => []);
+    for (int r = 0; r < numRows; r++) {
+      int logCol = 0;
+      int cellIdx = 0;
+      for (final cell in node.rows[r].cells) {
+        while (logCol < occ[r].length && occ[r][logCol]) {
+          logCol++;
         }
+        final endCol = logCol + cell.colSpan;
+        final endRow = math.min(r + cell.rowSpan, numRows);
+        for (int rr = r; rr < endRow; rr++) {
+          while (occ[rr].length < endCol) {
+            occ[rr].add(false);
+          }
+          for (int cc = logCol; cc < endCol; cc++) {
+            occ[rr][cc] = true;
+          }
+        }
+        if (endCol > numCols) numCols = endCol;
+        cellPositions.add((r, logCol, cellIdx, cell));
+        logCol = endCol;
+        cellIdx++;
       }
     }
 
@@ -1211,28 +1231,9 @@ class RenderFluentTable extends RenderFluentNode
     final grid = List.generate(
       numRows, (_) => List<(int, FluentCell)?>.filled(numCols, null),
     );
-    final occupied = List.generate(numRows, (_) => List.filled(numCols, false));
 
-    for (int r = 0; r < numRows; r++) {
-      int logCol = 0;
-      final cells = node.rows[r].cells;
-      for (int c = 0; c < cells.length; c++) {
-        final cell = cells[c];
-        while (logCol < numCols && occupied[r][logCol]) {
-          logCol++;
-        }
-        if (logCol >= numCols) break; // orphan cell: no slot available
-
-        final endCol = math.min(logCol + cell.colSpan, numCols);
-        final endRow = math.min(r + cell.rowSpan, numRows);
-        grid[r][logCol] = (c, cell);
-        for (int rr = r; rr < endRow; rr++) {
-          for (int cc = logCol; cc < endCol; cc++) {
-            occupied[rr][cc] = true;
-          }
-        }
-        logCol = endCol;
-      }
+    for (final (r, logCol, cellIdx, cell) in cellPositions) {
+      grid[r][logCol] = (cellIdx, cell);
     }
 
     RenderBox? child = firstChild;

@@ -1,11 +1,12 @@
 import 'package:fluent_editor/factories.dart';
+import 'package:fluent_editor/fluent_document.dart';
 import 'package:fluent_editor/utils/fragment_operations.dart';
 
 /// Returns the direct children of [node] for any type, including
 /// Root, FluentList, FluentTable/FluentRow.
 /// It's the base function to use everywhere instead of direct getChildren().
 List<FNode> childrenOf(FNode node) {
-  if (node is Root) return List<FNode>.from(node.nodes);
+  if (node is Root) return node.nodes;
   if (node is FluentTable) {
     return node.getChildren().cast<FNode>();
   }
@@ -51,12 +52,21 @@ FNode? findParent(FNode root, FNode target) {
   return null;
 }
 
-/// Climbs up the tree from [node] looking for an ancestor of type [T].
-T? findAncestor<T extends FNode>(FNode root, FNode node) {
-  FNode? current = node;
-  while (current != null) {
+/// O(1) per step parent lookup using the document's cached parent map.
+/// Returns the direct parent FNode of [node], or null if [node] is the root.
+FNode? findParentCached(FluentDocument document, FNode node) {
+  final parentId = document.findParentCached(node.id);
+  if (parentId == null) return null;
+  return document.nodeById(parentId);
+}
+
+/// O(depth) ancestor lookup using cached parent chain. Each step is O(1).
+T? findAncestorCached<T extends FNode>(FluentDocument document, FNode node) {
+  String? currentId = node.id;
+  while (currentId != null) {
+    final current = document.nodeById(currentId);
     if (current is T) return current;
-    current = findParent(root, current);
+    currentId = document.findParentCached(currentId);
   }
   return null;
 }
@@ -97,12 +107,14 @@ Fragment? resolveFragmentFromCursor(FNode? currentNode, int offset) {
 
 /// Removes empty Links and other inline wrappers that no longer contain
 /// any text fragments after a deletion.
-void cleanupEmptyInlineParents(Root root, FNode? node) {
+void cleanupEmptyInlineParents(Root root, FNode? node, {FluentDocument? document}) {
   if (node == null) return;
   if (node is Link && node.getChildren().isEmpty) {
-    final parent = findParent(root, node);
+    final parent = document != null
+        ? findParentCached(document, node)
+        : findParent(root, node);
     removeNode(root, node);
-    if (parent != null) cleanupEmptyInlineParents(root, parent);
+    if (parent != null) cleanupEmptyInlineParents(root, parent, document: document);
   }
 }
 
@@ -437,7 +449,7 @@ void recalculateListIndices(Root root) {
 /// Recalculates list indices only for lists that contain any of the
 /// given [affectedNodes] (or their ancestors). This avoids walking the
 /// entire document tree when only a subset of lists changed.
-void recalculateListIndicesFor(Root root, Set<FNode> affectedNodes) {
+void recalculateListIndicesFor(Root root, Set<FNode> affectedNodes, {FluentDocument? document}) {
   final topLists = <FluentList>{};
   for (final node in affectedNodes) {
     FNode? current = node;
@@ -446,16 +458,24 @@ void recalculateListIndicesFor(Root root, Set<FNode> affectedNodes) {
       if (current is FluentList) {
         deepestList = current;
       }
-      current = findParent(root, current);
+      current = document != null
+          ? findParentCached(document, current)
+          : findParent(root, current);
     }
     if (deepestList != null) {
       var top = deepestList;
-      FNode? parent = findParent(root, top);
+      FNode? parent = document != null
+          ? findParentCached(document, top)
+          : findParent(root, top);
       while (parent is ListItem) {
-        final grand = findParent(root, parent);
+        final grand = document != null
+            ? findParentCached(document, parent)
+            : findParent(root, parent);
         if (grand is FluentList) {
           top = grand;
-          parent = findParent(root, grand);
+          parent = document != null
+              ? findParentCached(document, grand)
+              : findParent(root, grand);
         } else {
           break;
         }
@@ -559,9 +579,12 @@ void _mergeLists(Root root, List<FluentList> lists) {
 Paragraph? outdentListItemToParagraph(
   Root root,
   FluentList listParent,
-  ListItem currentItem,
-) {
-  final grandparent = findParent(root, listParent);
+  ListItem currentItem, {
+  FluentDocument? document,
+}) {
+  final grandparent = document != null
+      ? findParentCached(document, listParent)
+      : findParent(root, listParent);
   if (grandparent == null) return null;
 
   final itemChildren = currentItem.children.toList();

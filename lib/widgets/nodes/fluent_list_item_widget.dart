@@ -1,5 +1,6 @@
 import 'package:fluent_editor/factories.dart';
 import 'package:fluent_editor/fluent_document.dart';
+import 'package:fluent_editor/utils/node_operations.dart';
 import 'package:fluent_editor/widgets/node_widget_builder.dart';
 import 'package:fluent_editor/widgets/nodes/fluent_paragraph_widget.dart';
 import 'package:fluent_editor/widgets/dialogs/list_marker_dialog.dart';
@@ -23,6 +24,8 @@ class FluentListItemWidget extends StatefulWidget {
 }
 
 class _FluentListItemWidgetState extends State<FluentListItemWidget> {
+  int _lastContentVersion = -1;
+
   @override
   void initState() {
     super.initState();
@@ -44,14 +47,29 @@ class _FluentListItemWidgetState extends State<FluentListItemWidget> {
     super.dispose();
   }
 
-  void _onStateChange() => setState(() {});
+  void _onStateChange() {
+    if (widget.document.cursorOnlyChange) return;
+    if (!widget.document.isNodeDirty(widget.node.id)) return;
+    final version = widget.document.contentVersion;
+    if (version == _lastContentVersion) return;
+    _lastContentVersion = version;
+    setState(() {});
+  }
 
   @override
   Widget build(BuildContext context) {
     final allChildren = widget.node.getChildren();
 
-    final firstParagraph = allChildren.whereType<Paragraph>().firstOrNull;
-    final otherChildren = allChildren.where((c) => c != firstParagraph).toList();
+    int firstParagraphIndex = -1;
+    for (int i = 0; i < allChildren.length; i++) {
+      if (allChildren[i] is Paragraph) {
+        firstParagraphIndex = i;
+        break;
+      }
+    }
+    final firstParagraph = firstParagraphIndex >= 0
+        ? allChildren[firstParagraphIndex] as Paragraph
+        : null;
 
     final textAlign = firstParagraph?.textAlign ?? 'left';
     final mainAxisAlignment = switch (textAlign) {
@@ -98,15 +116,16 @@ class _FluentListItemWidgetState extends State<FluentListItemWidget> {
             ],
           ),
 
-        if (otherChildren.isNotEmpty)
+        if (allChildren.length > 1)
           Padding(
             padding: const EdgeInsets.only(left: 24.0),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: otherChildren
-                  .map((child) => buildFNodeWidget(child, widget.document))
-                  .whereType<Widget>()
-                  .toList(),
+              children: [
+                for (int i = 0; i < allChildren.length; i++)
+                  if (i != firstParagraphIndex)
+                    buildFNodeWidget(allChildren[i], widget.document),
+              ],
             ),
           ),
         ],
@@ -223,27 +242,7 @@ class _ListMarker extends StatelessWidget {
   }
 
   FluentList? _findParentFluentList(ListItem listItem) {
-    return _findFluentListInNode(document.content, listItem);
-  }
-
-  FluentList? _findFluentListInNode(FNode node, ListItem targetListItem) {
-    if (node is FluentList) {
-      if (node.items.contains(targetListItem)) {
-        return node;
-      }
-    }
-    
-    if (node is InlineContainerNode) {
-      final container = node as InlineContainerNode;
-      for (final child in container.getChildren()) {
-        final result = _findFluentListInNode(child, targetListItem);
-        if (result != null) {
-          return result;
-        }
-      }
-    }
-    
-    return null;
+    return findAncestorCached<FluentList>(document, listItem);
   }
 
   String _resolveLabel() {

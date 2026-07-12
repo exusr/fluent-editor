@@ -364,6 +364,240 @@ void main() {
       expect(doc.cursor.isCollapsed, isTrue);
       expect(doc.cursor.anchorOffset, 2);
     });
+
+    test('arrow down works after replacing a selection', () {
+      final p1 = Paragraph(text: 'hello world');
+      final p2 = Paragraph(text: 'second paragraph');
+      final doc = FluentDocument(content: Root(nodes: [p1, p2]));
+      doc.eventHandler.document = doc;
+
+      final frag1 = p1.fragments.first as Fragment;
+      final frag2 = p2.fragments.first as Fragment;
+
+      doc.cursor.moveTo(frag1.id, 1);
+      doc.cursor.focusTo(frag1.id, 4);
+      _keyDown(doc, LogicalKeyboardKey.keyX, character: 'x');
+      expect(frag1.text, 'hxo world');
+      expect(doc.cursor.isCollapsed, isTrue);
+
+      _keyDown(doc, LogicalKeyboardKey.arrowDown);
+      expect(doc.cursor.anchorId, frag2.id);
+    });
+
+    test('arrow down works after multi-paragraph replace with merge', () {
+      final p1 = Paragraph(text: 'first paragraph');
+      final p2 = Paragraph(text: 'second paragraph');
+      final p3 = Paragraph(text: 'third paragraph');
+      final doc = FluentDocument(content: Root(nodes: [p1, p2, p3]));
+      doc.eventHandler.document = doc;
+
+      final frag1 = p1.fragments.first as Fragment;
+      final frag2 = p2.fragments.first as Fragment;
+      final frag3 = p3.fragments.first as Fragment;
+
+      // Select from middle of p1 to middle of p2, then type: p2 merges into p1.
+      doc.cursor.moveTo(frag1.id, 5);
+      doc.cursor.focusTo(frag2.id, 6);
+      _keyDown(doc, LogicalKeyboardKey.keyX, character: 'x');
+
+      expect(frag1.text, 'firstx');
+      expect(doc.cursor.isCollapsed, isTrue);
+      // Cursor must point to a fragment that still exists in the tree.
+      expect(doc.nodeById(doc.cursor.anchorId), isNotNull);
+      // p2 was merged away: only p1 (with merged frags) and p3 remain.
+      expect(doc.content.nodes.length, 2);
+
+      _keyDown(doc, LogicalKeyboardKey.arrowDown);
+      expect(doc.cursor.anchorId, frag3.id);
+    });
+
+    test('typing replaces selection across list items without merging', () {
+      final p1 = Paragraph(text: 'abc');
+      final p2 = Paragraph(text: 'def');
+      final item1 = ListItem(bulletType: 'bullet', indexList: [1], children: [p1]);
+      final item2 = ListItem(bulletType: 'bullet', indexList: [2], children: [p2]);
+      final list = FluentList(listType: 'bullet')
+        ..items = [item1, item2];
+      final doc = FluentDocument(content: Root(nodes: [list]));
+      doc.eventHandler.document = doc;
+
+      final frag1 = p1.fragments.first as Fragment;
+      final frag2 = p2.fragments.first as Fragment;
+
+      doc.cursor.moveTo(frag1.id, 1); // select from "a|bc"
+      doc.cursor.focusTo(frag2.id, 2); // to "de|f"
+      _keyDown(doc, LogicalKeyboardKey.keyX, character: 'x');
+
+      expect(frag1.text, 'ax');
+      expect(frag2.text, 'f');
+      expect(doc.cursor.isCollapsed, isTrue);
+      expect(doc.selectionManager.hasSelection, isFalse);
+      expect(doc.isNodeSelected(p1.id), isFalse);
+      expect(doc.isNodeSelected(p2.id), isFalse);
+    });
+
+    test('replace spanning sublist and ending in a different list', () {
+      // L1: item A ("aaa") with sublist S ("sub"), item B ("bbb")
+      // L2: item C ("ccc")
+      final pA = Paragraph(text: 'aaa');
+      final pSub = Paragraph(text: 'sub');
+      final pB = Paragraph(text: 'bbb');
+      final pC = Paragraph(text: 'ccc');
+
+      final subItem = ListItem(bulletType: 'bullet', indexList: [1, 1], children: [pSub]);
+      final sublist = FluentList(listType: 'bullet')..items = [subItem];
+      final itemA = ListItem(bulletType: 'bullet', indexList: [1], children: [pA, sublist]);
+      final itemB = ListItem(bulletType: 'bullet', indexList: [2], children: [pB]);
+      final list1 = FluentList(listType: 'bullet')..items = [itemA, itemB];
+
+      final itemC = ListItem(bulletType: 'bullet', indexList: [1], children: [pC]);
+      final list2 = FluentList(listType: 'bullet')..items = [itemC];
+
+      final after = Paragraph(text: 'after');
+      final doc = FluentDocument(content: Root(nodes: [list1, list2, after]));
+      doc.eventHandler.document = doc;
+
+      final fragA = pA.fragments.first as Fragment;
+      final fragC = pC.fragments.first as Fragment;
+      final fragAfter = after.fragments.first as Fragment;
+
+      // Select from "aa|a" through the sublist and item B, ending at "cc|c".
+      doc.cursor.moveTo(fragA.id, 2);
+      doc.cursor.focusTo(fragC.id, 2);
+      _keyDown(doc, LogicalKeyboardKey.keyX, character: 'x');
+
+      // Base fragment gets the typed char; extent keeps only the tail.
+      expect(fragA.text, 'aax');
+      expect(doc.cursor.isCollapsed, isTrue);
+      expect(doc.cursor.anchorId, fragA.id);
+      // Cursor must reference a fragment still present in the tree.
+      expect(doc.nodeById(doc.cursor.anchorId), isNotNull);
+      // Sublist and item B were fully selected: they must be gone.
+      expect(doc.content.text.contains('sub'), isFalse);
+      expect(doc.content.text.contains('bbb'), isFalse);
+      // Tail of the extent must survive exactly once.
+      expect('c'.allMatches(doc.content.text.replaceAll(RegExp('[^c]'), '')).length, 1);
+
+      // Navigation below the modified area must still work.
+      _keyDown(doc, LogicalKeyboardKey.arrowDown);
+      final downId = doc.cursor.anchorId;
+      expect(downId == fragAfter.id || doc.nodeById(downId) != null, isTrue);
+      expect(doc.nodeById(downId), isNotNull);
+    });
+
+    test('replace starting inside sublist and ending in a different list', () {
+      final pA = Paragraph(text: 'aaa');
+      final pSub = Paragraph(text: 'sub');
+      final pB = Paragraph(text: 'bbb');
+      final pC = Paragraph(text: 'ccc');
+
+      final subItem = ListItem(bulletType: 'bullet', indexList: [1, 1], children: [pSub]);
+      final sublist = FluentList(listType: 'bullet')..items = [subItem];
+      final itemA = ListItem(bulletType: 'bullet', indexList: [1], children: [pA, sublist]);
+      final itemB = ListItem(bulletType: 'bullet', indexList: [2], children: [pB]);
+      final list1 = FluentList(listType: 'bullet')..items = [itemA, itemB];
+
+      final itemC = ListItem(bulletType: 'bullet', indexList: [1], children: [pC]);
+      final list2 = FluentList(listType: 'bullet')..items = [itemC];
+
+      final doc = FluentDocument(content: Root(nodes: [list1, list2]));
+      doc.eventHandler.document = doc;
+
+      final fragSub = pSub.fragments.first as Fragment;
+      final fragC = pC.fragments.first as Fragment;
+
+      // Select from "su|b" (inside the sublist) to "cc|c" (different list).
+      doc.cursor.moveTo(fragSub.id, 2);
+      doc.cursor.focusTo(fragC.id, 2);
+      _keyDown(doc, LogicalKeyboardKey.keyX, character: 'x');
+
+      expect(fragSub.text, 'sux');
+      expect(doc.cursor.isCollapsed, isTrue);
+      expect(doc.nodeById(doc.cursor.anchorId), isNotNull);
+      // "aaa" precedes the selection: untouched.
+      expect(doc.content.text.contains('aaa'), isTrue);
+      // Item B was fully selected: gone.
+      expect(doc.content.text.contains('bbb'), isFalse);
+      // Tail "c" must survive exactly once.
+      expect(doc.content.text.replaceAll(RegExp('[^c]'), '').length, 1);
+    });
+
+    test('typing replaces selection across table cells without merging', () {
+      final p1 = Paragraph(text: 'abc');
+      final p2 = Paragraph(text: 'def');
+      final cell1 = FluentCell(children: [p1]);
+      final cell2 = FluentCell(children: [p2]);
+      final row = FluentRow(cells: [cell1, cell2]);
+      final table = FluentTable(rows: [row]);
+      final doc = FluentDocument(content: Root(nodes: [table]));
+      doc.eventHandler.document = doc;
+
+      final frag1 = p1.fragments.first as Fragment;
+      final frag2 = p2.fragments.first as Fragment;
+
+      doc.cursor.moveTo(frag1.id, 1);
+      doc.cursor.focusTo(frag2.id, 2);
+      _keyDown(doc, LogicalKeyboardKey.keyX, character: 'x');
+
+      expect(frag1.text, 'ax');
+      expect(frag2.text, 'f');
+      expect(doc.cursor.isCollapsed, isTrue);
+      expect(doc.selectionManager.hasSelection, isFalse);
+      expect(doc.isNodeSelected(p1.id), isFalse);
+      expect(doc.isNodeSelected(p2.id), isFalse);
+    });
+
+    test('replace from sublist up to different top-level list preserves tail and navigation', () {
+      // Mirrors the example document structure:
+      // Unordered list with "Tables with colSpan and rowSpan support"
+      // Ordered list with item 2 "Advanced formatting" containing a sublist
+      //   with "Bold, italic, underline" and "Superscript and subscript"
+      final pColSpan = Paragraph(text: 'Tables with colSpan and rowSpan support');
+      final itemU = ListItem(bulletType: 'bullet', indexList: [1], children: [pColSpan]);
+      final ul = FluentList(listType: 'bullet')..items = [itemU];
+
+      final pBasic = Paragraph(text: 'Basic editing');
+      final item1 = ListItem(bulletType: 'ordered', indexList: [1], children: [pBasic]);
+
+      final pAdv = Paragraph(text: 'Advanced formatting');
+      final pBold = Paragraph(text: 'Bold, italic, underline');
+      final pSuper = Paragraph(text: 'Superscript and subscript');
+      final subItem1 = ListItem(bulletType: 'ordered', indexList: [2, 1], children: [pBold]);
+      final subItem2 = ListItem(bulletType: 'ordered', indexList: [2, 2], children: [pSuper]);
+      final sublist = FluentList(listType: 'ordered')..items = [subItem1, subItem2];
+      final item2 = ListItem(bulletType: 'ordered', indexList: [2], children: [pAdv, sublist]);
+
+      final pExport = Paragraph(text: 'Export and import');
+      final item3 = ListItem(bulletType: 'ordered', indexList: [3], children: [pExport]);
+      final ol = FluentList(listType: 'ordered')..items = [item1, item2, item3];
+
+      final after = Paragraph(text: 'after');
+      final doc = FluentDocument(content: Root(nodes: [ul, ol, after]));
+      doc.eventHandler.document = doc;
+
+      final fragColSpan = pColSpan.fragments.first as Fragment;
+      final fragSuper = pSuper.fragments.first as Fragment;
+
+      // Select from "Tables with |colSpan..." (unordered list) up to
+      // "Super|script and subscript" (sublist of ordered list item 2).
+      doc.cursor.moveTo(fragSuper.id, 5);
+      doc.cursor.focusTo(fragColSpan.id, 12);
+      _keyDown(doc, LogicalKeyboardKey.keyX, character: 'x');
+
+      expect(doc.cursor.isCollapsed, isTrue);
+      expect(doc.nodeById(doc.cursor.anchorId), isNotNull);
+      // The tail of the extent ("script and subscript") must survive.
+      expect(doc.content.text.contains('script and subscript'), isTrue);
+      // Fully selected intermediate content must be gone.
+      expect(doc.content.text.contains('Basic editing'), isFalse);
+      expect(doc.content.text.contains('Advanced formatting'), isFalse);
+      expect(doc.content.text.contains('Bold, italic, underline'), isFalse);
+      // item2 (which had its Paragraph removed and only had a sublist) must be gone.
+      expect(doc.nodeById(item2.id), isNull);
+      // Navigation below the modified area must still work.
+      _keyDown(doc, LogicalKeyboardKey.arrowDown);
+      expect(doc.nodeById(doc.cursor.anchorId), isNotNull);
+    });
   });
 
   group('Keyboard e2e — macOS modifier mapping', () {

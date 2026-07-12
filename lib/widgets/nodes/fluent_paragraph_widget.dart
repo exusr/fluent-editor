@@ -68,6 +68,7 @@ class FluentParagraphWidgetState<T extends FluentParagraphWidget> extends State<
   /// cursor blink or selection update.
   List<FluentImage>? _cachedInlineImages;
   int? _cachedInlineImagesVersion;
+  List<Widget>? _cachedImageWidgets;
 
   CommentProvider? get _comment => widget.document.commentProvider;
 
@@ -163,6 +164,7 @@ class FluentParagraphWidgetState<T extends FluentParagraphWidget> extends State<
     final cursor = widget.document.cursor;
     final container = widget.node as InlineContainerNode;
     final nodeId = widget.node.id;
+    final hasPreedit = widget.document.imeHandler.isPreeditInContainer(nodeId);
 
     final paragraph = widget.node is Paragraph ? widget.node as Paragraph : null;
     final style = paragraph?.getStyle();
@@ -183,10 +185,11 @@ class FluentParagraphWidgetState<T extends FluentParagraphWidget> extends State<
         _cachedInlineImagesVersion != currentVersion) {
       _cachedInlineImages = collectInlineImages(container);
       _cachedInlineImagesVersion = currentVersion;
+      _cachedImageWidgets = _cachedInlineImages!.map((img) {
+        return InlineImageWidget(node: img, document: widget.document);
+      }).toList();
     }
-    final imageWidgets = _cachedInlineImages!.map((img) {
-      return InlineImageWidget(node: img, document: widget.document);
-    }).toList();
+    final imageWidgets = _cachedImageWidgets!;
 
     final commentAnnotations = _comment?.commentsForNode(nodeId) ?? const [];
     final selectedCommentId = _comment?.selectedCommentId;
@@ -300,13 +303,13 @@ class FluentParagraphWidgetState<T extends FluentParagraphWidget> extends State<
           selFocusLocalOffset: selRange?.endOff,
           commentAnnotations: commentAnnotations,
           selectedCommentId: selectedCommentId,
-          imePreeditText: widget.document.imeHandler.isPreeditInContainer(nodeId)
+          imePreeditText: hasPreedit
               ? widget.document.imeHandler.preeditText
               : '',
-          imePreeditFragmentId: widget.document.imeHandler.isPreeditInContainer(nodeId)
+          imePreeditFragmentId: hasPreedit
               ? widget.document.imeHandler.preeditFragmentId
               : '',
-          imePreeditLocalOffset: widget.document.imeHandler.isPreeditInContainer(nodeId)
+          imePreeditLocalOffset: hasPreedit
               ? widget.document.imeHandler.preeditLocalOffset
               : 0,
           children: imageWidgets,

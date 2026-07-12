@@ -12,13 +12,9 @@ class _PendingSnapshot {
   String description;
   final DateTime timestamp;
 
-  /// Version of every top-level node at the time of capture.
-  /// Used for O(1) dirty detection in commitSaveState.
-  final List<int> oldVersions;
-
   /// Full JSON of every top-level node at capture time.
-  /// Serialized eagerly because node objects are mutated in place
-  /// between beginSaveState and commitSaveState.
+  /// Reused from [_jsonCache] when possible to avoid re-serializing
+  /// unchanged nodes on every beginSaveState call.
   final List<Map<String, dynamic>> oldTopLevelNodes;
 
   final CursorSnapshot oldCursor;
@@ -26,7 +22,6 @@ class _PendingSnapshot {
   _PendingSnapshot({
     required this.description,
     required this.timestamp,
-    required this.oldVersions,
     required this.oldTopLevelNodes,
     required this.oldCursor,
   });
@@ -52,6 +47,11 @@ class UndoRedoManager {
   /// Pending snapshot captured by [beginSaveState]; committed by
   /// [commitSaveState] (called from [updateContent]).
   _PendingSnapshot? _pending;
+
+  /// Cache of nodeId → JSON from the last committed state.
+  /// Lets beginSaveState reuse the pre-mutation JSON without
+  /// re-serializing unchanged nodes (O(changed) instead of O(n)).
+  final Map<String, Map<String, dynamic>> _jsonCache = {};
 
   bool get canUndo => _undoStack.isNotEmpty;
   bool get canRedo => _redoStack.isNotEmpty;
@@ -87,11 +87,25 @@ class UndoRedoManager {
     }
 
     final nodes = document.content.nodes;
+    final currentIds = <String>{};
+    final oldJsonList = <Map<String, dynamic>>[];
+    for (final node in nodes) {
+      currentIds.add(node.id);
+      final cached = _jsonCache[node.id];
+      if (cached != null) {
+        oldJsonList.add(cached);
+      } else {
+        final json = node.toJson();
+        _jsonCache[node.id] = json;
+        oldJsonList.add(json);
+      }
+    }
+    // Evict stale entries for nodes no longer in the document.
+    _jsonCache.removeWhere((id, _) => !currentIds.contains(id));
     _pending = _PendingSnapshot(
       description: description,
       timestamp: now,
-      oldVersions: nodes.map((n) => n.contentVersion).toList(),
-      oldTopLevelNodes: nodes.map((n) => n.toJson()).toList(),
+      oldTopLevelNodes: oldJsonList,
       oldCursor: CursorSnapshot.fromDocument(document),
     );
 
@@ -215,6 +229,7 @@ class UndoRedoManager {
         _undoStack.last = mergedDelta;
         _pending = null;
         _redoStack.clear();
+        _updateJsonCacheFromChanges(document, mergedChanges.values.toList());
         _enforceMemoryLimit();
         return;
       }
@@ -223,6 +238,7 @@ class UndoRedoManager {
     _undoStack.add(delta);
     _redoStack.clear();
     _pending = null;
+    _updateJsonCacheFromChanges(document, changes);
     _enforceMemoryLimit();
   }
 
@@ -244,6 +260,7 @@ class UndoRedoManager {
     }
     final affectedIds = _collectAffectedIds(delta, document);
     document.notifyDocumentChanged(affectedIds: affectedIds);
+    _updateJsonCache(document);
     _resetGrouping();
     return true;
   }
@@ -266,6 +283,7 @@ class UndoRedoManager {
     }
     final affectedIds = _collectAffectedIds(delta, document);
     document.notifyDocumentChanged(affectedIds: affectedIds);
+    _updateJsonCache(document);
     _resetGrouping();
     return true;
   }
@@ -298,6 +316,7 @@ class UndoRedoManager {
     _undoStack.clear();
     _redoStack.clear();
     _pending = null;
+    _jsonCache.clear();
     _resetGrouping();
   }
 
@@ -337,6 +356,46 @@ class UndoRedoManager {
     _groupingTimer = null;
     _currentGroupDescription = null;
     _lastActionTime = null;
+  }
+
+  /// Refreshes [_jsonCache] with the current state of all top-level nodes.
+  /// Called after undo/redo so the next beginSaveState can reuse the cached
+  /// JSON for unchanged nodes.
+  void _updateJsonCache(FluentDocument document) {
+    _jsonCache.clear();
+    for (final node in document.content.nodes) {
+      _jsonCache[node.id] = node.toJson();
+    }
+  }
+
+  /// Incrementally updates [_jsonCache] using the [changes] from a commit.
+  /// Only changed nodes are re-serialized; unchanged entries are kept.
+  /// Ceiling: O(changed_nodes) instead of O(all_nodes). Upgrade path: if
+  /// the document grows very large, this is already optimal per-commit.
+  void _updateJsonCacheFromChanges(
+    FluentDocument document,
+    List<NodeChange> changes,
+  ) {
+    final newNodes = document.content.nodes;
+    final currentIds = <String>{};
+    for (final node in newNodes) {
+      currentIds.add(node.id);
+    }
+    // Remove deleted nodes from cache
+    final deletedIds = <String>[];
+    _jsonCache.forEach((id, _) {
+      if (!currentIds.contains(id)) deletedIds.add(id);
+    });
+    for (final id in deletedIds) {
+      _jsonCache.remove(id);
+    }
+    // Update changed nodes from pre-serialized newJson
+    for (final change in changes) {
+      if (change.index < newNodes.length) {
+        final node = newNodes[change.index];
+        _jsonCache[node.id] = change.newJson;
+      }
+    }
   }
 
   void dispose() {

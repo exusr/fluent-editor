@@ -61,16 +61,62 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
   final ScrollController _scrollController = ScrollController();
   final GlobalKey _contentStackKey = GlobalKey();
 
-  final Map<String, int> _nodeIndexCache = {};
-  bool _nodeIndexCacheDirty = true;
-
   final Map<int, double> _itemHeights = {};
   double _averageItemHeight = 40.0;
+  double _totalMeasuredHeight = 0.0;
+
+  // Cumulative height cache for O(1) offset lookup in _ensureCursorVisibleVirtualized.
+  // Invalidated when _itemHeights changes.
+  List<double>? _cumulativeHeights;
+  int _cumulativeHeightsCount = -1;
 
   // Cached word/char counts keyed by content version to avoid O(n) tree walk on every rebuild.
   int _cachedWordCount = 0;
   int _cachedCharCount = 0;
   int? _statsContentVersion;
+
+  void _computeStats() {
+    final version = widget.document.contentVersion;
+    if (_statsContentVersion == version) return;
+
+    int words = 0;
+    int chars = 0;
+    final root = widget.document.content;
+
+    void visit(FNode node) {
+      // Link extends Paragraph implements Fragment — check Link/InlineContainerNode first.
+      if (node is Fragment && node is! InlineContainerNode) {
+        final text = node.text;
+        if (text.isNotEmpty) {
+          // Simple word boundary scan — avoids RegExp + List allocation per fragment.
+          bool inWord = false;
+          for (int i = 0; i < text.length; i++) {
+            final isSpace = text.codeUnitAt(i) <= 32;
+            if (isSpace) {
+              if (inWord) { words++; inWord = false; }
+            } else {
+              inWord = true;
+            }
+          }
+          if (inWord) words++;
+        }
+        chars += text.length;
+      } else if (node is InlineContainerNode) {
+        for (final child in childrenOf(node)) {
+          visit(child);
+        }
+      } else if (node is FluentList) {
+        for (final item in node.items) {
+          visit(item);
+        }
+      }
+    }
+
+    visit(root);
+    _cachedWordCount = words;
+    _cachedCharCount = chars;
+    _statsContentVersion = version;
+  }
 
   Timer? _blinkTimer;
   static const Duration _blinkInterval = Duration(milliseconds: 530);
@@ -96,11 +142,18 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
     final now = DateTime.now();
     if (_lastBlinkRestart != null &&
         now.difference(_lastBlinkRestart!).inMilliseconds < 200) {
+      _blinkTimer?.cancel();
       widget.document.paragraphRegistry.caretVisible = true;
       _repaintCaretParagraph();
+      // Schedule blink restart after inactivity; cancelled if another keypress arrives first.
+      _blinkTimer = Timer(_blinkInterval, _startBlinking);
       return;
     }
     _lastBlinkRestart = now;
+    _startBlinking();
+  }
+
+  void _startBlinking() {
     _blinkTimer?.cancel();
     widget.document.paragraphRegistry.caretVisible = true;
     _repaintCaretParagraph();
@@ -166,12 +219,16 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
               document: widget.document,
               scrollController: _scrollController,
               itemCount: widget.document.content.nodes.length,
-              onHeightsChanged: (heights) {
-                _itemHeights.clear();
-                _itemHeights.addAll(heights);
-                if (heights.isNotEmpty) {
-                  final sum = heights.values.reduce((a, b) => a + b);
-                  _averageItemHeight = sum / heights.length;
+              onHeightsChanged: (index, height) {
+                final oldHeight = _itemHeights[index];
+                if (oldHeight != null) {
+                  _totalMeasuredHeight -= oldHeight;
+                }
+                _itemHeights[index] = height;
+                _totalMeasuredHeight += height;
+                _cumulativeHeights = null;
+                if (_itemHeights.isNotEmpty) {
+                  _averageItemHeight = _totalMeasuredHeight / _itemHeights.length;
                 }
               },
               itemBuilder: (context, index) {
@@ -215,6 +272,7 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
     widget.document.imeHandler.syncImeBufferToFragment();
 
     if (widget.document.cursorOnlyChange) {
+      _restartBlink();
       if (!_pendingScrollToCursor) {
         _pendingScrollToCursor = true;
         WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -228,7 +286,6 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
     setState(() {});
 
     _restartBlink();
-    _nodeIndexCacheDirty = true;
     if (!_pendingScrollToCursor) {
       _pendingScrollToCursor = true;
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -297,6 +354,23 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
   ///
   /// During an active IME composition all non-navigation keys are suppressed
   /// so the system IME receives them instead of the raw key pipeline.
+  static final _navKeys = {
+    LogicalKeyboardKey.arrowLeft,
+    LogicalKeyboardKey.arrowRight,
+    LogicalKeyboardKey.arrowUp,
+    LogicalKeyboardKey.arrowDown,
+    LogicalKeyboardKey.enter,
+    LogicalKeyboardKey.tab,
+    LogicalKeyboardKey.home,
+    LogicalKeyboardKey.end,
+    LogicalKeyboardKey.pageUp,
+    LogicalKeyboardKey.pageDown,
+  };
+
+  static final _shortcutKeys = {
+    LogicalKeyboardKey.keyZ,
+  };
+
   bool _onHardwareKeyEvent(KeyEvent event) {
     if (event is! KeyDownEvent && event is! KeyRepeatEvent) return false;
 
@@ -306,23 +380,7 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
     final isMeta = keyboard.isMetaPressed;
     final key = event.logicalKey;
 
-    final navKeys = {
-      LogicalKeyboardKey.arrowLeft,
-      LogicalKeyboardKey.arrowRight,
-      LogicalKeyboardKey.arrowUp,
-      LogicalKeyboardKey.arrowDown,
-      LogicalKeyboardKey.enter,
-      LogicalKeyboardKey.tab,
-      LogicalKeyboardKey.home,
-      LogicalKeyboardKey.end,
-      LogicalKeyboardKey.pageUp,
-      LogicalKeyboardKey.pageDown,
-    };
-
-    final shortcutKeys = {
-      LogicalKeyboardKey.keyZ,
-    };
-    if (doc.editorFocusNode.hasFocus && !shortcutKeys.contains(key)) {
+    if (doc.editorFocusNode.hasFocus && !_shortcutKeys.contains(key)) {
       return false;
     }
 
@@ -349,7 +407,7 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
       return true;
     }
 
-    if (navKeys.contains(key)) {
+    if (_navKeys.contains(key)) {
       doc.manageEvent(event);
       return true;
     }
@@ -373,10 +431,20 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!_scrollController.hasClients) return;
 
-      double nodeStart = 0.0;
-      for (int i = 0; i < cursorNodeIndex; i++) {
-        nodeStart += _itemHeights[i] ?? _averageItemHeight;
+      final nodeCount = widget.document.content.nodes.length;
+      // Build cumulative heights cache if stale.
+      if (_cumulativeHeights == null || _cumulativeHeightsCount != nodeCount) {
+        _cumulativeHeightsCount = nodeCount;
+        final cum = List<double>.filled(nodeCount, 0.0);
+        double acc = 0.0;
+        for (int i = 0; i < nodeCount; i++) {
+          acc += _itemHeights[i] ?? _averageItemHeight;
+          cum[i] = acc;
+        }
+        _cumulativeHeights = cum;
       }
+      final cum = _cumulativeHeights!;
+      final nodeStart = cursorNodeIndex == 0 ? 0.0 : cum[cursorNodeIndex - 1];
       final nodeHeight = _itemHeights[cursorNodeIndex] ?? _averageItemHeight;
       final nodeEnd = nodeStart + nodeHeight;
 
@@ -405,74 +473,8 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
     });
   }
 
-  /// Optimized node index lookup with caching
   int _findNodeIndexCached(String fragmentId) {
-    _updateNodeIndexCacheIfNeeded();
-    
-    final directIndex = _nodeIndexCache[fragmentId];
-    if (directIndex != null) return directIndex;
-    
-    for (int i = 0; i < widget.document.content.nodes.length; i++) {
-      final node = widget.document.content.nodes[i];
-      if (_nodeContainsFragment(node, fragmentId)) {
-        return i;
-      }
-    }
-    
-    return -1;
-  }
-
-  /// Updates node index cache when document changes
-  void _updateNodeIndexCacheIfNeeded() {
-    if (!_nodeIndexCacheDirty) return;
-    
-    _nodeIndexCache.clear();
-    for (int i = 0; i < widget.document.content.nodes.length; i++) {
-      final node = widget.document.content.nodes[i];
-      _nodeIndexCache[node.id] = i;
-      
-      if (node is Paragraph) {
-        for (final fragment in node.fragments) {
-          _nodeIndexCache[fragment.id] = i;
-        }
-      } else if (node is FluentList) {
-        for (final item in node.items) {
-          for (final child in item.children) {
-            if (child is Paragraph) {
-              _nodeIndexCache[child.id] = i;
-              for (final fragment in child.fragments) {
-                _nodeIndexCache[fragment.id] = i;
-              }
-            }
-          }
-        }
-      } else if (node is FluentTable) {
-        for (final row in node.rows) {
-          for (final cell in row.cells) {
-            for (final child in cell.children) {
-              if (child is Paragraph) {
-                _nodeIndexCache[child.id] = i;
-                for (final fragment in child.fragments) {
-                  _nodeIndexCache[fragment.id] = i;
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-    
-    _nodeIndexCacheDirty = false;
-  }
-
-  bool _nodeContainsFragment(FNode node, String fragmentId) {
-    if (node.id == fragmentId) return true;
-    
-    if (node is Paragraph) {
-      return node.fragments.any((frag) => frag.id == fragmentId);
-    }
-    
-    return false;
+    return widget.document.topLevelIndexOf(fragmentId);
   }
 
   @override
@@ -594,61 +596,6 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
     );
   }
 
-  int _countWords() {
-    final version = widget.document.contentVersion;
-    if (_statsContentVersion == version) return _cachedWordCount;
-
-    int count = 0;
-    final root = widget.document.content;
-    
-    void visit(FNode node) {
-      if (node is Fragment) {
-        final text = node.text;
-        if (text.isNotEmpty) {
-          final words = text.split(RegExp(r'\s+'));
-          count += words.where((w) => w.isNotEmpty).length;
-        }
-      } else if (node is InlineContainerNode) {
-        for (final child in childrenOf(node)) {
-          visit(child);
-        }
-      } else if (node is FluentList) {
-        for (final item in node.items) {
-          visit(item);
-        }
-      }
-    }
-    
-    visit(root);
-    _cachedWordCount = count;
-    _statsContentVersion = version;
-    return count;
-  }
-
-  int _countChars() {
-    final version = widget.document.contentVersion;
-    if (_statsContentVersion == version) return _cachedCharCount;
-
-    int count = 0;
-    final root = widget.document.content;
-
-    void visit(FNode node) {
-      if (node is Fragment) {
-        count += node.text.length;
-      } else if (node is InlineContainerNode) {
-        for (final child in childrenOf(node)) {
-          visit(child);
-        }
-      } else if (node is FluentList) {
-        for (final item in node.items) {
-          visit(item);
-        }
-      }
-    }
-
-    visit(root);
-    _cachedCharCount = count;
-    _statsContentVersion = version;
-    return count;
-  }
+  int _countWords() { _computeStats(); return _cachedWordCount; }
+  int _countChars() { _computeStats(); return _cachedCharCount; }
 }

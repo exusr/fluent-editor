@@ -20,6 +20,9 @@ class FluentCellWidget extends StatefulWidget {
 }
 
 class _FluentCellWidgetState extends State<FluentCellWidget> {
+  bool _lastHadCursor = false;
+  bool _lastHadSelection = false;
+
   @override
   void initState() {
     super.initState();
@@ -47,7 +50,16 @@ class _FluentCellWidgetState extends State<FluentCellWidget> {
     super.dispose();
   }
 
-  void _onStateChange() => setState(() {});
+  void _onStateChange() {
+    final nodeId = widget.node.id;
+    final doc = widget.document;
+    final hasCursor = doc.cachedCursorContainerId == nodeId;
+    final hasSelection = doc.isNodeSelected(nodeId);
+    if (hasCursor == _lastHadCursor && hasSelection == _lastHadSelection) return;
+    _lastHadCursor = hasCursor;
+    _lastHadSelection = hasSelection;
+    setState(() {});
+  }
 
   @override
   Widget build(BuildContext context) {

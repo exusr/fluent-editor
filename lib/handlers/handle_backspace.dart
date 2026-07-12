@@ -42,7 +42,7 @@ bool executeHandleBackspace(FluentDocument document, {bool ctrl = false, bool li
   if (container == null) return false;
 
   if (container is Paragraph && container.text.isEmpty &&
-      findAncestor<FluentCell>(root, container as FNode) == null) {
+      findAncestorCached<FluentCell>(document, container as FNode) == null) {
     final prevStop = moveLeft(
       root, CaretStop(cursor.anchorId, 0),
       stops: document.caretStops,
@@ -61,7 +61,7 @@ bool executeHandleBackspace(FluentDocument document, {bool ctrl = false, bool li
     return removeNodeAndReposition(document, currentFrag);
   }
 
-  if (findAncestor<FluentCell>(root, currentFrag) != null &&
+  if (findAncestorCached<FluentCell>(document, currentFrag) != null &&
       currentFrag.text.isNotEmpty &&
       currentFrag.text.replaceAll('\u200B', '').isEmpty) {
     return true;
@@ -74,7 +74,7 @@ bool executeHandleBackspace(FluentDocument document, {bool ctrl = false, bool li
   int newOffset = FragmentOperations.getPreviousGraphemeOffsetSkippingZWS(currentFrag.text, cursor.anchorOffset);
   final deleteCount = cursor.anchorOffset - newOffset;
 
-  final cellParent = findAncestor<FluentCell>(root, currentFrag);
+  final cellParent = findAncestorCached<FluentCell>(document, currentFrag);
 
   FragmentOperations.deleteTextInFragment(currentFrag, newOffset, count: deleteCount);
 
@@ -117,7 +117,7 @@ bool _handleBackspaceAtStart(
 
     final flat = flattenInlineChildren(container);
     if (flat.length == 1) {
-      if (findAncestor<FluentCell>(root, container as FNode) != null) {
+      if (findAncestorCached<FluentCell>(document, container as FNode) != null) {
         return true;
       }
       final prevStop = moveLeft(
@@ -140,7 +140,7 @@ bool _handleBackspaceAtStart(
         _removeFragAndUpdate(document, root, currentFrag);
         return true;
       }
-      _removeFrag(root, currentFrag);
+      _removeFrag(document, root, currentFrag);
       return _mergeContainers(document, prevContainer, container, prevFrag, currentFrag);
     }
   }
@@ -163,7 +163,7 @@ bool _handleBackspaceAtStart(
   if (prevContainer == null) return false;
 
   if (cursor.anchorOffset == 0) {
-    final ancestorItem = findAncestor<ListItem>(root, container as FNode);
+    final ancestorItem = findAncestorCached<ListItem>(document, container as FNode);
     if (ancestorItem != null && ancestorItem.children.isNotEmpty &&
         ancestorItem.children.first.id == (container as FNode).id) {
       return _handleListItemOutdent(document, ancestorItem, prevContainer);
@@ -179,9 +179,9 @@ bool _handleBackspaceAtStart(
         final candidate = flat[targetIdx];
         if (candidate is Fragment && candidate is! InlineContainerNode) {
           if (candidate.text.isEmpty) {
-            final parent = findParent(root, candidate);
+            final parent = findParentCached(document, candidate);
             removeNode(root, candidate);
-            cleanupEmptyInlineParents(root, parent);
+            cleanupEmptyInlineParents(root, parent, document: document);
             targetIdx--;
             continue;
           }
@@ -193,9 +193,9 @@ bool _handleBackspaceAtStart(
             final predFrag = findPredecessorFragment(flat, targetIdx);
             final newCursorFragId = predFrag?.id;
             int newCursorOffset = predFrag?.text.length ?? 0;
-            final parent = findParent(root, candidate);
+            final parent = findParentCached(document, candidate);
             removeNode(root, candidate);
-            cleanupEmptyInlineParents(root, parent);
+            cleanupEmptyInlineParents(root, parent, document: document);
             if (newCursorFragId != null) {
               cursor.moveTo(newCursorFragId, newCursorOffset);
             }
@@ -232,7 +232,7 @@ bool _handleListItemOutdent(
 ) {
   final root = document.content;
 
-  final listParent = findParent(root, currentItem);
+  final listParent = findParentCached(document, currentItem);
   if (listParent == null || listParent is! FluentList) {
     return _mergeContainers(document, prevContainer, currentItem, null, null);
   }
@@ -249,7 +249,7 @@ bool _handleListItemOutdent(
     return _mergeListItems(document, listParent, prevItem, currentItem, sublists);
   }
 
-  final newParagraph = outdentListItemToParagraph(root, listParent, currentItem);
+  final newParagraph = outdentListItemToParagraph(root, listParent, currentItem, document: document);
   if (newParagraph == null) return false;
 
   final cursor = document.cursor;
@@ -433,9 +433,9 @@ bool _removeEmptyFragmentAndReposition(
   if (flat.length <= 1) return false;
 
   int fragIdx = flat.indexWhere((f) => f.id == currentFrag.id);
-  final parent = findParent(root, currentFrag);
+  final parent = findParentCached(document, currentFrag);
   removeNode(root, currentFrag);
-  cleanupEmptyInlineParents(root, parent);
+  cleanupEmptyInlineParents(root, parent, document: document);
 
   if (fragIdx > 0) {
     final pred = findPredecessorFragment(flat, fragIdx);
@@ -462,15 +462,15 @@ bool _removeEmptyFragmentAndReposition(
 /// Removes [frag] from the tree, cleans up empty inline parents,
 /// and calls [document.updateContent].
 void _removeFragAndUpdate(FluentDocument document, Root root, Fragment frag) {
-  _removeFrag(root, frag);
+  _removeFrag(document, root, frag);
   document.updateContent();
 }
 
 /// Removes [frag] from the tree and cleans up empty inline parents.
-void _removeFrag(Root root, Fragment frag) {
-  final parent = findParent(root, frag);
+void _removeFrag(FluentDocument document, Root root, Fragment frag) {
+  final parent = findParentCached(document, frag);
   removeNode(root, frag);
-  cleanupEmptyInlineParents(root, parent);
+  cleanupEmptyInlineParents(root, parent, document: document);
 }
 
 /// Deletes from the current cursor position back to the start of the

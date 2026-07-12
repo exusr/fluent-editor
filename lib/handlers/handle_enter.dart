@@ -12,7 +12,6 @@ import 'package:fluent_editor/utils/node_operations.dart';
 /// - Cells: creates a new fragment with line break or new row if at the end
 /// - Lists: creates a new list item
 bool executeHandleEnter(FluentDocument document) {
-  final root = document.content;
   final cursor = document.cursor;
 
   if (!cursor.isCollapsed) {
@@ -27,11 +26,11 @@ bool executeHandleEnter(FluentDocument document) {
   }
 
   if (container is Paragraph) {
-    final ancestorItem = findAncestor<ListItem>(root, container);
+    final ancestorItem = findAncestorCached<ListItem>(document, container);
     if (ancestorItem != null) {
       return _handleListEnter(document, ancestorItem, container);
     }
-    final ancestorCell = findAncestor<FluentCell>(root, container);
+    final ancestorCell = findAncestorCached<FluentCell>(document, container);
     if (ancestorCell != null) {
       return _handleCellEnter(document, ancestorCell);
     }
@@ -60,7 +59,7 @@ bool _handleListEnter(
 
   final cursor = document.cursor;
 
-  final listParent = findParent(root, currentItem);
+  final listParent = findParentCached(document, currentItem);
   if (listParent is! FluentList) return false;
 
   final newItem = ListItem(
@@ -82,7 +81,7 @@ bool _handleListEnter(
   final defaultFrag = newParagraph.fragments.first;
   removeNode(newParagraph, defaultFrag);
 
-  final currentFrag = findNode(root, (n) => n.id == cursor.anchorId) as Fragment?;
+  final currentFrag = document.nodeById(cursor.anchorId) as Fragment?;
 
   Fragment? cursorTarget;
 
@@ -137,10 +136,9 @@ bool _handleListEnter(
 /// If cursor is at the end of the cell, moves to the next cell (like TAB).
 /// Otherwise, splits the content.
 bool _handleCellEnter(FluentDocument document, FluentCell currentCell) {
-  final root = document.content;
   final cursor = document.cursor;
 
-  final currentFrag = findNode(root, (n) => n.id == cursor.anchorId) as Fragment?;
+  final currentFrag = document.nodeById(cursor.anchorId) as Fragment?;
   if (currentFrag == null) {
     return _insertEmptyFragmentInCell(document, currentCell);
   }
@@ -181,8 +179,7 @@ bool _insertEmptyFragmentInCell(
 /// If the Link is inside a Paragraph, delegates the split to the parent paragraph.
 /// Otherwise treats the Link as a top-level container.
 bool _handleLinkEnter(FluentDocument document, Link currentLink) {
-  final root = document.content;
-  final linkParent = findParent(root, currentLink);
+  final linkParent = findParentCached(document, currentLink);
   if (linkParent == null) return false;
 
   if (linkParent is Paragraph && linkParent is! Link) {
@@ -212,10 +209,10 @@ bool _splitInlineContainer(
   final root = document.content;
   final cursor = document.cursor;
 
-  final parent = findParent(root, container as FNode);
+  final parent = findParentCached(document, container as FNode);
   if (parent == null) return false;
 
-  final currentFrag = findNode(root, (n) => n.id == cursor.anchorId) as Fragment?;
+  final currentFrag = document.nodeById(cursor.anchorId) as Fragment?;
 
   if (currentFrag == null) {
     return _insertNewParagraphAfter(document, container);
@@ -304,10 +301,9 @@ bool _insertNewParagraphAfter(
   FluentDocument document,
   InlineContainerNode container,
 ) {
-  final root = document.content;
   final cursor = document.cursor;
 
-  final parent = findParent(root, container as FNode);
+  final parent = findParentCached(document, container as FNode);
   if (parent == null) return false;
 
   final textAlign = container is Paragraph ? container.textAlign : 'left';

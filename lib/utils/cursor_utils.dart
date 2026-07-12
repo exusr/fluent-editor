@@ -1,5 +1,4 @@
 import 'package:fluent_editor/core/types.dart';
-import 'package:fluent_editor/cursor.dart';
 import 'package:fluent_editor/factories.dart';
 import 'package:fluent_editor/handlers/event_handler.dart';
 import 'package:fluent_editor/renderers/render_fluent_node.dart';
@@ -196,19 +195,6 @@ FragmentRange? getFragmentAtCursor(EventHandler eventHandler) {
     }
   }
   return null;
-}
-
-int findCurrentFragmentIndex(InlineContainerNode parent, Cursor cursor) {
-  final flat = flattenFragmentsSimple(parent as FNode);
-  var currentIndex = -1;
-  for (int i = 0; i < flat.length; i++) {
-    final (fragment, startOffset, endOffset) = flat[i];
-    if (cursor.anchorOffset >= startOffset && cursor.anchorOffset <= endOffset) {
-      currentIndex = i;
-      break;
-    }
-  }
-  return currentIndex;
 }
 
 FNode? getNodeAtCursor(EventHandler eventHandler) {

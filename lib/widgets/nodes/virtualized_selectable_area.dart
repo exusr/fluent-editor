@@ -25,7 +25,7 @@ class VirtualizedSelectableArea extends StatefulWidget {
   final int itemCount;
   final Widget Function(BuildContext context, int index) itemBuilder;
   final ScrollController? scrollController;
-  final ValueChanged<Map<int, double>>? onHeightsChanged;
+  final void Function(int index, double height)? onHeightsChanged;
 
   @override
   State<VirtualizedSelectableArea> createState() => _VirtualizedSelectableAreaState();
@@ -73,14 +73,11 @@ class _VirtualizedSelectableAreaState extends State<VirtualizedSelectableArea> {
     super.dispose();
   }
 
-  /// Returns true on native mobile (Android/iOS) or on web.
-  bool _isMobilePlatform() {
-    if (kIsWeb) return true;
-    return Platform.isAndroid || Platform.isIOS;
-  }
+  /// Cached at initState: true on native mobile (Android/iOS) or on web.
+  late final bool _isMobile = kIsWeb || Platform.isAndroid || Platform.isIOS;
 
   void _onPointerDown(PointerDownEvent event) {
-    if (widget.document.isResizingImage) return;
+    if (widget.document.isResizingImage || widget.document.isResizingTable) return;
 
     if (widget.document.imeHandler.isComposing) {
       widget.document.imeHandler.commitIfComposing();
@@ -97,7 +94,7 @@ class _VirtualizedSelectableAreaState extends State<VirtualizedSelectableArea> {
     _tapTimer = Timer(_kTapTimeout, () {
     });
     
-    if (_isMobilePlatform()) {
+    if (_isMobile) {
       _longPressTimer = Timer(_kLongPressTimeout, () {
         if (!_isDragging && _pointerDownPosition != null) {
           _isScrolling = true;
@@ -109,13 +106,13 @@ class _VirtualizedSelectableAreaState extends State<VirtualizedSelectableArea> {
   
   /// Dismisses the virtual keyboard on mobile platforms
   void _dismissKeyboard() {
-    if (_isMobilePlatform()) {
+    if (_isMobile) {
       FocusManager.instance.primaryFocus?.unfocus();
     }
   }
 
   void _onPointerMove(PointerMoveEvent event) {
-    if (widget.document.isResizingImage) return;
+    if (widget.document.isResizingImage || widget.document.isResizingTable) return;
     
     final downPos = _pointerDownPosition;
     if (downPos == null) return;
@@ -128,7 +125,7 @@ class _VirtualizedSelectableAreaState extends State<VirtualizedSelectableArea> {
       final dx = (event.position.dx - downPos.dx).abs();
       final dy = (event.position.dy - downPos.dy).abs();
       
-      if (_isMobilePlatform() && dy > dx * 1.5) {
+      if (_isMobile && dy > dx * 1.5) {
         _isScrolling = true;
         _dismissKeyboard();
         return; // Don't block scroll, let ListView handle it
@@ -146,7 +143,7 @@ class _VirtualizedSelectableAreaState extends State<VirtualizedSelectableArea> {
   }
 
   void _onPointerUp(PointerUpEvent event) {
-    if (widget.document.isResizingImage) {
+    if (widget.document.isResizingImage || widget.document.isResizingTable) {
       _tapTimer?.cancel();
       _longPressTimer?.cancel();
       _isDragging = false;
@@ -177,7 +174,7 @@ class _VirtualizedSelectableAreaState extends State<VirtualizedSelectableArea> {
     if (wasDragging) {
       setState(() {});
       widget.document.cursorOnlyUpdate();
-      if (_isMobilePlatform()) {
+      if (_isMobile) {
         widget.document.requestMobileKeyboardFocus(context);
       }
     } else if (wasScrolling) {
@@ -201,7 +198,7 @@ class _VirtualizedSelectableAreaState extends State<VirtualizedSelectableArea> {
       widget.document.selectionManager.clear();
       widget.document.cursor.moveTo(result.fragmentId, result.localOffset);
       widget.document.cursorOnlyUpdate();
-      if (_isMobilePlatform()) {
+      if (_isMobile) {
         widget.document.requestMobileKeyboardFocus(context);
       }
     }
@@ -383,7 +380,7 @@ class _VirtualizedSelectableAreaState extends State<VirtualizedSelectableArea> {
     _heightSum += height;
     _averageItemHeight = _heightSum / _itemHeights.length;
     _cumulativeHeightsDirty = true;
-    widget.onHeightsChanged?.call(Map.unmodifiable(_itemHeights));
+    widget.onHeightsChanged?.call(index, height);
   }
 
   /// Fallback method for virtualized nodes without RenderBox

@@ -291,10 +291,7 @@ class Paragraph extends FNode implements InlineContainerNode {
   /// If styleName is null or not found, returns the "normal" style.
   ParagraphStyle getStyle() {
     if (styleName == null) return ParagraphStyle.normal;
-    return ParagraphStyle.predefinedStyles.firstWhere(
-      (s) => s.name == styleName,
-      orElse: () => ParagraphStyle.normal,
-    );
+    return ParagraphStyle.styleByName[styleName] ?? ParagraphStyle.normal;
   }
 
   /// Applies a style to the paragraph, overriding the properties.

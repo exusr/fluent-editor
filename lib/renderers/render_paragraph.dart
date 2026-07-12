@@ -290,6 +290,12 @@ class RenderFluentParagraph extends RenderFluentNode
   /// Cached inline images from the last layout. Reused in paint to avoid
   // re-traversing the container's children on every paint frame.
   List<FluentImage> _cachedInlineImages = const [];
+  InlineContainerNode? _cachedInlineImagesContainer;
+
+  /// Cache for ColorUtils.parseColor results within a layout pass.
+  // Most documents use few distinct colors, so the hit rate is high.
+  // Cleared at the start of each performLayout.
+  final Map<String, Color?> _colorParseCache = {};
 
   /// Cached Picture of the pure text layer. Invalidated on layout changes;
   /// the overlay layer (selection, caret, comments) is painted on top every frame.
@@ -370,6 +376,11 @@ class RenderFluentParagraph extends RenderFluentNode
       return _paragraphStyle!.styles!;
     }
     return fragment.styles ?? [];
+  }
+
+  Color? _cachedParseColor(String? hex) {
+    if (hex == null) return null;
+    return _colorParseCache.putIfAbsent(hex, () => ColorUtils.parseColor(hex));
   }
 
   /// Offset X that shifts the text for alignment (center/right).
@@ -533,10 +544,14 @@ class RenderFluentParagraph extends RenderFluentNode
     _fragmentPositionMap.clear();
     _placeholderDimensions.clear();
     _scriptSpans.clear();
+    _colorParseCache.clear();
 
     final childSizes = <Size>[];
-    final inlineImages = collectInlineImages(_container);
-    _cachedInlineImages = inlineImages;
+    if (!identical(_cachedInlineImagesContainer, _container)) {
+      _cachedInlineImages = collectInlineImages(_container);
+      _cachedInlineImagesContainer = _container;
+    }
+    final inlineImages = _cachedInlineImages;
     var child = firstChild;
     var placeholderIdx = 0;
     while (child != null) {
@@ -727,8 +742,8 @@ class RenderFluentParagraph extends RenderFluentNode
                 fontFamily: _getEffectiveFontFamily(child),
                 fontFamilyFallback: const ['NotoColorEmoji', 'Roboto'],
                 fontSize: _getEffectiveFontSize(child),
-                color: ColorUtils.parseColor(child.color) ?? effectiveStyle.color,
-                backgroundColor: ColorUtils.parseColor(child.highlightColor),
+                color: _cachedParseColor(child.color) ?? effectiveStyle.color,
+                backgroundColor: _cachedParseColor(child.highlightColor),
               );
               
               if (childStyles != null && (childStyles.contains('superscript') || childStyles.contains('subscript'))) {
@@ -829,8 +844,8 @@ class RenderFluentParagraph extends RenderFluentNode
             fontFamily: _getEffectiveFontFamily(fragment),
             fontFamilyFallback: const ['NotoColorEmoji', 'Roboto'],
             fontSize: _getEffectiveFontSize(fragment),
-            color: ColorUtils.parseColor(fragment.color),
-            backgroundColor: ColorUtils.parseColor(fragment.highlightColor),
+            color: _cachedParseColor(fragment.color),
+            backgroundColor: _cachedParseColor(fragment.highlightColor),
           );
 
           if (effectiveStyle.decoration != null &&

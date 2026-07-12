@@ -10,6 +10,15 @@ typedef CaretXResolver = double Function(CaretStop stop);
 
 typedef CaretYResolver = double Function(CaretStop stop);
 
+/// Resolves a node id to its parent node id (O(1) when cached).
+typedef ParentResolver = String? Function(String childId);
+
+/// Resolves a fragment id to its logical container id (O(1) when cached).
+typedef ContainerResolver = String? Function(String fragmentId);
+
+/// Resolves a node/fragment id to its top-level index (O(1) when cached), or -1.
+typedef TopLevelIndexResolver = int Function(String id);
+
 /// A position reachable by the cursor in the document.
 class CaretStop {
   final String fragmentId;
@@ -103,6 +112,13 @@ void _collectStopsRecursive(FNode node, List<CaretStop> out) {
     return;
   }
 
+  if (node is FluentCell) {
+    for (final child in node.getChildren()) {
+      _collectStopsRecursive(child, out);
+    }
+    return;
+  }
+
   _collectStopsInLine(node, out);
 }
 
@@ -140,6 +156,13 @@ void _collectLogicalLines(FNode node, List<LogicalLine> out) {
 
   if (node is ListItem) {
     for (final child in node.children) {
+      _collectLogicalLines(child, out);
+    }
+    return;
+  }
+
+  if (node is FluentCell) {
+    for (final child in node.getChildren()) {
       _collectLogicalLines(child, out);
     }
     return;
@@ -350,9 +373,9 @@ int findStopIndex(List<CaretStop> stops, String fragmentId, int offset) {
 List<LogicalLine>? _linesRefForLineIndex;
 Map<CaretStop, ({int lineIndex, int stopIndexInLine})>? _stopToLineIndex;
 
-// Cache for _findStopIndexInLines: flattened stops list keyed by lines identity
+// Cache for _findStopIndexInLines: hash map keyed by lines identity
 List<LogicalLine>? _linesRefForFlatStops;
-List<CaretStop>? _cachedFlatStops;
+Map<String, int>? _cachedFlatStopIndex;
 
 ({int lineIndex, int stopIndexInLine})? findLineForStop(
   List<LogicalLine> lines,
@@ -379,15 +402,27 @@ int _findStopIndexInLines(
 ) {
   if (!identical(lines, _linesRefForFlatStops)) {
     _linesRefForFlatStops = lines;
-    _cachedFlatStops = lines.expand((l) => l.stops).toList(growable: false);
-  }
-  final allStops = _cachedFlatStops!;
-  for (int i = 0; i < allStops.length; i++) {
-    if (allStops[i].fragmentId == fragmentId && allStops[i].offset == offset) {
-      return i;
+    final flat = lines.expand((l) => l.stops).toList(growable: false);
+    final m = <String, int>{};
+    for (int i = 0; i < flat.length; i++) {
+      m['${flat[i].fragmentId}\u0000${flat[i].offset}'] = i;
     }
+    _cachedFlatStopIndex = m;
   }
-  return -1;
+  return _cachedFlatStopIndex!['$fragmentId\u0000$offset'] ?? -1;
+}
+
+/// Returns the stop at [flatIndex] in the flattened lines list,
+/// without allocating a new list.
+CaretStop? _stopAtFlatIndex(List<LogicalLine> lines, int flatIndex) {
+  int acc = 0;
+  for (final line in lines) {
+    if (flatIndex < acc + line.stops.length) {
+      return line.stops[flatIndex - acc];
+    }
+    acc += line.stops.length;
+  }
+  return null;
 }
 
 NavigationResult moveLeft(Root root, CaretStop current, {
@@ -401,8 +436,8 @@ NavigationResult moveLeft(Root root, CaretStop current, {
     final lines = cachedLines ?? buildAllLogicalLines(root);
     idx = _findStopIndexInLines(lines, current.fragmentId, current.offset);
     if (idx <= 0) return NavigationResult.none;
-    final stopsFromLines = lines.expand((l) => l.stops).toList();
-    final newStop = stopsFromLines[idx - 1];
+    final newStop = _stopAtFlatIndex(lines, idx - 1);
+    if (newStop == null) return NavigationResult.none;
     return NavigationResult(position: newStop, preferredX: 0.0);
   }
 
@@ -422,9 +457,8 @@ NavigationResult moveRight(Root root, CaretStop current, {
     final lines = cachedLines ?? buildAllLogicalLines(root);
     idx = _findStopIndexInLines(lines, current.fragmentId, current.offset);
     if (idx < 0) return NavigationResult.none;
-    final stopsFromLines = lines.expand((l) => l.stops).toList();
-    if (idx >= stopsFromLines.length - 1) return NavigationResult.none;
-    final newStop = stopsFromLines[idx + 1];
+    final newStop = _stopAtFlatIndex(lines, idx + 1);
+    if (newStop == null) return NavigationResult.none;
     return NavigationResult(position: newStop, preferredX: 0.0);
   }
 
@@ -447,6 +481,9 @@ NavigationResult moveUp(
   CaretYResolver resolveY, {
   List<CaretStop>? stops,
   List<CaretStop>? allStops,
+  ParentResolver? parentResolver,
+  ContainerResolver? containerResolver,
+  TopLevelIndexResolver? topLevelIndexResolver,
 }) {
   final stops_ = stops ?? buildAllStops(root);
   if (stops_.isEmpty) return NavigationResult.none;
@@ -459,6 +496,7 @@ NavigationResult moveUp(
   final x = preferredX >= 0.0 ? preferredX : cachedX(current);
   final currentY = cachedY(current);
 
+  // Single-pass: find targetY, then find nearest-X stop on that line.
   double? targetY;
   for (final stop in stops_) {
     final y = cachedY(stop);
@@ -469,18 +507,24 @@ NavigationResult moveUp(
 
   if (targetY == null) {
     final docStops = allStops ?? stops_;
-    if (_isInFirstNode(root, current.fragmentId)) {
+    if (_isInFirstNode(root, current.fragmentId,
+        parentResolver: parentResolver, containerResolver: containerResolver,
+        topLevelIndexResolver: topLevelIndexResolver)) {
       final first = docStops.first;
       if (first == current) return NavigationResult.none;
       return NavigationResult(position: first, preferredX: x);
     }
-    final currentNodeId = _findTopLevelNodeId(root, current.fragmentId);
+    final currentNodeId = _findTopLevelNodeId(root, current.fragmentId,
+        parentResolver: parentResolver, containerResolver: containerResolver,
+        topLevelIndexResolver: topLevelIndexResolver);
     if (currentNodeId != null) {
-      final currentNodeIdx = root.nodes.indexWhere((n) => n.id == currentNodeId);
+      final currentNodeIdx = topLevelIndexResolver != null
+          ? topLevelIndexResolver(currentNodeId)
+          : root.nodes.indexWhere((n) => n.id == currentNodeId);
       for (int i = currentNodeIdx - 1; i >= 0; i--) {
         final prevNode = root.nodes[i];
         for (int j = docStops.length - 1; j >= 0; j--) {
-          if (_nodeContainsFragment(prevNode, docStops[j].fragmentId)) {
+          if (_stopBelongsToNode(docStops[j], prevNode, root, containerResolver: containerResolver, parentResolver: parentResolver, topLevelIndexResolver: topLevelIndexResolver)) {
             return NavigationResult(position: docStops[j], preferredX: x);
           }
         }
@@ -491,11 +535,19 @@ NavigationResult moveUp(
     return NavigationResult(position: first, preferredX: x);
   }
 
-  final lineStops = stops_
-      .where((s) => (cachedY(s) - targetY!).abs() <= _kLineYTolerance)
-      .toList();
-
-  final best = _stopNearestX(lineStops, x, cachedX);
+  // Single-pass: find nearest-X stop on the target line without allocating.
+  CaretStop? best;
+  double bestDist = double.infinity;
+  for (final stop in stops_) {
+    if ((cachedY(stop) - targetY).abs() <= _kLineYTolerance) {
+      final dist = (cachedX(stop) - x).abs();
+      if (dist < bestDist) {
+        bestDist = dist;
+        best = stop;
+      }
+    }
+  }
+  if (best == null) return NavigationResult(position: current, preferredX: x);
   return NavigationResult(position: best, preferredX: x);
 }
 
@@ -509,6 +561,9 @@ NavigationResult moveDown(
   CaretYResolver resolveY, {
   List<CaretStop>? stops,
   List<CaretStop>? allStops,
+  ParentResolver? parentResolver,
+  ContainerResolver? containerResolver,
+  TopLevelIndexResolver? topLevelIndexResolver,
 }) {
   final stops_ = stops ?? buildAllStops(root);
   if (stops_.isEmpty) return NavigationResult.none;
@@ -531,18 +586,24 @@ NavigationResult moveDown(
 
   if (targetY == null) {
     final docStops = allStops ?? stops_;
-    if (_isInLastNode(root, current.fragmentId)) {
+    if (_isInLastNode(root, current.fragmentId,
+        parentResolver: parentResolver, containerResolver: containerResolver,
+        topLevelIndexResolver: topLevelIndexResolver)) {
       final last = docStops.last;
       if (last == current) return NavigationResult.none;
       return NavigationResult(position: last, preferredX: x);
     }
-    final currentNodeId = _findTopLevelNodeId(root, current.fragmentId);
+    final currentNodeId = _findTopLevelNodeId(root, current.fragmentId,
+        parentResolver: parentResolver, containerResolver: containerResolver,
+        topLevelIndexResolver: topLevelIndexResolver);
     if (currentNodeId != null) {
-      final currentNodeIdx = root.nodes.indexWhere((n) => n.id == currentNodeId);
+      final currentNodeIdx = topLevelIndexResolver != null
+          ? topLevelIndexResolver(currentNodeId)
+          : root.nodes.indexWhere((n) => n.id == currentNodeId);
       for (int i = currentNodeIdx + 1; i < root.nodes.length; i++) {
         final nextNode = root.nodes[i];
         for (final stop in docStops) {
-          if (_nodeContainsFragment(nextNode, stop.fragmentId)) {
+          if (_stopBelongsToNode(stop, nextNode, root, containerResolver: containerResolver, parentResolver: parentResolver, topLevelIndexResolver: topLevelIndexResolver)) {
             return NavigationResult(position: stop, preferredX: x);
           }
         }
@@ -553,11 +614,19 @@ NavigationResult moveDown(
     return NavigationResult(position: last, preferredX: x);
   }
 
-  final lineStops = stops_
-      .where((s) => (cachedY(s) - targetY!).abs() <= _kLineYTolerance)
-      .toList();
-
-  final best = _stopNearestX(lineStops, x, cachedX);
+  // Single-pass: find nearest-X stop on the target line without allocating.
+  CaretStop? best;
+  double bestDist = double.infinity;
+  for (final stop in stops_) {
+    if ((cachedY(stop) - targetY).abs() <= _kLineYTolerance) {
+      final dist = (cachedX(stop) - x).abs();
+      if (dist < bestDist) {
+        bestDist = dist;
+        best = stop;
+      }
+    }
+  }
+  if (best == null) return NavigationResult(position: current, preferredX: x);
   return NavigationResult(position: best, preferredX: x);
 }
 
@@ -615,6 +684,29 @@ Map<String, Fragment> _buildFragmentCache(Root root) {
 }
 
 /// Returns true if [fragmentId] is inside [node] (recursively).
+/// Uses O(1) cached resolvers when available, falls back to O(n) recursive scan.
+bool _stopBelongsToNode(
+  CaretStop stop,
+  FNode node,
+  Root root, {
+  ContainerResolver? containerResolver,
+  ParentResolver? parentResolver,
+  TopLevelIndexResolver? topLevelIndexResolver,
+}) {
+  final fragmentId = stop.fragmentId;
+  if (containerResolver != null && topLevelIndexResolver != null) {
+    // O(1) path: resolve the stop's top-level node id and compare.
+    final stopTopId = _findTopLevelNodeId(root,
+        fragmentId,
+        parentResolver: parentResolver,
+        containerResolver: containerResolver,
+        topLevelIndexResolver: topLevelIndexResolver);
+    return stopTopId == node.id;
+  }
+  return _nodeContainsFragment(node, fragmentId);
+}
+
+/// Returns true if [fragmentId] is inside [node] (recursively).
 bool _nodeContainsFragment(FNode node, String fragmentId) {
   if (node is Fragment && node.id == fragmentId) return true;
   if (node is FluentTable) {
@@ -640,9 +732,37 @@ bool _nodeContainsFragment(FNode node, String fragmentId) {
 }
 
 /// Returns the id of the top-level node in [root] that contains [fragmentId].
-/// Uses findLogicalContainer to get the container, then walks up to the
-/// top-level parent — O(depth) instead of O(n × depth).
-String? _findTopLevelNodeId(Root root, String fragmentId) {
+/// Uses [parentResolver] and [containerResolver] for O(1) lookups when provided;
+/// falls back to O(n) tree traversal otherwise.
+String? _findTopLevelNodeId(
+  Root root,
+  String fragmentId, {
+  ParentResolver? parentResolver,
+  ContainerResolver? containerResolver,
+  TopLevelIndexResolver? topLevelIndexResolver,
+}) {
+  if (containerResolver != null) {
+    final containerId = containerResolver(fragmentId);
+    if (containerId == null) return null;
+    // If the container is itself a top-level node, return it directly.
+    if (topLevelIndexResolver != null) {
+      if (topLevelIndexResolver(containerId) >= 0) return containerId;
+    } else if (root.nodes.any((n) => n.id == containerId)) {
+      return containerId;
+    }
+    String current = containerId;
+    while (true) {
+      final parent = parentResolver?.call(current);
+      if (parent == null) return current;
+      // If parent is a top-level node, return it.
+      if (topLevelIndexResolver != null) {
+        if (topLevelIndexResolver(parent) >= 0) return parent;
+      } else if (root.nodes.any((n) => n.id == parent)) {
+        return parent;
+      }
+      current = parent;
+    }
+  }
   final container = findLogicalContainer(root, fragmentId);
   if (container == null) return null;
   FNode node = container as FNode;
@@ -654,16 +774,32 @@ String? _findTopLevelNodeId(Root root, String fragmentId) {
 }
 
 /// True when the fragment belongs to the first top-level node of [root].
-bool _isInFirstNode(Root root, String fragmentId) {
+bool _isInFirstNode(
+  Root root,
+  String fragmentId, {
+  ParentResolver? parentResolver,
+  ContainerResolver? containerResolver,
+  TopLevelIndexResolver? topLevelIndexResolver,
+}) {
   if (root.nodes.isEmpty) return false;
-  final id = _findTopLevelNodeId(root, fragmentId);
+  final id = _findTopLevelNodeId(root, fragmentId,
+      parentResolver: parentResolver, containerResolver: containerResolver,
+      topLevelIndexResolver: topLevelIndexResolver);
   return id != null && id == root.nodes.first.id;
 }
 
 /// True when the fragment belongs to the last top-level node of [root].
-bool _isInLastNode(Root root, String fragmentId) {
+bool _isInLastNode(
+  Root root,
+  String fragmentId, {
+  ParentResolver? parentResolver,
+  ContainerResolver? containerResolver,
+  TopLevelIndexResolver? topLevelIndexResolver,
+}) {
   if (root.nodes.isEmpty) return false;
-  final id = _findTopLevelNodeId(root, fragmentId);
+  final id = _findTopLevelNodeId(root, fragmentId,
+      parentResolver: parentResolver, containerResolver: containerResolver,
+      topLevelIndexResolver: topLevelIndexResolver);
   return id != null && id == root.nodes.last.id;
 }
 
@@ -900,9 +1036,9 @@ NavigationResult movePageUp(
   final targetLineIndex = (currentLineIndex - 10).clamp(0, lines_.length - 1);
 
   if (targetLineIndex == currentLineIndex) {
-    final stops = buildAllStops(root);
-    if (stops.isEmpty) return NavigationResult.none;
-    final firstStop = stops.first;
+    // Use the first line's first stop instead of rebuilding all stops.
+    if (lines_.isEmpty || lines_.first.stops.isEmpty) return NavigationResult.none;
+    final firstStop = lines_.first.stops.first;
     if (firstStop == current) return NavigationResult.none;
     return NavigationResult(position: firstStop, preferredX: preferredX);
   }
@@ -933,9 +1069,9 @@ NavigationResult movePageDown(
   final targetLineIndex = (currentLineIndex + 10).clamp(0, lines_.length - 1);
 
   if (targetLineIndex == currentLineIndex) {
-    final stops = buildAllStops(root);
-    if (stops.isEmpty) return NavigationResult.none;
-    final lastStop = stops.last;
+    // Use the last line's last stop instead of rebuilding all stops.
+    if (lines_.isEmpty || lines_.last.stops.isEmpty) return NavigationResult.none;
+    final lastStop = lines_.last.stops.last;
     if (lastStop == current) return NavigationResult.none;
     return NavigationResult(position: lastStop, preferredX: preferredX);
   }
