@@ -162,8 +162,8 @@ void _pasteNodes(List<Map<String, dynamic>> nodesJson, FluentDocument document) 
 
     if (canMerge) {
       lastFragment = _mergeFragmentsIntoParagraph(
-        newNode as Paragraph,
-        curContainer as Paragraph,
+        newNode,
+        curContainer,
         cursor,
       );
     } else {

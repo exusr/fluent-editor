@@ -53,7 +53,6 @@ A powerful and feature-rich rich word processor for Flutter applications, inspir
 
 ## Plugins
 
-- **fluent_editor_spellcheck** — Hunspell-based spell-check plugin with isolate-backed checking, and multi-language support. (WIP)
 - **fluent_editor_comments** - Comments and annotations plugin. (WIP)
 - **fluent_editor_review** - Review plugin for track changes and comments. (WIP)
 

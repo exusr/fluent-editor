@@ -374,7 +374,7 @@ class FluentList extends Paragraph implements InlineContainerNode {
   @JsonKey(name: 'items')
   List<ListItem> _items = [];
   
-  List<ListItem> get items => _items;// TrackedList(_items, () => applyListMarkers(_items));
+  List<ListItem> get items => _items;
   
   set items(List<ListItem> value) {
     _items = value;

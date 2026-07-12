@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:fluent_editor/controllers/document_language_controller.dart';
 import 'package:fluent_editor/comments/comment_provider.dart';
-import 'package:fluent_editor/spell_check/spell_check_provider.dart';
 import 'package:fluent_editor/cursor.dart';
 import 'package:fluent_editor/selection_manager.dart';
 import 'package:fluent_editor/styles.dart';
@@ -64,10 +63,6 @@ class FluentDocument extends ChangeNotifier {
   /// selected in [DocumentLanguageController] or the system locale.
   String documentLanguage = DocumentLanguageController.instance.current.code;
 
-  /// Optional spell-check plugin. When set, the editor will use it
-  /// for underlining misspelled words and providing suggestions.
-  SpellCheckProvider? spellCheckProvider;
-
   /// Optional comment plugin. When set, the editor will display
   /// comment highlights, a sidebar, and allow adding / managing comments.
   CommentProvider? commentProvider;
@@ -117,7 +112,6 @@ class FluentDocument extends ChangeNotifier {
       return true;
     });
     _nodeIndexDirty = false;
-    _nodePositionIndexDirty = false;
     _parentCacheDirty = false;
     _selectionManager.setPositionIndex(_nodePositionIndex);
   }
@@ -132,7 +126,6 @@ class FluentDocument extends ChangeNotifier {
   /// Marks the id→node index as stale so it gets rebuilt on next lookup.
   void invalidateNodeIndex() {
     _nodeIndexDirty = true;
-    _nodePositionIndexDirty = true;
     _parentCacheDirty = true;
     _cachedStops = null;
     _cachedStopsByContainer = null;
@@ -147,7 +140,6 @@ class FluentDocument extends ChangeNotifier {
   /// lexicographic UUID comparison, which is pseudo-random and breaks selection
   /// logic for ~50% of node pairs.
   final Map<String, int> _nodePositionIndex = {};
-  bool _nodePositionIndexDirty = true;
 
   /// Cached parent map: child id → parent id.
   /// Built during the same DFS walk as the node index, so there is zero
@@ -156,13 +148,6 @@ class FluentDocument extends ChangeNotifier {
   /// menu on right-click to detect if a fragment is inside a Link).
   final Map<String, String?> _parentCache = {};
   bool _parentCacheDirty = true;
-
-  /// O(1) lookup of the document-order position of [nodeId].
-  /// Returns null if the node is not found in the document.
-  int? nodePosition(String nodeId) {
-    if (_nodePositionIndexDirty) _rebuildNodeIndex();
-    return _nodePositionIndex[nodeId];
-  }
 
   /// Memoized fragmentId → logical-container-id lookups. Resolving a logical
   /// container walks the whole tree (O(n)); caching makes repeated lookups

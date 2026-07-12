@@ -1,5 +1,6 @@
 import 'package:fluent_editor/factories.dart';
 import 'package:fluent_editor/fluent_document.dart';
+import 'package:flutter/foundation.dart';
 
 /// Represents a change to the document at the node level.
 /// Deltas are much smaller than full document snapshots because they
@@ -133,7 +134,7 @@ class NodeInsertDelta extends DocumentDelta {
   @override
   void apply(FluentDocument document) {
     if (index < 0 || index > document.content.nodes.length) {
-      print('[UNDO_WARN] NodeInsertDelta.apply index $index out of bounds');
+      debugPrint('[UNDO_WARN] NodeInsertDelta.apply index $index out of bounds');
       return;
     }
     document.content.nodes.insert(index, _deserializeNode(nodeJson));
@@ -144,7 +145,7 @@ class NodeInsertDelta extends DocumentDelta {
   @override
   void revert(FluentDocument document) {
     if (index < 0 || index >= document.content.nodes.length) {
-      print('[UNDO_WARN] NodeInsertDelta.revert index $index out of bounds');
+      debugPrint('[UNDO_WARN] NodeInsertDelta.revert index $index out of bounds');
       return;
     }
     document.content.nodes.removeAt(index);
@@ -172,7 +173,7 @@ class NodeDeleteDelta extends DocumentDelta {
   @override
   void apply(FluentDocument document) {
     if (index < 0 || index >= document.content.nodes.length) {
-      print('[UNDO_WARN] NodeDeleteDelta.apply index $index out of bounds');
+      debugPrint('[UNDO_WARN] NodeDeleteDelta.apply index $index out of bounds');
       return;
     }
     document.content.nodes.removeAt(index);
@@ -183,7 +184,7 @@ class NodeDeleteDelta extends DocumentDelta {
   @override
   void revert(FluentDocument document) {
     if (index < 0 || index > document.content.nodes.length) {
-      print('[UNDO_WARN] NodeDeleteDelta.revert index $index out of bounds');
+      debugPrint('[UNDO_WARN] NodeDeleteDelta.revert index $index out of bounds');
       return;
     }
     document.content.nodes.insert(index, _deserializeNode(deletedNodeJson));
@@ -198,7 +199,7 @@ FNode _deserializeNode(Map<String, dynamic> json) {
   try {
     return const FNodeJsonConverter().fromJson(json);
   } catch (_) {
-    print('[UNDO_WARN] Failed to deserialize node in delta, returning empty paragraph');
+    debugPrint('[UNDO_WARN] Failed to deserialize node in delta, returning empty paragraph');
     return Paragraph();
   }
 }

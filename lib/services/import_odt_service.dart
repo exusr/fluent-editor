@@ -145,14 +145,6 @@ class ImportOdtService {
     return styles;
   }
 
-  double? _fontSizeFromName(String? styleName) {
-    if (styleName == null) return null;
-    final raw = _styleProps[styleName]?['fontSize'];
-    if (raw == null) return null;
-    final num = double.tryParse(raw.replaceAll(RegExp(r'[a-zA-Z]'), ''));
-    return num;
-  }
-
   String? _colorFromName(String? styleName) {
     if (styleName == null) return null;
     return _styleProps[styleName]?['color'];
@@ -329,7 +321,6 @@ class ImportOdtService {
     final styleName = el.getAttribute('text:style-name');
 
     final styles = _stylesFromName(styleName);
-    final fontSize = _fontSizeFromName(styleName);
     final color = _colorFromName(styleName);
 
     final innerFragments = _collectFragments(el.children);
@@ -343,7 +334,7 @@ class ImportOdtService {
       return Fragment(
         f.text,
         styles: mergedStyles.isEmpty ? null : mergedStyles,
-        fontSize: f.fontSize ?? fontSize ?? 14.0,
+        fontSize: f.fontSize,
         color: f.color ?? color,
         fontFamily: f.fontFamily,
         highlightColor: f.highlightColor,

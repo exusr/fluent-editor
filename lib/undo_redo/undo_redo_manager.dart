@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:fluent_editor/factories.dart';
 import 'package:fluent_editor/fluent_document.dart';
 import 'package:fluent_editor/undo_redo/document_delta.dart';
+import 'package:flutter/foundation.dart';
 
 /// Lightweight snapshot of top-level nodes used to build deltas.
 /// Stores only node VERSIONS (integers) for O(n) dirty detection,
@@ -234,7 +235,7 @@ class UndoRedoManager {
     try {
       delta.revert(document);
     } catch (e, st) {
-      print('[UNDO_ERROR] revert failed: $e\n$st');
+      debugPrint('[UNDO_ERROR] revert failed: $e\n$st');
       _redoStack.removeLast();
       return false;
     } finally {
@@ -256,7 +257,7 @@ class UndoRedoManager {
     try {
       delta.apply(document);
     } catch (e, st) {
-      print('[UNDO_ERROR] apply failed: $e\n$st');
+      debugPrint('[UNDO_ERROR] apply failed: $e\n$st');
       _undoStack.removeLast();
       return false;
     } finally {

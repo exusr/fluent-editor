@@ -1276,7 +1276,6 @@ class FluentTextInputHandler with DeltaTextInputClient {
   @override
   void performPrivateCommand(String action, Map<String, dynamic> data) {}
 
-  @override
   bool onFocusReceived() => false;
 
   @override
@@ -1413,29 +1412,6 @@ class FluentTextInputHandler with DeltaTextInputClient {
     _preeditLocalOffset = 0;
     _preeditContainerId = '';
     _preeditCaretOffset = 0;
-  }
-
-  /// Handles composing range changes on Android when composition starts/changes.
-  void _handleComposingRangeChange(TextRange composing, int cursorOffset) {
-    if (!composing.isValid) {
-      if (_isComposing) _cancelPreedit();
-      return;
-    }
-    if (!_isComposing) {
-      final doc = _document;
-      if (doc == null) return;
-      final fragId = doc.cursor.focusId.isNotEmpty ? doc.cursor.focusId : doc.cursor.anchorId;
-      _preeditFragmentId = fragId;
-      _preeditLocalOffset = doc.cursor.focusId.isNotEmpty ? doc.cursor.focusOffset : doc.cursor.anchorOffset;
-      _preeditContainerId = doc.findLogicalContainerId(_preeditFragmentId) ?? '';
-      doc.cursor.imeComposing = true;
-      _isComposing = true;
-      _preeditText = '';
-      _composingRange = TextRange.empty;
-    }
-    _composingRange = composing;
-    _preeditCaretOffset = cursorOffset;
-    _invalidatePreeditRender();
   }
 
   static const String _emptyFragmentPlaceholder = '\u200B';

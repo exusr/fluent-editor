@@ -240,20 +240,6 @@ Map<String, dynamic> _$FluentRowToJson(FluentRow instance) => <String, dynamic>{
   'cells': instance.cells.map((e) => e.toJson()).toList(),
 };
 
-FluentCell _$FluentCellFromJson(Map<String, dynamic> json) =>
-    FluentCell(
-        children: (json['children'] as List<dynamic>?)
-            ?.map(
-              (e) => const FNodeJsonConverter().fromJson(
-                e as Map<String, dynamic>,
-              ),
-            )
-            .toList(),
-      )
-      ..id = json['id'] as String
-      ..colSpan = (json['colSpan'] as num).toInt()
-      ..rowSpan = (json['rowSpan'] as num).toInt();
-
 Map<String, dynamic> _$FluentCellToJson(
   FluentCell instance,
 ) => <String, dynamic>{

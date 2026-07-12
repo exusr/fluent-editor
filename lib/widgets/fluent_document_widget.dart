@@ -259,28 +259,22 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       widget.document.imeHandler.showKeyboard(context);
     });
-    _initSpellCheck();
+    _initDocumentLanguage();
     DocumentLanguageController.instance.currentLanguage
         .addListener(_onLanguageChanged);
     _restartBlink();
   }
 
-  void _initSpellCheck() async {
+  void _initDocumentLanguage() async {
     await DocumentLanguageController.instance.initialize();
     widget.document.documentLanguage =
         DocumentLanguageController.instance.current.code;
-    final provider = widget.document.spellCheckProvider;
-    if (provider != null) {
-      await provider.initialize(widget.document.documentLanguage);
-    }
   }
 
   void _onLanguageChanged() {
     final newLang = DocumentLanguageController.instance.current.code;
     if (widget.document.documentLanguage != newLang) {
       widget.document.documentLanguage = newLang;
-      final provider = widget.document.spellCheckProvider;
-      provider?.reloadLanguage(newLang);
     }
   }
 

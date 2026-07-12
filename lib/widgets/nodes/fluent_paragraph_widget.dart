@@ -8,10 +8,7 @@ import 'package:fluent_editor/factories.dart';
 import 'package:fluent_editor/fluent_document.dart';
 import 'package:fluent_editor/renderers/render_paragraph.dart';
 import 'package:fluent_editor/comments/comment_provider.dart';
-import 'package:fluent_editor/spell_check/spell_annotation.dart';
-import 'package:fluent_editor/spell_check/spell_check_provider.dart';
 import 'package:fluent_editor/styles.dart';
-import 'package:fluent_editor/utils/fragment_operations.dart';
 import 'package:fluent_editor/utils/handler_helpers.dart';
 import 'package:fluent_editor/utils/cursor_utils.dart';
 import 'package:fluent_editor/widgets/editor/fluent_link_dialog.dart';
@@ -46,12 +43,11 @@ class FluentParagraphWidgetState<T extends FluentParagraphWidget> extends State<
   DateTime? _lastTapTime;
   Offset? _lastTapPosition;
   int _tapCount = 0;
-  StreamSubscription<String>? _spellSubscription;
   StreamSubscription<void>? _commentSubscription;
   bool _isSecondaryTap = false;
   ({String startFrag, int startOff, String endFrag, int endOff})? _savedSelection;
 
-  /// Tracks the document content version so [_triggerSpellCheck] is only
+  /// Tracks the document content version so setState is only
   /// called when the text actually changed, not on cursor-only movements.
   int _lastContentVersion = -1;
 
@@ -73,7 +69,6 @@ class FluentParagraphWidgetState<T extends FluentParagraphWidget> extends State<
   List<FluentImage>? _cachedInlineImages;
   int? _cachedInlineImagesVersion;
 
-  SpellCheckProvider? get _spell => widget.document.spellCheckProvider;
   CommentProvider? get _comment => widget.document.commentProvider;
 
   void onTapDown(TapDownDetails details) {
@@ -85,18 +80,7 @@ class FluentParagraphWidgetState<T extends FluentParagraphWidget> extends State<
     widget.document.cursor.addListener(_onStateChange);
     widget.document.selectionManager.addListener(_onStateChange);
     widget.document.addListener(_onDocumentChange);
-    _subscribeToSpell();
     _subscribeToComments();
-    _triggerSpellCheck();
-  }
-
-  void _subscribeToSpell() {
-    _spellSubscription?.cancel();
-    _spellSubscription = null;
-    final provider = _spell;
-    if (provider != null) {
-      _spellSubscription = provider.annotationsChanged.listen(_onSpellAnnotationsChanged);
-    }
   }
 
   @override
@@ -113,7 +97,6 @@ class FluentParagraphWidgetState<T extends FluentParagraphWidget> extends State<
     if (oldWidget.document != widget.document) {
       oldWidget.document.removeListener(_onDocumentChange);
       widget.document.addListener(_onDocumentChange);
-      _subscribeToSpell();
       _subscribeToComments();
     }
   }
@@ -172,23 +155,6 @@ class FluentParagraphWidgetState<T extends FluentParagraphWidget> extends State<
     if (currentVersion != _lastContentVersion) {
       _lastContentVersion = currentVersion;
       setState(() {});
-      _triggerSpellCheck();
-    }
-  }
-
-  void _triggerSpellCheck() {
-    if (widget.node is! Paragraph) return;
-    final paragraph = widget.node as Paragraph;
-    final plainText = paragraph.fragments
-        .whereType<Fragment>()
-        .map((f) => f.text)
-        .join();
-    _spell?.checkParagraph(paragraph.id, plainText);
-  }
-
-  void _onSpellAnnotationsChanged(String nodeId) {
-    if (nodeId == widget.node.id || nodeId == '__all__') {
-      setState(() {});
     }
   }
 
@@ -222,7 +188,6 @@ class FluentParagraphWidgetState<T extends FluentParagraphWidget> extends State<
       return InlineImageWidget(node: img, document: widget.document);
     }).toList();
 
-    final spellAnnotations = _spell?.annotationsForNode(nodeId) ?? const [];
     final commentAnnotations = _comment?.commentsForNode(nodeId) ?? const [];
     final selectedCommentId = _comment?.selectedCommentId;
 
@@ -333,7 +298,6 @@ class FluentParagraphWidgetState<T extends FluentParagraphWidget> extends State<
           selAnchorLocalOffset: selRange?.startOff,
           selFocusFragmentId: selRange?.endFrag,
           selFocusLocalOffset: selRange?.endOff,
-          spellAnnotations: spellAnnotations,
           commentAnnotations: commentAnnotations,
           selectedCommentId: selectedCommentId,
           imePreeditText: widget.document.imeHandler.isPreeditInContainer(nodeId)
@@ -383,47 +347,15 @@ class FluentParagraphWidgetState<T extends FluentParagraphWidget> extends State<
       }
     }
 
-    _showSpellContextMenu(globalPosition, fragmentResult, savedSelection: savedSelection);
+    _showCommentContextMenu(globalPosition, fragmentResult, savedSelection: savedSelection);
   }
 
-  Future<void> _showSpellContextMenu(
+  Future<void> _showCommentContextMenu(
     Offset globalPosition,
     ({String fragmentId, int localOffset}) fragmentResult, {
     ({String startFrag, int startOff, String endFrag, int endOff})? savedSelection,
   }) async {
     final items = <FluentContextMenuItem>[];
-
-    final spellProvider = _spell;
-    SpellAnnotation? ann;
-    if (spellProvider != null) {
-      final annotations = spellProvider.annotationsForNode(widget.node.id);
-      ann = annotations.firstWhere(
-        (a) => a.covers(fragmentResult.fragmentId, fragmentResult.localOffset),
-        orElse: () => const SpellAnnotation(nodeId: '', fragmentIndex: 0, startOffset: 0, endOffset: 0, suggestions: [], misspelledWord: ''),
-      );
-
-      if (ann.nodeId.isNotEmpty) {
-        final suggestions = await spellProvider.requestSuggestions(ann.misspelledWord);
-        if (suggestions.isNotEmpty) {
-          for (final suggestion in suggestions.take(5)) {
-            items.add(FluentContextMenuItem(
-              label: suggestion,
-              onPressed: () => _applyCorrection(ann!, suggestion),
-            ));
-          }
-          items.add(FluentContextMenuItem(label: '', onPressed: null));
-        }
-        items.add(FluentContextMenuItem(
-          label: 'Aggiungi al dizionario',
-          onPressed: () => spellProvider.addToDictionary(ann!.misspelledWord),
-        ));
-        items.add(FluentContextMenuItem(
-          label: 'Ignora',
-          onPressed: () => spellProvider.ignoreWord(ann!.misspelledWord),
-        ));
-        items.add(FluentContextMenuItem(label: '', onPressed: null));
-      }
-    }
 
     final commentProvider = _comment;
     final renderObject = _renderWidgetKey.currentContext?.findRenderObject();
@@ -545,26 +477,6 @@ class FluentParagraphWidgetState<T extends FluentParagraphWidget> extends State<
     );
   }
 
-  void _applyCorrection(SpellAnnotation ann, String correction) {
-    final paragraph = widget.node as Paragraph;
-    final fragments = FragmentOperations.collectLeafFragments(paragraph);
-    int currentOffset = 0;
-    for (final frag in fragments) {
-      final fragEnd = currentOffset + frag.text.length;
-      if (ann.startOffset >= currentOffset && ann.startOffset < fragEnd) {
-        final localStart = (ann.startOffset - currentOffset).clamp(0, frag.text.length);
-        final localEnd = (ann.endOffset - currentOffset).clamp(0, frag.text.length);
-        final safeStart = FragmentOperations.adjustIndex(frag.text, localStart);
-        final safeEnd = FragmentOperations.adjustIndex(frag.text, localEnd);
-        final newText = frag.text.replaceRange(safeStart, safeEnd, correction);
-        frag.text = newText;
-        widget.document.updateContent();
-        return;
-      }
-      currentOffset = fragEnd;
-    }
-  }
-
   void _copyUrlAndNotify(String url, String message) {
     Clipboard.setData(ClipboardData(text: url));
     ScaffoldMessenger.of(context).showSnackBar(
@@ -647,7 +559,6 @@ class FluentParagraphWidgetState<T extends FluentParagraphWidget> extends State<
     widget.document.cursor.removeListener(_onStateChange);
     widget.document.selectionManager.removeListener(_onStateChange);
     widget.document.removeListener(_onDocumentChange);
-    _spellSubscription?.cancel();
     _commentSubscription?.cancel();
     super.dispose();
   }
@@ -690,7 +601,6 @@ class FParagraphRenderWidget extends MultiChildRenderObjectWidget {
     this.selAnchorLocalOffset,
     this.selFocusFragmentId,
     this.selFocusLocalOffset,
-    this.spellAnnotations = const [],
     this.commentAnnotations = const [],
     this.selectedCommentId,
     this.imePreeditText = '',
@@ -719,7 +629,6 @@ class FParagraphRenderWidget extends MultiChildRenderObjectWidget {
   final int? selAnchorLocalOffset;
   final String? selFocusFragmentId;
   final int? selFocusLocalOffset;
-  final List<SpellAnnotation> spellAnnotations;
   final List<Map<String, dynamic>> commentAnnotations;
   final String? selectedCommentId;
   final String imePreeditText;
@@ -753,7 +662,6 @@ class FParagraphRenderWidget extends MultiChildRenderObjectWidget {
         selFocusFragmentId,
         selFocusLocalOffset,
       )
-      ..spellAnnotations = spellAnnotations
       ..commentAnnotations = commentAnnotations
       ..selectedCommentId = selectedCommentId
       ..imePreeditText = imePreeditText
@@ -785,7 +693,6 @@ class FParagraphRenderWidget extends MultiChildRenderObjectWidget {
       selFocusFragmentId,
       selFocusLocalOffset,
     );
-    renderObject.spellAnnotations = spellAnnotations;
     renderObject.commentAnnotations = commentAnnotations;
     renderObject.selectedCommentId = selectedCommentId;
     renderObject.imePreeditText = imePreeditText;

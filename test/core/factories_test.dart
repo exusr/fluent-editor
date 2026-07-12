@@ -227,7 +227,7 @@ void main() {
       final node = makeNode('table', {'rows': 2, 'cells': 3});
       expect(node is FluentTable, isTrue);
       expect((node as FluentTable).rows.length, 2);
-      expect((node as FluentTable).rows.first.cells.length, 3);
+      expect(node.rows.first.cells.length, 3);
     });
 
     test('creates Image', () {

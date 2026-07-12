@@ -3,7 +3,6 @@ import 'dart:ui' show Picture, PictureRecorder;
 import 'package:fluent_editor/core/paragraph_registry.dart';
 import 'package:fluent_editor/factories.dart';
 import 'package:fluent_editor/renderers/render_fluent_node.dart';
-import 'package:fluent_editor/spell_check/spell_annotation.dart';
 import 'package:fluent_editor/styles.dart';
 import 'package:fluent_editor/utils/color_utils.dart';
 import 'package:flutter/foundation.dart';
@@ -242,16 +241,6 @@ class RenderFluentParagraph extends RenderFluentNode
     }
   }
 
-  List<SpellAnnotation> _spellAnnotations = const [];
-  List<SpellAnnotation> get spellAnnotations => _spellAnnotations;
-  set spellAnnotations(List<SpellAnnotation> value) {
-    if (!listEquals(_spellAnnotations, value)) {
-      _spellAnnotations = value;
-      _cachedSpellBoxes = null;
-      markNeedsPaint();
-    }
-  }
-
   List<Map<String, dynamic>> _commentAnnotations = const [];
   List<Map<String, dynamic>> get commentAnnotations => _commentAnnotations;
   set commentAnnotations(List<Map<String, dynamic>> value) {
@@ -295,12 +284,10 @@ class RenderFluentParagraph extends RenderFluentNode
   ({String? aFrag, int? aOff, String? fFrag, int? fOff})? _lastSelectionKey;
   List<TextBox>? _cachedSelectionBoxes;
 
-  List<List<TextBox>>? _cachedSpellBoxes;
-
   List<List<TextBox>>? _cachedCommentBoxes;
 
   /// Cached Picture of the pure text layer. Invalidated on layout changes;
-  /// the overlay layer (selection, caret, spell) is painted on top every frame.
+  /// the overlay layer (selection, caret, comments) is painted on top every frame.
   Picture? _cachedTextPicture;
 
   RenderFluentParagraph({
@@ -580,7 +567,6 @@ class RenderFluentParagraph extends RenderFluentNode
 
     _lineMetricsDirty = true;
     _cachedSelectionBoxes = null;
-    _cachedSpellBoxes = null;
     _cachedCommentBoxes = null;
     _cachedTextPicture?.dispose();
     _cachedTextPicture = null;
@@ -667,9 +653,8 @@ class RenderFluentParagraph extends RenderFluentNode
             decorationColor: _linkColor,
           );
           final hasImages = link.getChildren().any((child) => child is FluentImage);
-          
-          void onLinkTap() => print('Link tapped: ${link.url}');
-          final recognizer = hasImages ? null : (TapGestureRecognizer()..onTap = onLinkTap);
+
+          final recognizer = hasImages ? null : TapGestureRecognizer();
 
           for (final child in link.getChildren()) {
             if (child is FluentImage) {
@@ -1106,7 +1091,6 @@ class RenderFluentParagraph extends RenderFluentNode
       child = parentData.nextSibling;
     }
     _paintSelectionOverlayOnImages(context.canvas, alignedOffset);
-    _paintSpellErrors(context.canvas, alignedOffset);
     _paintCursor(context.canvas, alignedOffset);
   }
 
@@ -1118,42 +1102,6 @@ class RenderFluentParagraph extends RenderFluentNode
     _painter.paint(canvas, offset);
     _paintScriptSpans(canvas, offset);
     return recorder.endRecording();
-  }
-
-  /// Paints red wavy underlines for each spell annotation.
-  /// Amplitude 2 px, wavelength 4 px, 1.5 px below the baseline.
-  void _paintSpellErrors(Canvas canvas, Offset offset) {
-    if (_spellAnnotations.isEmpty) return;
-
-    final paint = Paint()
-      ..color = const Color(0xFFE53935)
-      ..strokeWidth = 1.2
-      ..style = PaintingStyle.stroke;
-
-    _cachedSpellBoxes ??= _spellAnnotations.map((ann) {
-      return _painter.getBoxesForSelection(
-        TextSelection(baseOffset: ann.startOffset, extentOffset: ann.endOffset),
-      );
-    }).toList();
-
-    for (int i = 0; i < _spellAnnotations.length; i++) {
-      final boxes = _cachedSpellBoxes![i];
-      for (final box in boxes) {
-        final rect = box.toRect().translate(offset.dx, offset.dy);
-        final baselineY = rect.bottom + 1.5;
-        final path = Path();
-        const amplitude = 2.0;
-        const wavelength = 4.0;
-        var x = rect.left;
-        path.moveTo(x, baselineY);
-        while (x < rect.right) {
-          x += wavelength / 2;
-          final y = ((x ~/ wavelength) % 2 == 0) ? baselineY - amplitude : baselineY + amplitude;
-          path.lineTo(x.clamp(rect.left, rect.right), y);
-        }
-        canvas.drawPath(path, paint);
-      }
-    }
   }
 
   /// Paints yellow/orange semi-transparent rectangles under commented text.

@@ -1,6 +1,3 @@
-[submodule "packages/fluent-editor-spellcheck"]
-	path = packages/fluent-editor-spellcheck
-	url = git@github.com:exusr/fluent-editor-spellcheck.git
 [submodule "packages/fluent-editor-comments"]
 	path = packages/fluent-editor-comments
 	url = git@github.com:exusr/fluent-editor-comments.git
