@@ -123,7 +123,7 @@ void _pasteNodes(List<Map<String, dynamic>> nodesJson, FluentDocument document) 
   final root = document.content;
   final cursor = document.cursor;
 
-  final curContainer = findLogicalContainer(root, cursor.anchorId);
+  final curContainer = document.findLogicalContainerCached(cursor.anchorId);
   final curTopLevel = _findTopLevelParent(root, cursor.anchorId);
   if (curTopLevel == null) {
     return;
@@ -277,7 +277,7 @@ void _pastePlainText(String text, FluentDocument document) {
 void _insertParagraphBreak(FluentDocument document) {
   final cursor = document.cursor;
   final root = document.content;
-  final container = findLogicalContainer(root, cursor.anchorId);
+  final container = document.findLogicalContainerCached(cursor.anchorId);
   if (container is! InlineContainerNode) return;
 
   final newParagraph = Paragraph(

@@ -3,7 +3,6 @@ import 'package:fluent_editor/fluent_document.dart';
 import 'package:fluent_editor/styles.dart';
 import 'package:fluent_editor/utils/fragment_operations.dart';
 import 'package:fluent_editor/utils/handler_helpers.dart';
-import 'package:fluent_editor/utils/node_operations.dart';
 import 'package:fluent_editor/utils/resolve_selection.dart';
 
 /// Removes all formatting from the selected text.
@@ -11,7 +10,6 @@ import 'package:fluent_editor/utils/resolve_selection.dart';
 bool executeHandleClearFormatting(FluentDocument document) {
   document.saveState(description: 'Clear formatting', forceNewAction: true);
 
-  final root = document.content;
   final cursor = document.cursor;
 
   final selection = resolveSelectionFromCursor(document);
@@ -28,7 +26,7 @@ bool executeHandleClearFormatting(FluentDocument document) {
     document.pendingHighlightColor = null;
     document.pendingStyle = ParagraphStyle.normal;
 
-    final container = findLogicalContainer(root, cursor.anchorId);
+    final container = document.findLogicalContainerCached(cursor.anchorId);
     if (container is Paragraph) {
       container.styleName = 'normal';
     }

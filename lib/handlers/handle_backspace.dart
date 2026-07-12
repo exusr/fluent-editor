@@ -38,7 +38,7 @@ bool executeHandleBackspace(FluentDocument document, {bool ctrl = false, bool li
   final currentFrag = resolveFragmentFromCursor(currentNode, cursor.anchorOffset);
   if (currentFrag == null) return false;
 
-  final container = findLogicalContainer(root, cursor.anchorId);
+  final container = document.findLogicalContainerCached(cursor.anchorId);
   if (container == null) return false;
 
   if (container is Paragraph && container.text.isEmpty &&
@@ -135,7 +135,7 @@ bool _handleBackspaceAtStart(
         _removeFragAndUpdate(document, root, currentFrag);
         return true;
       }
-      final prevContainer = findLogicalContainer(root, prevStop.position!.fragmentId);
+      final prevContainer = document.findLogicalContainerCached(prevStop.position!.fragmentId);
       if (prevContainer == null) {
         _removeFragAndUpdate(document, root, currentFrag);
         return true;
@@ -159,7 +159,7 @@ bool _handleBackspaceAtStart(
   final prevFrag = document.nodeById(prevStop.position!.fragmentId) as Fragment?;
   if (prevFrag == null) return false;
 
-  final prevContainer = findLogicalContainer(root, prevStop.position!.fragmentId);
+  final prevContainer = document.findLogicalContainerCached(prevStop.position!.fragmentId);
   if (prevContainer == null) return false;
 
   if (cursor.anchorOffset == 0) {

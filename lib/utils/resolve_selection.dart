@@ -1,4 +1,5 @@
 import 'package:fluent_editor/factories.dart';
+import 'package:fluent_editor/fluent_document.dart';
 import 'package:fluent_editor/utils/cursor_navigation.dart';
 import 'package:fluent_editor/utils/node_operations.dart';
 
@@ -134,6 +135,7 @@ ResolvedSelection? resolveSelection(
   int focusOffset, {
   List<CaretStop>? cachedStops,
   List<LogicalLine>? cachedLines,
+  FluentDocument? document,
 }) {
   if (anchorFragmentId == focusFragmentId && anchorOffset == focusOffset) {
     return null;
@@ -155,8 +157,10 @@ ResolvedSelection? resolveSelection(
   final focusFragResolved  = findById(root, focusFragmentId);
   if (anchorFragResolved is! Fragment || focusFragResolved is! Fragment) return null;
 
-  final anchorContainer = findLogicalContainer(root, anchorFragmentId);
-  final focusContainer  = findLogicalContainer(root, focusFragmentId);
+  final anchorContainer = document?.findLogicalContainerCached(anchorFragmentId) ??
+      findLogicalContainer(root, anchorFragmentId);
+  final focusContainer  = document?.findLogicalContainerCached(focusFragmentId) ??
+      findLogicalContainer(root, focusFragmentId);
   if (anchorContainer == null || focusContainer == null) return null;
 
   final anchorEndpoint = SelectionEndpoint(

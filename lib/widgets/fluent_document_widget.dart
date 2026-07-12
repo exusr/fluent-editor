@@ -67,6 +67,11 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
   final Map<int, double> _itemHeights = {};
   double _averageItemHeight = 40.0;
 
+  // Cached word/char counts keyed by content version to avoid O(n) tree walk on every rebuild.
+  int _cachedWordCount = 0;
+  int _cachedCharCount = 0;
+  int? _statsContentVersion;
+
   Timer? _blinkTimer;
   static const Duration _blinkInterval = Duration(milliseconds: 530);
 
@@ -430,6 +435,30 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
         for (final fragment in node.fragments) {
           _nodeIndexCache[fragment.id] = i;
         }
+      } else if (node is FluentList) {
+        for (final item in node.items) {
+          for (final child in item.children) {
+            if (child is Paragraph) {
+              _nodeIndexCache[child.id] = i;
+              for (final fragment in child.fragments) {
+                _nodeIndexCache[fragment.id] = i;
+              }
+            }
+          }
+        }
+      } else if (node is FluentTable) {
+        for (final row in node.rows) {
+          for (final cell in row.cells) {
+            for (final child in cell.children) {
+              if (child is Paragraph) {
+                _nodeIndexCache[child.id] = i;
+                for (final fragment in child.fragments) {
+                  _nodeIndexCache[fragment.id] = i;
+                }
+              }
+            }
+          }
+        }
       }
     }
     
@@ -566,6 +595,9 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
   }
 
   int _countWords() {
+    final version = widget.document.contentVersion;
+    if (_statsContentVersion == version) return _cachedWordCount;
+
     int count = 0;
     final root = widget.document.content;
     
@@ -588,10 +620,15 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
     }
     
     visit(root);
+    _cachedWordCount = count;
+    _statsContentVersion = version;
     return count;
   }
 
   int _countChars() {
+    final version = widget.document.contentVersion;
+    if (_statsContentVersion == version) return _cachedCharCount;
+
     int count = 0;
     final root = widget.document.content;
 
@@ -610,6 +647,8 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
     }
 
     visit(root);
+    _cachedCharCount = count;
+    _statsContentVersion = version;
     return count;
   }
 }

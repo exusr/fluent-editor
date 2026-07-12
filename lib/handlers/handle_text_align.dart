@@ -1,12 +1,10 @@
 import 'package:fluent_editor/factories.dart';
 import 'package:fluent_editor/fluent_document.dart';
 import 'package:fluent_editor/utils/handler_helpers.dart';
-import 'package:fluent_editor/utils/node_operations.dart';
 
 /// Applies text alignment to Paragraphs in the selection
 /// or to the Paragraph under the cursor.
 bool executeHandleTextAlign(FluentDocument document, String align) {
-  final root = document.content;
   final cursor = document.cursor;
 
   final selection = resolveSelectionFromCursor(document);
@@ -20,7 +18,7 @@ bool executeHandleTextAlign(FluentDocument document, String align) {
     return true;
   }
 
-  final container = findLogicalContainer(root, cursor.anchorId);
+  final container = document.findLogicalContainerCached(cursor.anchorId);
   if (container != null) {
     _applyToParagraphs(container as FNode, align);
     document.pendingTextAlign = align;

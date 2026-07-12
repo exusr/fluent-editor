@@ -98,6 +98,7 @@ class RenderFluentParagraph extends RenderFluentNode
   );
 
   final List<_FragmentPosition> _fragmentPositions = [];
+  final Map<String, _FragmentPosition> _fragmentPositionMap = {};
   final List<PlaceholderDimensions> _placeholderDimensions = [];
   final List<_ScriptSpanInfo> _scriptSpans = [];
 
@@ -285,6 +286,10 @@ class RenderFluentParagraph extends RenderFluentNode
   List<TextBox>? _cachedSelectionBoxes;
 
   List<List<TextBox>>? _cachedCommentBoxes;
+
+  /// Cached inline images from the last layout. Reused in paint to avoid
+  // re-traversing the container's children on every paint frame.
+  List<FluentImage> _cachedInlineImages = const [];
 
   /// Cached Picture of the pure text layer. Invalidated on layout changes;
   /// the overlay layer (selection, caret, comments) is painted on top every frame.
@@ -520,15 +525,18 @@ class RenderFluentParagraph extends RenderFluentNode
 
   /// Returns true if this paragraph contains the given fragment.
   bool containsFragment(String fragmentId) =>
-      _fragmentPositions.any((p) => p.id == fragmentId);
+      _fragmentPositionMap.containsKey(fragmentId);
 
   @override
   void performLayout() {
     _fragmentPositions.clear();
+    _fragmentPositionMap.clear();
     _placeholderDimensions.clear();
     _scriptSpans.clear();
 
     final childSizes = <Size>[];
+    final inlineImages = collectInlineImages(_container);
+    _cachedInlineImages = inlineImages;
     var child = firstChild;
     var placeholderIdx = 0;
     while (child != null) {
@@ -538,7 +546,6 @@ class RenderFluentParagraph extends RenderFluentNode
       );
       
       var childSize = child.size;
-      final inlineImages = collectInlineImages(_container);
       if (placeholderIdx < inlineImages.length) {
         final image = inlineImages[placeholderIdx];
         final originalWidth = image.width ?? 300.0;
@@ -660,9 +667,9 @@ class RenderFluentParagraph extends RenderFluentNode
             if (child is FluentImage) {
               final start = currentOffset;
               final end = currentOffset + child.text.length; // ZWS = 1
-              _fragmentPositions.add(
-                _FragmentPosition(id: child.id, start: start, end: end, isImage: true),
-              );
+              final fp = _FragmentPosition(id: child.id, start: start, end: end, isImage: true);
+              _fragmentPositions.add(fp);
+              _fragmentPositionMap[child.id] = fp;
               final childSize = placeholderIdx < childSizes.length
                   ? childSizes[placeholderIdx]
                   : const Size(1, 1);
@@ -682,9 +689,9 @@ class RenderFluentParagraph extends RenderFluentNode
               final text = child.renderText;
               final start = currentOffset;
               final end = currentOffset + text.length;
-              _fragmentPositions.add(
-                _FragmentPosition(id: child.id, start: start, end: end),
-              );
+              final fp = _FragmentPosition(id: child.id, start: start, end: end);
+              _fragmentPositions.add(fp);
+              _fragmentPositionMap[child.id] = fp;
               var effectiveStyle = linkStyle;
               final childStyles = child.styles;
               if (childStyles != null && childStyles.isNotEmpty) {
@@ -758,9 +765,9 @@ class RenderFluentParagraph extends RenderFluentNode
         case FluentImage image:
           final start = currentOffset;
           final end = currentOffset + image.text.length; // ZWS = 1
-          _fragmentPositions.add(
-            _FragmentPosition(id: image.id, start: start, end: end, isImage: true),
-          );
+          final fp = _FragmentPosition(id: image.id, start: start, end: end, isImage: true);
+          _fragmentPositions.add(fp);
+          _fragmentPositionMap[image.id] = fp;
           final childSize = placeholderIdx < childSizes.length
               ? childSizes[placeholderIdx]
               : const Size(1, 1);
@@ -788,9 +795,9 @@ class RenderFluentParagraph extends RenderFluentNode
           final text = fragment.renderText;
           final start = currentOffset;
           final end = currentOffset + text.length;
-          _fragmentPositions.add(
-            _FragmentPosition(id: fragment.id, start: start, end: end),
-          );
+          final fp = _FragmentPosition(id: fragment.id, start: start, end: end);
+          _fragmentPositions.add(fp);
+          _fragmentPositionMap[fragment.id] = fp;
           TextStyle? effectiveStyle = style;
           final styles = _getEffectiveStyles(fragment);
           if (styles.isNotEmpty) {
@@ -877,12 +884,10 @@ class RenderFluentParagraph extends RenderFluentNode
   }
 
   int? _localToGlobal(String fragmentId, int localOffset) {
-    for (final pos in _fragmentPositions) {
-      if (pos.id == fragmentId) {
-        final global = pos.toGlobal(localOffset);
-        if (global >= pos.start && global <= pos.end) return global;
-        return null;
-      }
+    final pos = _fragmentPositionMap[fragmentId];
+    if (pos != null) {
+      final global = pos.toGlobal(localOffset);
+      if (global >= pos.start && global <= pos.end) return global;
     }
     return null;
   }
@@ -955,12 +960,25 @@ class RenderFluentParagraph extends RenderFluentNode
     final targetLineBottom =
         targetLineMetric.baseline + targetLineMetric.descent;
 
+    // Limit the scan to only the character range of the target line,
+    // instead of iterating every character of every fragment.
+    final lineStartOffset = targetLine > 0
+        ? (lineMetrics[targetLine - 1].baseline + lineMetrics[targetLine - 1].descent).round()
+        : 0;
+    final lineBoundary = _painter.getLineBoundary(TextPosition(offset: lineStartOffset));
+    final scanStart = lineBoundary.start;
+    final scanEnd = lineBoundary.end;
+
     String? bestFragmentId;
     int bestLocalOffset = 0;
     double bestXDistance = double.infinity;
 
     for (final fragment in _fragmentPositions) {
-      for (int offset = 0; offset < fragment.textLength; offset++) {
+      // Skip fragments entirely outside the target line's offset range
+      if (fragment.end <= scanStart || fragment.start >= scanEnd) continue;
+      final fragScanStart = fragment.start > scanStart ? fragment.start : scanStart;
+      final fragScanEnd = fragment.end < scanEnd ? fragment.end : scanEnd;
+      for (int offset = fragScanStart - fragment.start; offset < fragScanEnd - fragment.start; offset++) {
         final globalOffset = fragment.start + offset;
 
         final boxes = _painter.getBoxesForSelection(
@@ -1041,6 +1059,12 @@ class RenderFluentParagraph extends RenderFluentNode
     String? focusFragmentId,
     int? focusLocal,
   ) {
+    if (_anchorFragmentId == anchorFragmentId &&
+        _anchorLocalOffset == anchorLocal &&
+        _focusFragmentId == focusFragmentId &&
+        _focusLocalOffset == focusLocal) {
+      return;
+    }
     _anchorFragmentId = anchorFragmentId;
     _anchorLocalOffset = anchorLocal;
     _focusFragmentId = focusFragmentId;
@@ -1167,15 +1191,14 @@ class RenderFluentParagraph extends RenderFluentNode
   }
 
   int? _fragmentOffsetToGlobal(String fragmentId, int localOffset) {
-    for (final pos in _fragmentPositions) {
-      if (pos.id == fragmentId) {
-        final effectiveOffset =
-            (localOffset < 0 || localOffset > pos.textLength)
-            ? pos.textLength
-            : localOffset;
-        final global = pos.start + effectiveOffset;
-        if (global >= pos.start && global <= pos.end) return global;
-      }
+    final pos = _fragmentPositionMap[fragmentId];
+    if (pos != null) {
+      final effectiveOffset =
+          (localOffset < 0 || localOffset > pos.textLength)
+          ? pos.textLength
+          : localOffset;
+      final global = pos.start + effectiveOffset;
+      if (global >= pos.start && global <= pos.end) return global;
     }
     return null;
   }
@@ -1249,16 +1272,13 @@ class RenderFluentParagraph extends RenderFluentNode
     final end = baseGlobal < extentGlobal ? extentGlobal : baseGlobal;
 
     final placeholderBoxes = _painter.inlinePlaceholderBoxes ?? const [];
-    final inlineImages = collectInlineImages(_container);
+    final inlineImages = _cachedInlineImages;
 
     final overlayPaint = Paint()
       ..color = selectionColor.withValues(alpha: 0.4);
     for (var i = 0; i < placeholderBoxes.length && i < inlineImages.length; i++) {
       final imgId = inlineImages[i].id;
-      _FragmentPosition? pos;
-      for (final p in _fragmentPositions) {
-        if (p.id == imgId) { pos = p; break; }
-      }
+      final pos = _fragmentPositionMap[imgId];
       if (pos == null) continue;
       if (pos.start >= start && pos.end <= end) {
         canvas.drawRect(
@@ -1295,13 +1315,7 @@ class RenderFluentParagraph extends RenderFluentNode
 
     if (!registry.caretVisible) return;
 
-    _FragmentPosition? fragPos;
-    for (final p in _fragmentPositions) {
-      if (p.id == fragmentId) {
-        fragPos = p;
-        break;
-      }
-    }
+    _FragmentPosition? fragPos = _fragmentPositionMap[fragmentId];
     if (fragPos != null && fragPos.isImage) {
       final boxes = _painter.getBoxesForSelection(
         TextSelection(baseOffset: fragPos.start, extentOffset: fragPos.end),

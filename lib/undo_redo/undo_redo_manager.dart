@@ -16,8 +16,9 @@ class _PendingSnapshot {
   /// Used for O(1) dirty detection in commitSaveState.
   final List<int> oldVersions;
 
-  /// Full JSON of every top-level node. Only the changed ones
-  /// are actually read; the rest are discarded after commit.
+  /// Full JSON of every top-level node at capture time.
+  /// Serialized eagerly because node objects are mutated in place
+  /// between beginSaveState and commitSaveState.
   final List<Map<String, dynamic>> oldTopLevelNodes;
 
   final CursorSnapshot oldCursor;

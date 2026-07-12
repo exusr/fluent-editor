@@ -99,18 +99,35 @@ class NodeReplaceDelta extends DocumentDelta {
     FluentDocument document,
     Iterable<(int, Map<String, dynamic>)> replacements,
   ) {
-    final sorted = replacements.toList()
-      ..sort((a, b) => b.$1.compareTo(a.$1));
-
-    for (final (index, json) in sorted) {
-      if (index < 0 || index >= document.content.nodes.length) {
-        continue;
-      }
-      final oldNode = document.content.nodes[index];
-      final newNode = _deserializeNode(json);
-      newNode.id = oldNode.id;
-      document.content.nodes[index] = newNode;
+    // Build a map of index → target JSON for all changed indices.
+    final changeMap = <int, Map<String, dynamic>>{};
+    for (final (i, json) in replacements) {
+      changeMap[i] = json;
     }
+
+    // Rebuild the full node list: for each index, use the target JSON
+    // if there's a change, keep the existing node if unchanged, or
+    // skip if the target JSON is empty (node deleted).
+    final nodes = document.content.nodes;
+    final maxIndex = changeMap.keys.fold(nodes.length - 1, (a, b) => a > b ? a : b);
+
+    final newNodes = <FNode>[];
+    for (int i = 0; i <= maxIndex; i++) {
+      final json = changeMap[i];
+      if (json != null) {
+        if (json['type'] != null) {
+          newNodes.add(_deserializeNode(json));
+        }
+        // Empty JSON (no 'type') → node doesn't exist in target state
+      } else if (i < nodes.length) {
+        // No change at this index — keep existing node
+        newNodes.add(nodes[i]);
+      }
+    }
+
+    document.content.nodes
+      ..clear()
+      ..addAll(newNodes);
     document.invalidateNodeIndex();
   }
 }
@@ -198,8 +215,8 @@ class NodeDeleteDelta extends DocumentDelta {
 FNode _deserializeNode(Map<String, dynamic> json) {
   try {
     return const FNodeJsonConverter().fromJson(json);
-  } catch (_) {
-    debugPrint('[UNDO_WARN] Failed to deserialize node in delta, returning empty paragraph');
+  } catch (e) {
+    debugPrint('[UNDO_WARN] Failed to deserialize node ($e), returning empty paragraph');
     return Paragraph();
   }
 }

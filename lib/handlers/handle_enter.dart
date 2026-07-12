@@ -19,7 +19,7 @@ bool executeHandleEnter(FluentDocument document) {
     executeHandleReplaceSelection('', document);
   }
 
-  final container = findLogicalContainer(root, cursor.anchorId);
+  final container = document.findLogicalContainerCached(cursor.anchorId);
   if (container == null) return false;
 
   if (container is Link) {

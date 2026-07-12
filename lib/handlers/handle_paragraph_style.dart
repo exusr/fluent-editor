@@ -2,7 +2,6 @@ import 'package:fluent_editor/factories.dart';
 import 'package:fluent_editor/fluent_document.dart';
 import 'package:fluent_editor/styles.dart';
 import 'package:fluent_editor/utils/handler_helpers.dart';
-import 'package:fluent_editor/utils/node_operations.dart';
 
 /// Applies a paragraph style to the current paragraph or selection.
 /// The style works as a "base" - explicit fragment customizations
@@ -13,7 +12,6 @@ bool executeHandleParagraphStyle(
 ) {
   document.saveState(description: 'Change paragraph style to ${style.name}');
 
-  final root = document.content;
   final cursor = document.cursor;
 
   if (!cursor.isCollapsed) {
@@ -28,7 +26,7 @@ bool executeHandleParagraphStyle(
       }
     }
   } else {
-    final container = findLogicalContainer(root, cursor.anchorId);
+    final container = document.findLogicalContainerCached(cursor.anchorId);
     if (container is Paragraph) {
       _applyStyleToParagraph(container, style);
     } else {

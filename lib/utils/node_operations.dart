@@ -409,6 +409,10 @@ void clearCellKeepingEmptyFragment(FluentCell cell, Root root) {
 /// Recalculates the indices of all lists in the document.
 /// Updates indexList for each ListItem based on hierarchical position.
 void recalculateListIndices(Root root) {
+  // Early exit: skip O(n) walk when no lists exist.
+  // Ceiling: O(n) is-type scan; upgrade path: maintain a hasLists flag.
+  if (!root.nodes.any((n) => n is FluentList)) return;
+
   void recalculateList(FluentList list, List<int> parentIndices) {
     for (var i = 0; i < list.items.length; i++) {
       final item = list.items[i];

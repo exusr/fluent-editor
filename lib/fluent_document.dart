@@ -132,6 +132,7 @@ class FluentDocument extends ChangeNotifier {
     _cachedContainerOrder = null;
     _cachedLogicalLines = null;
     _flattenedCache = null;
+    _flattenedByFragIdCache = null;
     _logicalContainerCache.clear();
   }
 
@@ -175,14 +176,25 @@ class FluentDocument extends ChangeNotifier {
   /// caching avoids rebuilding on repeated cursor / hit-test queries.
   Map<String, List<(Fragment, int, int)>>? _flattenedCache;
 
+  /// Cached fragment-id → (fragment, startOffset, endOffset) map per container.
+  /// Built alongside [_flattenedCache] for O(1) lookup by fragment id.
+  Map<String, Map<String, (Fragment, int, int)>>? _flattenedByFragIdCache;
+
   /// Returns the flattened fragment list for [container] with global
   /// offsets, using the document cache when available.
   List<(Fragment, int, int)> flattenContainer(FNode container) {
     _flattenedCache ??= {};
-    final cached = _flattenedCache![container.id];
+    _flattenedByFragIdCache ??= {};
+    final cid = container.id;
+    final cached = _flattenedCache![cid];
     if (cached != null) return cached;
     final result = flattenFragmentsSimple(container);
-    _flattenedCache![container.id] = result;
+    _flattenedCache![cid] = result;
+    final byId = <String, (Fragment, int, int)>{};
+    for (final (frag, start, end) in result) {
+      byId[frag.id] = (frag, start, end);
+    }
+    _flattenedByFragIdCache![cid] = byId;
     return result;
   }
 
@@ -357,10 +369,9 @@ class FluentDocument extends ChangeNotifier {
   int? getGlobalOffsetInParagraph(String paragraphId, String fragmentId, int localOffset) {
     final node = nodeById(paragraphId);
     if (node is! Paragraph) return null;
-    final flat = flattenContainer(node);
-    for (final (frag, start, _) in flat) {
-      if (frag.id == fragmentId) return start + localOffset;
-    }
+    flattenContainer(node);
+    final entry = _flattenedByFragIdCache?[paragraphId]?[fragmentId];
+    if (entry != null) return entry.$2 + localOffset;
     return null;
   }
 
@@ -422,6 +433,15 @@ class FluentDocument extends ChangeNotifier {
     final id = container == null ? null : (container as FNode).id;
     _logicalContainerCache[fragmentId] = id;
     return id;
+  }
+
+  /// Returns the inline container node for [fragmentId] using the cached
+  /// container-id + node index. O(1) on cache hit, O(n) on first lookup.
+  /// Handlers should prefer this over findLogicalContainer(root, fragmentId).
+  InlineContainerNode? findLogicalContainerCached(String fragmentId) {
+    final containerId = findLogicalContainerId(fragmentId);
+    if (containerId == null) return null;
+    return nodeById(containerId) as InlineContainerNode?;
   }
 
   /// Caret coordinate resolver for vertical navigation.
@@ -556,7 +576,7 @@ class FluentDocument extends ChangeNotifier {
 
       pendingStyles = List<String>.from(frag?.styles ?? []);
 
-      final container = findLogicalContainer(_content, cursor.anchorId);
+      final container = findLogicalContainerCached(cursor.anchorId);
       if (container is Paragraph) {
         pendingTextAlign = container.textAlign;
         pendingIndent = container.indent;

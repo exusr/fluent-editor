@@ -1,6 +1,7 @@
 import 'package:fluent_editor/cursor.dart';
 import 'package:fluent_editor/factories.dart';
 import 'package:fluent_editor/utils/fragment_operations.dart';
+import 'package:fluent_editor/utils/node_operations.dart';
 
 /// Callback injected by the rendering layer.
 /// Translates a CaretStop into its global x coordinate (logical pixels).
@@ -344,15 +345,31 @@ int findStopIndex(List<CaretStop> stops, String fragmentId, int offset) {
   return bestIdx;
 }
 
+// Cache for findLineForStop: maps stop identity to (lineIndex, stopIndexInLine)
+// Keyed by lines list identity to invalidate when lines change.
+List<LogicalLine>? _linesRefForLineIndex;
+Map<CaretStop, ({int lineIndex, int stopIndexInLine})>? _stopToLineIndex;
+
+// Cache for _findStopIndexInLines: flattened stops list keyed by lines identity
+List<LogicalLine>? _linesRefForFlatStops;
+List<CaretStop>? _cachedFlatStops;
+
 ({int lineIndex, int stopIndexInLine})? findLineForStop(
   List<LogicalLine> lines,
   CaretStop stop,
 ) {
-  for (int i = 0; i < lines.length; i++) {
-    final idx = lines[i].indexOf(stop);
-    if (idx >= 0) return (lineIndex: i, stopIndexInLine: idx);
+  if (!identical(lines, _linesRefForLineIndex)) {
+    _linesRefForLineIndex = lines;
+    final m = <CaretStop, ({int lineIndex, int stopIndexInLine})>{};
+    for (int i = 0; i < lines.length; i++) {
+      for (int j = 0; j < lines[i].stops.length; j++) {
+        m[lines[i].stops[j]] = (lineIndex: i, stopIndexInLine: j);
+      }
+    }
+    _stopToLineIndex = m;
   }
-  return null;
+
+  return _stopToLineIndex?[stop];
 }
 
 int _findStopIndexInLines(
@@ -360,7 +377,11 @@ int _findStopIndexInLines(
   String fragmentId,
   int offset,
 ) {
-  final allStops = lines.expand((l) => l.stops).toList();
+  if (!identical(lines, _linesRefForFlatStops)) {
+    _linesRefForFlatStops = lines;
+    _cachedFlatStops = lines.expand((l) => l.stops).toList(growable: false);
+  }
+  final allStops = _cachedFlatStops!;
   for (int i = 0; i < allStops.length; i++) {
     if (allStops[i].fragmentId == fragmentId && allStops[i].offset == offset) {
       return i;
@@ -618,24 +639,32 @@ bool _nodeContainsFragment(FNode node, String fragmentId) {
   return false;
 }
 
+/// Returns the id of the top-level node in [root] that contains [fragmentId].
+/// Uses findLogicalContainer to get the container, then walks up to the
+/// top-level parent — O(depth) instead of O(n × depth).
+String? _findTopLevelNodeId(Root root, String fragmentId) {
+  final container = findLogicalContainer(root, fragmentId);
+  if (container == null) return null;
+  FNode node = container as FNode;
+  while (true) {
+    final parent = findParent(root, node);
+    if (parent == null || parent is Root) return node.id;
+    node = parent;
+  }
+}
+
 /// True when the fragment belongs to the first top-level node of [root].
 bool _isInFirstNode(Root root, String fragmentId) {
   if (root.nodes.isEmpty) return false;
-  return _nodeContainsFragment(root.nodes.first, fragmentId);
+  final id = _findTopLevelNodeId(root, fragmentId);
+  return id != null && id == root.nodes.first.id;
 }
 
 /// True when the fragment belongs to the last top-level node of [root].
 bool _isInLastNode(Root root, String fragmentId) {
   if (root.nodes.isEmpty) return false;
-  return _nodeContainsFragment(root.nodes.last, fragmentId);
-}
-
-/// Returns the id of the top-level node in [root] that contains [fragmentId].
-String? _findTopLevelNodeId(Root root, String fragmentId) {
-  for (final node in root.nodes) {
-    if (_nodeContainsFragment(node, fragmentId)) return node.id;
-  }
-  return null;
+  final id = _findTopLevelNodeId(root, fragmentId);
+  return id != null && id == root.nodes.last.id;
 }
 
 /// Pre-compiled RegExp for word-character detection.

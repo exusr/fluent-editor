@@ -133,17 +133,15 @@ class ParagraphRegistry {
   /// Finds the rendered paragraph whose global bounds vertically contain
   /// [globalY]; if none contains it, returns the vertically nearest one.
   ///
-  /// Iterates only the currently rendered paragraphs (bounded by the viewport
-  /// + ListView cache), so it is O(visible) — used by drag selection to do
-  /// precise hit testing without an O(n) scan over the whole document.
+  /// Checks visible renders first (O(visible)); falls back to all registered
+  /// renders only if no visible render matches.
   ({String id, RenderFluentParagraph render})? paragraphAtGlobalY(double globalY) {
     RenderFluentParagraph? best;
     String? bestId;
     double bestDist = double.infinity;
 
-    for (final entry in _renders.entries) {
-      final render = entry.value;
-      if (!render.attached || !render.hasSize) continue;
+    bool checkRender(String id, RenderFluentParagraph render) {
+      if (!render.attached || !render.hasSize) return false;
       final top = render.localToGlobal(Offset.zero).dy;
       final bottom = top + render.size.height;
 
@@ -159,13 +157,27 @@ class ParagraphRegistry {
       if (dist < bestDist) {
         bestDist = dist;
         best = render;
-        bestId = entry.key;
-        if (dist == 0.0) break; // exact vertical hit, cannot do better
+        bestId = id;
+        return dist == 0.0; // exact vertical hit, cannot do better
+      }
+      return false;
+    }
+
+    // Check visible renders first — O(visible)
+    for (final id in _visibleContainerIds) {
+      final render = _renders[id];
+      if (render != null && checkRender(id, render)) break;
+    }
+
+    // Fall back to all renders only if no visible hit
+    if (bestDist > 0.0) {
+      for (final entry in _renders.entries) {
+        if (checkRender(entry.key, entry.value)) break;
       }
     }
 
     if (best == null || bestId == null) return null;
-    return (id: bestId, render: best);
+    return (id: bestId!, render: best!);
   }
 
   /// Diagnostic: number of currently registered renders.

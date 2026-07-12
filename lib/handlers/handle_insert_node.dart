@@ -90,7 +90,7 @@ void _insertLinkInline(
     return;
   }
 
-  final container = findLogicalContainer(root, cursor.anchorId);
+  final container = document.findLogicalContainerCached(cursor.anchorId);
   if (container == null) {
     _insertBlockNode(root, cursor, newLink, document);
     return;
@@ -130,13 +130,13 @@ void _insertImage(
   FluentImage newImage,
   FluentDocument document,
 ) {
-  final container = findLogicalContainer(root, cursor.anchorId) as FNode?;
+  final container = document.findLogicalContainerCached(cursor.anchorId) as FNode?;
   if (container is Paragraph) {
     final containerParent = findParent(root, container);
     if (containerParent is Root) {
       final atEnd = _isCursorAtEndOfContainer(
         root, cursor, container,
-        cachedStops: document.caretStops,
+        cachedStops: document.caretStops, document: document,
       );
       final atStart = cursor.anchorOffset == 0 &&
           container.getChildren().isNotEmpty &&
@@ -195,14 +195,14 @@ void _insertBlockNode(
   FluentDocument document,
 ) {
   if (newNode is FluentTable) {
-    final container = findLogicalContainer(root, cursor.anchorId) as FNode?;
+    final container = document.findLogicalContainerCached(cursor.anchorId) as FNode?;
     if (container != null) {
       final listItem = findAncestor<ListItem>(root, container);
       if (listItem != null) return;
     }
   }
 
-  FNode? container = findLogicalContainer(root, cursor.anchorId) as FNode?;
+  FNode? container = document.findLogicalContainerCached(cursor.anchorId) as FNode?;
   if (container == null) {
     appendChild(root, newNode);
     _moveCursorToNodeStart(cursor, newNode);
@@ -247,7 +247,7 @@ void _insertBlockNode(
   if (container is Paragraph && containerParent is Root) {
     final atEnd = _isCursorAtEndOfContainer(
       root, cursor, container,
-      cachedStops: document.caretStops,
+      cachedStops: document.caretStops, document: document,
     );
     final atStart = cursor.anchorOffset == 0 &&
         container.getChildren().isNotEmpty &&
@@ -293,12 +293,14 @@ bool _isCursorAtEndOfContainer(
   Cursor cursor,
   InlineContainerNode container, {
   List<CaretStop>? cachedStops,
+  FluentDocument? document,
 }) {
   final stops = cachedStops ?? buildAllStops(root);
   final containerId = (container as FNode).id;
   final containerStops = stops.where((s) {
-    final c = findLogicalContainer(root, s.fragmentId);
-    return c != null && (c as FNode).id == containerId;
+    final c = document?.findLogicalContainerId(s.fragmentId) ??
+        (findLogicalContainer(root, s.fragmentId) as FNode?)?.id;
+    return c != null && c == containerId;
   }).toList();
   if (containerStops.isEmpty) return false;
   final lastStop = containerStops.last;

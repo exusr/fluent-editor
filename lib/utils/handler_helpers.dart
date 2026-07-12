@@ -19,6 +19,7 @@ ResolvedSelection? resolveSelectionFromCursor(FluentDocument document) {
     cursor.focusOffset,
     cachedStops: document.caretStops,
     cachedLines: document.logicalLines,
+    document: document,
   );
 }
 

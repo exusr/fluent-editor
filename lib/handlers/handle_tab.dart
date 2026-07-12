@@ -22,7 +22,7 @@ import 'package:fluent_editor/utils/node_operations.dart';
 bool executeHandleOutdent(FluentDocument document) {
   final root = document.content;
   final cursor = document.cursor;
-  final container = findLogicalContainer(root, cursor.anchorId);
+  final container = document.findLogicalContainerCached(cursor.anchorId);
   if (container == null) return false;
   final ancestorItem = findAncestor<ListItem>(root, container as FNode);
   if (ancestorItem == null) return false;
@@ -38,7 +38,7 @@ bool executeHandleTab(FluentDocument document, {bool shift = false}) {
   final root = document.content;
   final cursor = document.cursor;
 
-  final container = findLogicalContainer(root, cursor.anchorId);
+  final container = document.findLogicalContainerCached(cursor.anchorId);
   if (container == null) return true;
 
   final containerNode = container as FNode;

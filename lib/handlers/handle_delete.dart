@@ -14,7 +14,6 @@ import 'package:fluent_editor/utils/node_operations.dart';
 /// 4. If ctrl is pressed: delete the next word
 /// 5. Otherwise: delete the next character in the fragment
 bool executeHandleDelete(FluentDocument document, {bool ctrl = false}) {
-  final root = document.content;
   final cursor = document.cursor;
 
   if (deleteSelectionIfExists(document)) return true;
@@ -31,7 +30,7 @@ bool executeHandleDelete(FluentDocument document, {bool ctrl = false}) {
   final currentFrag = resolveFragmentFromCursor(currentNode, cursor.anchorOffset);
   if (currentFrag == null) return false;
 
-  final container = findLogicalContainer(root, cursor.anchorId);
+  final container = document.findLogicalContainerCached(cursor.anchorId);
   if (container == null) return false;
 
   if (currentFrag is FluentImage) {
@@ -75,7 +74,7 @@ bool _handleDeleteAtEnd(
   final nextFrag = document.nodeById(nextStop.position!.fragmentId) as Fragment?;
   if (nextFrag == null) return false;
 
-  final nextContainer = findLogicalContainer(root, nextStop.position!.fragmentId);
+  final nextContainer = document.findLogicalContainerCached(nextStop.position!.fragmentId);
   if (nextContainer == null) return false;
 
   if ((nextContainer as FNode).id == (container as FNode).id) {
