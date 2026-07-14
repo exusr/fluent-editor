@@ -811,7 +811,22 @@ final _wordCharRe = RegExp(r'[a-zA-Z0-9_\u00C0-\u024F]');
 
 bool _isWordChar(String ch) => _wordCharRe.hasMatch(ch);
 
-bool _isSpaceChar(String ch) => ch == ' ' || ch == '\t' || ch == '\n';
+/// All Unicode whitespace characters, including IME-produced spaces
+/// (ideographic space U+3000, NBSP U+00A0, various width spaces, etc.).
+const _spaceChars = {
+  ' ', '\t', '\n', '\r', '\f', '\v',
+  '\u00A0', // NBSP
+  '\u1680', // Ogham space mark
+  '\u2000', '\u2001', '\u2002', '\u2003', '\u2004', '\u2005',
+  '\u2006', '\u2007', '\u2008', '\u2009', '\u200A', // en/em/thin/hair spaces
+  '\u2028', '\u2029', // line/paragraph separator
+  '\u202F', // narrow no-break space
+  '\u205F', // medium mathematical space
+  '\u3000', // ideographic space (CJK IME)
+  '\uFEFF', // zero-width no-break space (BOM)
+};
+
+bool _isSpaceChar(String ch) => _spaceChars.contains(ch);
 
 List<int> _buildStopLineIndex(
     List<CaretStop> stops, List<LogicalLine> lines) {

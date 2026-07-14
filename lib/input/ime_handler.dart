@@ -1406,6 +1406,7 @@ class FluentTextInputHandler with DeltaTextInputClient {
 
   void _resetPlatformBuffer() {
     if (_connection == null || !_connection!.attached) return;
+    final wasUpdatingSelf = _updatingSelf;
     _updatingSelf = true;
     try {
       _connection!.setEditingState(const TextEditingValue());
@@ -1413,7 +1414,7 @@ class FluentTextInputHandler with DeltaTextInputClient {
     } on PlatformException catch (e) {
       debugPrint('FluentTextInputHandler: _resetPlatformBuffer failed: ${e.message}');
     }
-    _updatingSelf = false;
+    _updatingSelf = wasUpdatingSelf;
   }
 
   void _resetComposition() {
@@ -1535,6 +1536,7 @@ class FluentTextInputHandler with DeltaTextInputClient {
     final bool selectionChanged = currentSelectionKey != _prevSelectionKey;
     _prevSelectionKey = currentSelectionKey;
 
+    final wasUpdatingSelf = _updatingSelf;
     _updatingSelf = true;
     try {
       if (kIsWeb && syncedText.length < _lastSyncedText.length) {
@@ -1552,7 +1554,7 @@ class FluentTextInputHandler with DeltaTextInputClient {
     } on PlatformException catch (e) {
       debugPrint('FluentTextInputHandler: syncImeBufferToFragment failed: ${e.message}');
     }
-    _updatingSelf = false;
+    _updatingSelf = wasUpdatingSelf;
     if (kIsWeb) {
       _updateWebImePosition();
     }
