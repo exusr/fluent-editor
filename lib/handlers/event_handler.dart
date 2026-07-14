@@ -180,6 +180,7 @@ class EventHandler {
 
   void handleKeyDown(KeyEvent event, FluentDocument document) {
     this.document = document;
+    if (document.registry.dispatchKeyEvent(event, document)) return;
     if (handleBackspaceKey(event)) return;
     if (handleDeleteKey(event)) return;
     if (handleMetaActions(event)) return;

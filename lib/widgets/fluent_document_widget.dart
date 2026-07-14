@@ -13,6 +13,7 @@ import 'package:fluent_editor/widgets/node_widget_builder.dart';
 import 'package:fluent_editor/utils/node_operations.dart';
 import 'package:fluent_editor/widgets/editor/fluent_toolbar_widget.dart';
 import 'package:fluent_editor/widgets/nodes/virtualized_selectable_area.dart';
+import 'package:fluent_editor/plugins/plugin_api.dart';
 
 class FluentDocumentWidget extends StatefulWidget {
   const FluentDocumentWidget({
@@ -527,6 +528,15 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
     super.dispose();
   }
 
+  List<Widget> _buildPluginUiContributions(FluentPluginUiLocation location) {
+    final doc = widget.document;
+    return doc.registry
+        .uiAt(location)
+        .where((c) => c.visible?.call(doc) ?? true)
+        .map((c) => Builder(builder: (ctx) => c.builder(ctx, doc)))
+        .toList();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Container(
@@ -534,6 +544,7 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
       child: Column(
         children: [
           FluentToolbar(document: widget.document, labels: widget.labels),
+          ..._buildPluginUiContributions(FluentPluginUiLocation.toolbar),
           Expanded(
             child: Stack(
               children: [

@@ -16,6 +16,8 @@ import 'package:fluent_editor/core/paragraph_registry.dart';
 import 'package:fluent_editor/undo_redo/undo_redo_manager.dart';
 import 'package:fluent_editor/input/ime_handler.dart';
 import 'package:fluent_editor/localization/fluent_editor_labels.dart';
+import 'package:fluent_editor/plugins/builtin_plugin.dart';
+import 'package:fluent_editor/plugins/plugin_api.dart';
 
 class FluentDocument extends ChangeNotifier {
   /// Active font family for collapsed cursor (persistent like Word).
@@ -307,7 +309,12 @@ class FluentDocument extends ChangeNotifier {
     }
   }
 
-  FluentDocument({Root? content}) {
+  FluentPluginRegistry? _registry;
+  FluentPluginRegistry get registry =>
+      _registry ??= createDefaultFluentPluginRegistry();
+
+  FluentDocument({Root? content, FluentPluginRegistry? registry}) {
+    _registry = registry;
     _content = content ?? Root(nodes: [Paragraph(text: "")]);
     _cursor.document = this;
     if (_content.nodes.isNotEmpty) {
@@ -324,34 +331,40 @@ class FluentDocument extends ChangeNotifier {
   /// Creates a FluentDocument from a JSON map (result of jsonDecode).
   /// Supports both the new format (with "nodes" and "settings") and
   /// the legacy format (Root JSON directly).
-  factory FluentDocument.fromJson(Map<String, dynamic> json) {
-    if (json.containsKey('nodes') && json.containsKey('settings')) {
-      final root = Root.fromJson(json['nodes'] as Map<String, dynamic>);
-      final doc = FluentDocument(content: root);
-      final settings = json['settings'] as Map<String, dynamic>;
-      doc.pendingLineHeight = (settings['lineHeight'] as num?)?.toDouble() ?? doc.pendingLineHeight;
-      doc.pendingSpacingBefore = (settings['spacingBefore'] as num?)?.toDouble() ?? doc.pendingSpacingBefore;
-      doc.pendingSpacingAfter = (settings['spacingAfter'] as num?)?.toDouble() ?? doc.pendingSpacingAfter;
-      doc.pendingFontFamily = settings['fontFamily'] as String? ?? doc.pendingFontFamily;
-      doc.pendingFontSize = (settings['fontSize'] as num?)?.toDouble() ?? doc.pendingFontSize;
-      doc.pendingTextAlign = settings['textAlign'] as String? ?? doc.pendingTextAlign;
-      doc.pendingIndent = (settings['indent'] as num?)?.toInt() ?? doc.pendingIndent;
-      doc.pendingColor = settings['color'] as String?;
-      doc.pendingHighlightColor = settings['highlightColor'] as String?;
-      if (settings['styles'] is List) {
-        doc.pendingStyles = (settings['styles'] as List).map((e) => e as String).toList();
+  factory FluentDocument.fromJson(Map<String, dynamic> json,
+      {FluentPluginRegistry? registry}) {
+    FNodeJsonConverter.activeRegistry = registry;
+    try {
+      if (json.containsKey('nodes') && json.containsKey('settings')) {
+        final root = Root.fromJson(json['nodes'] as Map<String, dynamic>);
+        final doc = FluentDocument(content: root, registry: registry);
+        final settings = json['settings'] as Map<String, dynamic>;
+        doc.pendingLineHeight = (settings['lineHeight'] as num?)?.toDouble() ?? doc.pendingLineHeight;
+        doc.pendingSpacingBefore = (settings['spacingBefore'] as num?)?.toDouble() ?? doc.pendingSpacingBefore;
+        doc.pendingSpacingAfter = (settings['spacingAfter'] as num?)?.toDouble() ?? doc.pendingSpacingAfter;
+        doc.pendingFontFamily = settings['fontFamily'] as String? ?? doc.pendingFontFamily;
+        doc.pendingFontSize = (settings['fontSize'] as num?)?.toDouble() ?? doc.pendingFontSize;
+        doc.pendingTextAlign = settings['textAlign'] as String? ?? doc.pendingTextAlign;
+        doc.pendingIndent = (settings['indent'] as num?)?.toInt() ?? doc.pendingIndent;
+        doc.pendingColor = settings['color'] as String?;
+        doc.pendingHighlightColor = settings['highlightColor'] as String?;
+        if (settings['styles'] is List) {
+          doc.pendingStyles = (settings['styles'] as List).map((e) => e as String).toList();
+        }
+        doc.documentLanguage = settings['documentLanguage'] as String? ?? doc.documentLanguage;
+        final comments = json['comments'];
+        if (comments is List && doc.commentProvider != null) {
+          doc.commentProvider!.importComments(
+            comments.map((e) => e as Map<String, dynamic>).toList(),
+          );
+        }
+        return doc;
       }
-      doc.documentLanguage = settings['documentLanguage'] as String? ?? doc.documentLanguage;
-      final comments = json['comments'];
-      if (comments is List && doc.commentProvider != null) {
-        doc.commentProvider!.importComments(
-          comments.map((e) => e as Map<String, dynamic>).toList(),
-        );
-      }
-      return doc;
+      final root = Root.fromJson(json);
+      return FluentDocument(content: root, registry: registry);
+    } finally {
+      FNodeJsonConverter.activeRegistry = null;
     }
-    final root = Root.fromJson(json);
-    return FluentDocument(content: root);
   }
 
   /// Loads new content into the document, resetting cursor and selection.

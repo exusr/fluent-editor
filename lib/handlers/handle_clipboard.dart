@@ -133,6 +133,8 @@ void _pasteNodes(List<Map<String, dynamic>> nodesJson, FluentDocument document) 
   FNode lastInserted = curTopLevel;
   Fragment? lastFragment;
 
+  FNodeJsonConverter.activeRegistry = document.registry;
+  try {
   for (int i = 0; i < nodesJson.length; i++) {
     final nodeJson = nodesJson[i];
     FNode newNode;
@@ -184,6 +186,9 @@ void _pasteNodes(List<Map<String, dynamic>> nodesJson, FluentDocument document) 
   document.updateContent();
 
   mergeConsecutiveLists(root);
+  } finally {
+    FNodeJsonConverter.activeRegistry = null;
+  }
 }
 
 /// Merges the fragments of the source node into the destination paragraph at

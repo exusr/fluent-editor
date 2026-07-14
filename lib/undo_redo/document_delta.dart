@@ -1,5 +1,6 @@
 import 'package:fluent_editor/factories.dart';
 import 'package:fluent_editor/fluent_document.dart';
+import 'package:fluent_editor/plugins/plugin_api.dart';
 import 'package:flutter/foundation.dart';
 
 /// Represents a change to the document at the node level.
@@ -116,7 +117,7 @@ class NodeReplaceDelta extends DocumentDelta {
       final json = changeMap[i];
       if (json != null) {
         if (json['type'] != null) {
-          newNodes.add(_deserializeNode(json));
+          newNodes.add(_deserializeNode(json, document.registry));
         }
         // Empty JSON (no 'type') → node doesn't exist in target state
       } else if (i < nodes.length) {
@@ -154,7 +155,7 @@ class NodeInsertDelta extends DocumentDelta {
       debugPrint('[UNDO_WARN] NodeInsertDelta.apply index $index out of bounds');
       return;
     }
-    document.content.nodes.insert(index, _deserializeNode(nodeJson));
+    document.content.nodes.insert(index, _deserializeNode(nodeJson, document.registry));
     document.invalidateNodeIndex();
     newCursor.restore(document);
   }
@@ -204,7 +205,7 @@ class NodeDeleteDelta extends DocumentDelta {
       debugPrint('[UNDO_WARN] NodeDeleteDelta.revert index $index out of bounds');
       return;
     }
-    document.content.nodes.insert(index, _deserializeNode(deletedNodeJson));
+    document.content.nodes.insert(index, _deserializeNode(deletedNodeJson, document.registry));
     document.invalidateNodeIndex();
     oldCursor.restore(document);
   }
@@ -212,11 +213,14 @@ class NodeDeleteDelta extends DocumentDelta {
 
 /// Helper: deserialize a single top-level node from JSON.
 /// Delegates to FNodeJsonConverter to avoid duplicating the type switch.
-FNode _deserializeNode(Map<String, dynamic> json) {
+FNode _deserializeNode(Map<String, dynamic> json, [FluentPluginRegistry? registry]) {
+  FNodeJsonConverter.activeRegistry = registry;
   try {
     return const FNodeJsonConverter().fromJson(json);
   } catch (e) {
     debugPrint('[UNDO_WARN] Failed to deserialize node ($e), returning empty paragraph');
     return Paragraph();
+  } finally {
+    FNodeJsonConverter.activeRegistry = null;
   }
 }

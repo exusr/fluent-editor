@@ -4,6 +4,7 @@ import 'package:fluent_editor/core/constants.dart';
 import 'package:fluent_editor/styles.dart';
 import 'package:nanoid/nanoid.dart';
 import 'package:json_annotation/json_annotation.dart';
+import 'package:fluent_editor/plugins/plugin_api.dart';
 
 part 'factories.g.dart';
 
@@ -16,8 +17,15 @@ abstract class InlineContainerNode {
 class FNodeJsonConverter implements JsonConverter<FNode, Map<String, dynamic>> {
   const FNodeJsonConverter();
 
+  /// When set, fromJson delegates to registry.decodeNode for plugin-aware
+  /// deserialization. Set by FluentDocument.fromJson during loading.
+  static FluentPluginRegistry? activeRegistry;
+
   @override
   FNode fromJson(Map<String, dynamic> json) {
+    if (activeRegistry != null) {
+      return activeRegistry!.decodeNode(json);
+    }
     final type = json['type'] as String?;
     switch (type) {
       case 'paragraph':
@@ -459,7 +467,7 @@ class ListItem extends FNode implements InlineContainerNode {
   }
 
   @override
-  Map<String, dynamic> toJson() => _$ListItemToJson(this);
+  Map<String, dynamic> toJson() => {..._$ListItemToJson(this), 'type': 'listItem'};
 }
 
 @JsonSerializable()
