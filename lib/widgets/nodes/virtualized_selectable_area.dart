@@ -420,8 +420,9 @@ class _VirtualizedSelectableAreaState extends State<VirtualizedSelectableArea> {
         onPointerCancel: _onPointerCancel,
         child: ListView.builder(
           controller: _scrollController,
-          physics: (isResizeActive || _isDragging) 
-              ? const NeverScrollableScrollPhysics() 
+          padding: const EdgeInsets.symmetric(horizontal: 32.0),
+          physics: (isResizeActive || _isDragging)
+              ? const NeverScrollableScrollPhysics()
               : null,
           itemCount: widget.itemCount,
           itemBuilder: (context, index) {

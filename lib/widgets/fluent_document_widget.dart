@@ -1,6 +1,7 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart' show kIsWeb, defaultTargetPlatform, TargetPlatform;
+import 'package:flutter/foundation.dart'
+    show kIsWeb, defaultTargetPlatform, TargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -93,7 +94,10 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
           for (int i = 0; i < text.length; i++) {
             final isSpace = text.codeUnitAt(i) <= 32;
             if (isSpace) {
-              if (inWord) { words++; inWord = false; }
+              if (inWord) {
+                words++;
+                inWord = false;
+              }
             } else {
               inWord = true;
             }
@@ -169,6 +173,13 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
       focusNode: widget.document.editorFocusNode,
       autofocus: true,
       onKeyEvent: (node, event) {
+        final keyboard = HardwareKeyboard.instance;
+        if ((event is KeyDownEvent || event is KeyRepeatEvent) &&
+            _shortcutKeys.contains(event.logicalKey) &&
+            (keyboard.isControlPressed || keyboard.isMetaPressed)) {
+          return KeyEventResult.ignored;
+        }
+
         if (widget.document.imeHandler.isComposing) {
           final isCtrl = HardwareKeyboard.instance.isControlPressed;
           final isMeta = HardwareKeyboard.instance.isMetaPressed;
@@ -179,29 +190,35 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
           return KeyEventResult.ignored;
         }
 
-        final _shouldRouteToIME = kIsWeb || (
-          defaultTargetPlatform == TargetPlatform.macOS ||
-          defaultTargetPlatform == TargetPlatform.windows ||
-          defaultTargetPlatform == TargetPlatform.linux);
-        if (_shouldRouteToIME && widget.document.imeHandler.isConnectionActive) {
+        final _shouldRouteToIME =
+            kIsWeb ||
+            (defaultTargetPlatform == TargetPlatform.macOS ||
+                defaultTargetPlatform == TargetPlatform.windows ||
+                defaultTargetPlatform == TargetPlatform.linux);
+        if (_shouldRouteToIME &&
+            widget.document.imeHandler.isConnectionActive) {
           final _isCtrl = HardwareKeyboard.instance.isControlPressed;
           final _isMeta = HardwareKeyboard.instance.isMetaPressed;
           if (!_isCtrl && !_isMeta) {
             final _ch = event.character;
-            final _isPrintable = _ch != null &&
+            final _isPrintable =
+                _ch != null &&
                 _ch.isNotEmpty &&
                 _ch.runes.every((r) => r >= 32 && r != 127);
             if (_isPrintable) return KeyEventResult.ignored;
           }
         }
 
-        final _isIOSOrAndroid = !kIsWeb && (defaultTargetPlatform == TargetPlatform.iOS || defaultTargetPlatform == TargetPlatform.android);
+        final _isIOSOrAndroid =
+            !kIsWeb &&
+            (defaultTargetPlatform == TargetPlatform.iOS ||
+                defaultTargetPlatform == TargetPlatform.android);
         if (_isIOSOrAndroid &&
             widget.document.imeHandler.shouldUseBufferSync &&
             widget.document.cursor.isCollapsed &&
             !widget.document.imeHandler.isComposing &&
             (event.logicalKey == LogicalKeyboardKey.backspace ||
-             event.logicalKey == LogicalKeyboardKey.delete)) {
+                event.logicalKey == LogicalKeyboardKey.delete)) {
           return KeyEventResult.ignored;
         }
 
@@ -210,7 +227,8 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
       },
       child: Padding(
         padding: const EdgeInsets.all(24.0).copyWith(
-          right: 24.0 + (widget.sidebar == null || _isSidebarCollapsed ? 0 : 280),
+          right:
+              24.0 + (widget.sidebar == null || _isSidebarCollapsed ? 0 : 280),
         ),
         child: Center(
           child: ConstrainedBox(
@@ -228,7 +246,8 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
                 _totalMeasuredHeight += height;
                 _cumulativeHeights = null;
                 if (_itemHeights.isNotEmpty) {
-                  _averageItemHeight = _totalMeasuredHeight / _itemHeights.length;
+                  _averageItemHeight =
+                      _totalMeasuredHeight / _itemHeights.length;
                 }
               },
               itemBuilder: (context, index) {
@@ -251,12 +270,17 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
     final cursor = widget.document.cursor;
     final fragId = cursor.focusId.isNotEmpty ? cursor.focusId : cursor.anchorId;
     if (fragId.isEmpty) return;
-    final offset = cursor.focusId.isNotEmpty ? cursor.focusOffset : cursor.anchorOffset;
+    final offset = cursor.focusId.isNotEmpty
+        ? cursor.focusOffset
+        : cursor.anchorOffset;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
-        final rect = widget.document.paragraphRegistry.resolveCaretScreenRect(fragId, offset);
+        final rect = widget.document.paragraphRegistry.resolveCaretScreenRect(
+          fragId,
+          offset,
+        );
         if (rect != null && (rect.width > 0 || rect.height > 0)) {
           final view = View.of(context);
           final viewH = view.physicalSize.height / view.devicePixelRatio;
@@ -317,13 +341,17 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
         widget.document.cursor.moveTo(firstNode.id, 0);
       }
     }
-    widget.document.saveState(description: 'Initial state', forceNewAction: true);
+    widget.document.saveState(
+      description: 'Initial state',
+      forceNewAction: true,
+    );
     WidgetsBinding.instance.addPostFrameCallback((_) {
       widget.document.imeHandler.showKeyboard(context);
     });
     _initDocumentLanguage();
-    DocumentLanguageController.instance.currentLanguage
-        .addListener(_onLanguageChanged);
+    DocumentLanguageController.instance.currentLanguage.addListener(
+      _onLanguageChanged,
+    );
     _restartBlink();
   }
 
@@ -367,9 +395,7 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
     LogicalKeyboardKey.pageDown,
   };
 
-  static final _shortcutKeys = {
-    LogicalKeyboardKey.keyZ,
-  };
+  static final _shortcutKeys = {LogicalKeyboardKey.keyZ};
 
   bool _onHardwareKeyEvent(KeyEvent event) {
     if (event is! KeyDownEvent && event is! KeyRepeatEvent) return false;
@@ -392,13 +418,16 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
       return false; // Let IME consume everything else (incl. arrows)
     }
 
-    final _isVirtualKeyboard = !kIsWeb && (defaultTargetPlatform == TargetPlatform.iOS || defaultTargetPlatform == TargetPlatform.android);
+    final _isVirtualKeyboard =
+        !kIsWeb &&
+        (defaultTargetPlatform == TargetPlatform.iOS ||
+            defaultTargetPlatform == TargetPlatform.android);
     if (_isVirtualKeyboard &&
         doc.imeHandler.shouldUseBufferSync &&
         doc.cursor.isCollapsed &&
         !doc.imeHandler.isComposing &&
         (key == LogicalKeyboardKey.backspace ||
-         key == LogicalKeyboardKey.delete)) {
+            key == LogicalKeyboardKey.delete)) {
       return false;
     }
 
@@ -451,10 +480,10 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
       final position = _scrollController.position;
       const margin = 80.0;
       final viewportStart = position.pixels;
-      final viewportEnd   = viewportStart + position.viewportDimension;
+      final viewportEnd = viewportStart + position.viewportDimension;
 
       if (nodeStart >= viewportStart + margin &&
-          nodeEnd   <= viewportEnd   - margin) {
+          nodeEnd <= viewportEnd - margin) {
         return;
       }
 
@@ -491,8 +520,9 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
     _blinkTimer?.cancel();
     widget.document.removeListener(_onDocumentChanged);
     widget.document.editorFocusNode.removeListener(_onEditorFocusChanged);
-    DocumentLanguageController.instance.currentLanguage
-        .removeListener(_onLanguageChanged);
+    DocumentLanguageController.instance.currentLanguage.removeListener(
+      _onLanguageChanged,
+    );
     HardwareKeyboard.instance.removeHandler(_onHardwareKeyEvent);
     super.dispose();
   }
@@ -529,9 +559,14 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
                     bottom: 16,
                     right: 16,
                     child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 8,
+                      ),
                       decoration: BoxDecoration(
-                        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.surfaceContainerHighest,
                         borderRadius: BorderRadius.circular(8),
                         border: Border.all(
                           color: Theme.of(context).colorScheme.outline,
@@ -541,7 +576,9 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Text('${widget.labels?.wordCount ?? "Words"}: ${_countWords()}'),
+                          Text(
+                            '${widget.labels?.wordCount ?? "Words"}: ${_countWords()}',
+                          ),
                           const SizedBox(width: 16),
                           Text('Chars: ${_countChars()}'),
                         ],
@@ -552,14 +589,18 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
                   bottom: _showStatsPanel ? 80 : 16,
                   right: 16,
                   child: IconButton(
-                    icon: Icon(_showStatsPanel ? Icons.close : Icons.info_outline),
+                    icon: Icon(
+                      _showStatsPanel ? Icons.close : Icons.info_outline,
+                    ),
                     onPressed: () {
                       setState(() {
                         _showStatsPanel = !_showStatsPanel;
                       });
                     },
                     style: IconButton.styleFrom(
-                      backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
+                      backgroundColor: Theme.of(
+                        context,
+                      ).colorScheme.surfaceContainerHighest,
                     ),
                   ),
                 ),
@@ -570,7 +611,9 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
                     child: Material(
                       elevation: 2,
                       borderRadius: BorderRadius.circular(20),
-                      color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.surfaceContainerHighest,
                       child: IconButton(
                         icon: Icon(
                           _isSidebarCollapsed
@@ -578,8 +621,10 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
                               : Icons.chevron_right,
                         ),
                         tooltip: _isSidebarCollapsed
-                            ? (widget.labels?.showCommentsLabel ?? 'Show comments')
-                            : (widget.labels?.hideCommentsLabel ?? 'Hide comments'),
+                            ? (widget.labels?.showCommentsLabel ??
+                                  'Show comments')
+                            : (widget.labels?.hideCommentsLabel ??
+                                  'Hide comments'),
                         onPressed: () {
                           setState(() {
                             _isSidebarCollapsed = !_isSidebarCollapsed;
@@ -596,6 +641,13 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
     );
   }
 
-  int _countWords() { _computeStats(); return _cachedWordCount; }
-  int _countChars() { _computeStats(); return _cachedCharCount; }
+  int _countWords() {
+    _computeStats();
+    return _cachedWordCount;
+  }
+
+  int _countChars() {
+    _computeStats();
+    return _cachedCharCount;
+  }
 }

@@ -134,29 +134,6 @@ class UndoRedoManager {
         final oldJson = oldNodes[i];
         final newNode = newNodes[i];
 
-        if (newNode is Paragraph) {
-          final oldText = oldJson['text'] as String? ?? '';
-          if (newNode.text.length != oldText.length || newNode.text != oldText) {
-            changes.add(NodeChange(
-              index: i,
-              oldJson: oldJson,
-              newJson: newNode.toJson(),
-            ));
-            continue;
-          }
-          if (oldJson['textAlign'] != newNode.textAlign ||
-              oldJson['indent'] != newNode.indent ||
-              oldJson['styleName'] != newNode.styleName) {
-            changes.add(NodeChange(
-              index: i,
-              oldJson: oldJson,
-              newJson: newNode.toJson(),
-            ));
-            continue;
-          }
-          continue;
-        }
-
         final newJson = newNode.toJson();
         if (!_mapsEqual(oldJson, newJson)) {
           changes.add(NodeChange(

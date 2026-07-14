@@ -130,15 +130,20 @@ void _insertImage(
   FluentImage newImage,
   FluentDocument document,
 ) {
-  final container = document.findLogicalContainerCached(cursor.anchorId) as FNode?;
+  final container =
+      document.findLogicalContainerCached(cursor.anchorId) as FNode?;
   if (container is Paragraph) {
     final containerParent = findParentCached(document, container);
     if (containerParent is Root) {
       final atEnd = _isCursorAtEndOfContainer(
-        root, cursor, container,
-        cachedStops: document.caretStops, document: document,
+        root,
+        cursor,
+        container,
+        cachedStops: document.caretStops,
+        document: document,
       );
-      final atStart = cursor.anchorOffset == 0 &&
+      final atStart =
+          cursor.anchorOffset == 0 &&
           container.getChildren().isNotEmpty &&
           container.getChildren().first.id == cursor.anchorId;
       if (atStart) {
@@ -175,10 +180,8 @@ void _insertImage(
       ..fontFamily = currentFrag.fontFamily
       ..fontSize = currentFrag.fontSize;
     insertAfter(parent, newImage, afterFrag);
-    cursor.moveTo(afterFrag.id, 0);
-  } else {
-    cursor.moveTo(currentFrag.id, beforeText.length);
   }
+  cursor.moveTo(newImage.id, 1);
 
   recalculateAndUpdate(document);
 }
@@ -195,14 +198,16 @@ void _insertBlockNode(
   FluentDocument document,
 ) {
   if (newNode is FluentTable) {
-    final container = document.findLogicalContainerCached(cursor.anchorId) as FNode?;
+    final container =
+        document.findLogicalContainerCached(cursor.anchorId) as FNode?;
     if (container != null) {
       final listItem = findAncestorCached<ListItem>(document, container);
       if (listItem != null) return;
     }
   }
 
-  FNode? container = document.findLogicalContainerCached(cursor.anchorId) as FNode?;
+  FNode? container =
+      document.findLogicalContainerCached(cursor.anchorId) as FNode?;
   if (container == null) {
     appendChild(root, newNode);
     _moveCursorToNodeStart(cursor, newNode);
@@ -246,10 +251,14 @@ void _insertBlockNode(
   final containerParent = findParentCached(document, container);
   if (container is Paragraph && containerParent is Root) {
     final atEnd = _isCursorAtEndOfContainer(
-      root, cursor, container,
-      cachedStops: document.caretStops, document: document,
+      root,
+      cursor,
+      container,
+      cachedStops: document.caretStops,
+      document: document,
     );
-    final atStart = cursor.anchorOffset == 0 &&
+    final atStart =
+        cursor.anchorOffset == 0 &&
         container.getChildren().isNotEmpty &&
         container.getChildren().first.id == cursor.anchorId;
     if (atEnd) {
@@ -298,7 +307,8 @@ bool _isCursorAtEndOfContainer(
   final stops = cachedStops ?? buildAllStops(root);
   final containerId = (container as FNode).id;
   final containerStops = stops.where((s) {
-    final c = document?.findLogicalContainerId(s.fragmentId) ??
+    final c =
+        document?.findLogicalContainerId(s.fragmentId) ??
         (findLogicalContainer(root, s.fragmentId) as FNode?)?.id;
     return c != null && c == containerId;
   }).toList();
@@ -330,7 +340,9 @@ void _splitParagraphAtCursor(
 
   final children = paragraph.getChildren();
   final fragIdx = children.indexWhere((c) => c.id == frag.id);
-  final toMove = fragIdx >= 0 ? children.sublist(fragIdx + 1).toList() : <FNode>[];
+  final toMove = fragIdx >= 0
+      ? children.sublist(fragIdx + 1).toList()
+      : <FNode>[];
 
   final afterParagraph = Paragraph();
   final firstAfterFrag = Fragment(afterText.isNotEmpty ? afterText : '')

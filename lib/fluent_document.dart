@@ -541,6 +541,7 @@ class FluentDocument extends ChangeNotifier {
   /// If [affectedIds] is provided, only widgets for those node IDs will
   /// rebuild. If null, all widgets rebuild (backward-compatible).
   void notifyDocumentChanged({Set<String>? affectedIds}) {
+    _contentVersion++;
     _dirtyNodeIds = affectedIds ?? {};
     notifyListeners();
     WidgetsBinding.instance.addPostFrameCallback((_) {

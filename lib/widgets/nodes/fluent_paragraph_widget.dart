@@ -739,6 +739,8 @@ class _InlineImageWidgetState extends State<InlineImageWidget> {
   double? _originalAspectRatio;
   bool _aspectRatioConstrained = true;
   static const double _aspectRatioThreshold = 0.1; // 10% deviation threshold
+  String? _cachedImageSrc;
+  ImageProvider? _cachedImageProvider;
 
   void _onTapDown(TapDownDetails details) {
     if (_isDragging) return;
@@ -853,21 +855,27 @@ class _InlineImageWidgetState extends State<InlineImageWidget> {
   }
 
   Widget _buildImage(String src) {
-    if (src.startsWith('data:')) {
-      final commaIndex = src.indexOf(',');
-      if (commaIndex != -1) {
-        try {
-          final bytes = base64Decode(src.substring(commaIndex + 1));
-          return Image.memory(bytes, fit: BoxFit.cover, gaplessPlayback: true);
-        } catch (e) {
-          return const SizedBox.shrink();
+    if (_cachedImageSrc != src) {
+      _cachedImageSrc = src;
+      _cachedImageProvider = null;
+      if (src.startsWith('data:')) {
+        final commaIndex = src.indexOf(',');
+        if (commaIndex != -1) {
+          try {
+            _cachedImageProvider = MemoryImage(
+              base64Decode(src.substring(commaIndex + 1)),
+            );
+          } catch (_) {}
         }
+      } else if (src.startsWith('http://') || src.startsWith('https://')) {
+        _cachedImageProvider = NetworkImage(src);
+      } else {
+        _cachedImageProvider = AssetImage(src);
       }
     }
-    if (src.startsWith('http://') || src.startsWith('https://')) {
-      return Image.network(src, fit: BoxFit.cover, gaplessPlayback: true);
-    }
-    return Image.asset(src, fit: BoxFit.cover, gaplessPlayback: true);
+    final provider = _cachedImageProvider;
+    if (provider == null) return const SizedBox.shrink();
+    return Image(image: provider, fit: BoxFit.cover, gaplessPlayback: true);
   }
 
   List<Widget> _buildResizeHandles(double imgWidth, double imgHeight) {
@@ -894,6 +902,7 @@ class _InlineImageWidgetState extends State<InlineImageWidget> {
         onPanStart: (details) {
           final box = context.findRenderObject() as RenderBox?;
           if (box != null) {
+            widget.document.saveState(description: 'Resize image', forceNewAction: true);
             setState(() {
               _isDragging = true;
               _activeHandle = handle;
@@ -995,6 +1004,7 @@ class _InlineImageWidgetState extends State<InlineImageWidget> {
             _activeHandle = null;
             _dragStartPosition = null;
           });
+          widget.document.isResizingImage = false;
           widget.document.updateContent();
         },
         child: MouseRegion(

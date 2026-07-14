@@ -213,7 +213,11 @@ class _FluentImageWidgetState
 
     final showHandles = _isResizeMode;
 
-    return Container(
+    return Padding(
+      padding: EdgeInsets.symmetric(
+        vertical: widget.document.pendingSpacingAfter,
+      ),
+      child: Container(
       alignment: _parseAlignment(image.textAlign),
       child: MouseRegion(
         onEnter: (_) => _onHoverUpdate(true, Offset.zero),
@@ -286,6 +290,7 @@ class _FluentImageWidgetState
           ),
         ),
       ),
+    ),
     );
   }
 
@@ -377,6 +382,7 @@ class _FluentImageWidgetState
       height: _handleSize,
       child: GestureDetector(
         onPanStart: (details) {
+          widget.document.saveState(description: 'Resize image', forceNewAction: true);
           setState(() {
             _isDragging = true;
             _activeHandle = handle;
@@ -539,6 +545,7 @@ class _FluentImageWidgetState
           onPressed: () async {
             final result = await showImageInsertDialog(context, labels: widget.document.labels);
             if (result != null) {
+              widget.document.saveState(description: 'Replace image', forceNewAction: true);
               widget.node.src = result['src']!;
               widget.document.updateContent();
             }
