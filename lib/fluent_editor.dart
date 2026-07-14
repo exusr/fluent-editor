@@ -10,7 +10,8 @@ class FluentEditor extends StatefulWidget {
   final FluentEditorLabels? labels;
   final Widget? sidebar;
   final List<FluentEditorPlugin> plugins;
-  const FluentEditor({super.key, this.document, this.labels, this.sidebar, this.plugins = const []});
+  final FluentToolbarMode toolbarMode;
+  const FluentEditor({super.key, this.document, this.labels, this.sidebar, this.plugins = const [], this.toolbarMode = FluentToolbarMode.fixed});
   @override
   State<FluentEditor> createState() => _FluentEditorState();
 }
@@ -48,7 +49,7 @@ class _FluentEditorState extends State<FluentEditor> {
       body: Column(
         children: [
           Expanded(
-            child: FluentDocumentWidget(document: _document, labels: widget.labels, sidebar: widget.sidebar),
+            child: FluentDocumentWidget(document: _document, labels: widget.labels, sidebar: widget.sidebar, toolbarMode: widget.toolbarMode),
           ),
         ],
       ),

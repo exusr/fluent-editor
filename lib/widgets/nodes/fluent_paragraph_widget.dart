@@ -359,6 +359,7 @@ class FluentParagraphWidgetState<T extends FluentParagraphWidget> extends State<
     ({String startFrag, int startOff, String endFrag, int endOff})? savedSelection,
   }) async {
     final items = <FluentContextMenuItem>[];
+    final labels = widget.document.labels;
 
     final commentProvider = _comment;
     final renderObject = _renderWidgetKey.currentContext?.findRenderObject();
@@ -385,7 +386,6 @@ class FluentParagraphWidgetState<T extends FluentParagraphWidget> extends State<
         final start = startGlobal < endGlobal ? startGlobal : endGlobal;
         final end = startGlobal < endGlobal ? endGlobal : startGlobal;
         if (end > start) {
-          final labels = widget.document.labels;
           items.add(FluentContextMenuItem(
             icon: Icons.add_comment_outlined,
             label: labels?.addCommentLabel ?? 'Add comment',
@@ -394,6 +394,40 @@ class FluentParagraphWidgetState<T extends FluentParagraphWidget> extends State<
         }
       }
     }
+
+    // Always add Insert menu items to the context menu.
+    items.add(FluentContextMenuItem(
+      icon: Icons.link,
+      label: labels?.link ?? 'Link',
+      onPressed: () {
+        widget.document.requestEditorFocus();
+        widget.document.dialogPresenter.handleInsertLink(context);
+      },
+    ));
+    items.add(FluentContextMenuItem(
+      icon: Icons.image,
+      label: labels?.image ?? 'Image',
+      onPressed: () {
+        widget.document.requestEditorFocus();
+        widget.document.dialogPresenter.handleInsertImage(context);
+      },
+    ));
+    items.add(FluentContextMenuItem(
+      icon: Icons.table_chart,
+      label: labels?.table ?? 'Table',
+      onPressed: () {
+        widget.document.requestEditorFocus();
+        widget.document.eventHandler.handleInsertNode('table');
+      },
+    ));
+    items.add(FluentContextMenuItem(
+      icon: Icons.horizontal_rule,
+      label: labels?.horizontalLine ?? 'Horizontal line',
+      onPressed: () {
+        widget.document.requestEditorFocus();
+        widget.document.eventHandler.handleInsertNode('hr');
+      },
+    ));
 
     if (items.isNotEmpty && mounted) {
       showFluentContextMenu(context: context, globalPosition: globalPosition, items: items);

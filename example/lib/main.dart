@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:fluent_editor/fluent_editor.dart';
 import 'package:fluent_editor/fluent_document.dart';
+import 'package:fluent_editor/widgets/fluent_document_widget.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -144,6 +145,7 @@ class MyHomePage extends StatefulWidget {
 
 class _MyHomePageState extends State<MyHomePage> {
   FluentDocument? _document;
+  FluentToolbarMode _toolbarMode = FluentToolbarMode.fixed;
 
   @override
   void initState() {
@@ -180,6 +182,23 @@ class _MyHomePageState extends State<MyHomePage> {
         actions: [
           IconButton(
             icon: Icon(
+              _toolbarMode == FluentToolbarMode.bubble
+                  ? Icons.view_headline
+                  : Icons.bubble_chart,
+            ),
+            tooltip: _toolbarMode == FluentToolbarMode.bubble
+                ? 'Switch to fixed toolbar'
+                : 'Switch to bubble toolbar',
+            onPressed: () {
+              setState(() {
+                _toolbarMode = _toolbarMode == FluentToolbarMode.fixed
+                    ? FluentToolbarMode.bubble
+                    : FluentToolbarMode.fixed;
+              });
+            },
+          ),
+          IconButton(
+            icon: Icon(
               Theme.of(context).brightness == Brightness.dark
                   ? Icons.light_mode
                   : Icons.dark_mode,
@@ -191,6 +210,7 @@ class _MyHomePageState extends State<MyHomePage> {
       body: SafeArea(
         child: FluentEditor(
           document: _document,
+          toolbarMode: _toolbarMode,
         ),
       ),
     );

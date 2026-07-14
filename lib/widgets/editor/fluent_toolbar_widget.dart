@@ -17,13 +17,8 @@ import 'package:fluent_editor/localization/fluent_editor_labels.dart';
 import 'package:fluent_editor/utils/fragment_operations.dart';
 import 'package:fluent_editor/utils/handler_helpers.dart';
 import 'package:fluent_editor/utils/cursor_utils.dart';
-import 'package:fluent_editor/utils/color_utils.dart';
 import 'package:fluent_editor/widgets/dialogs/author_info_dialog.dart';
-import 'package:fluent_editor/widgets/editor/fluent_font_selector_widget.dart';
-import 'package:fluent_editor/widgets/editor/fluent_font_size_selector_widget.dart';
-import 'package:fluent_editor/widgets/editor/fluent_paragraph_style_selector.dart';
-import 'package:fluent_editor/widgets/editor/fluent_paragraph_spacing_button.dart';
-import 'package:fluent_editor/widgets/editor/fluent_color_button.dart';
+import 'package:fluent_editor/widgets/editor/fluent_formatting_bar.dart';
 import 'package:fluent_editor/controllers/document_language_controller.dart';
 import 'package:fluent_editor/models/document_language.dart';
 import 'package:fluent_editor/widgets/toolbar/language_selector_widget.dart';
@@ -200,22 +195,6 @@ class _FluentToolbarState extends State<FluentToolbar> {
   }
 
   bool _hasClipboardContent() => widget.document.clipboardPayload != null;
-
-  Widget _buildAlignButton(IconData icon, TextAlign align, String tooltip) {
-    final isActive = _textAlign == align;
-    return _buildToolbarButton(
-      icon: icon,
-      tooltip: tooltip,
-      iconColor: isActive ? Theme.of(context).colorScheme.primary : null,
-      backgroundColor: isActive
-          ? Theme.of(context).colorScheme.primaryContainer.withAlpha(180)
-          : null,
-      onPressed: () {
-        widget.document.eventHandler.handleTextAlign(serializeTextAlign(align));
-        widget.document.requestEditorFocus();
-      },
-    );
-  }
 
   /// Picks a file using the platform-appropriate dialog.
   /// Returns content as text and/or bytes depending on [binary].
@@ -943,183 +922,9 @@ class _FluentToolbarState extends State<FluentToolbar> {
               ],
             ),
           ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-            child: Wrap(
-              spacing: 4,
-              runSpacing: 4,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              children: [
-                FluentParagraphStyleSelector(document: widget.document),
-                const SizedBox(width: 4),
-                FluentFontSelectorWidget(document: widget.document),
-                const SizedBox(width: 4),
-                FluentFontSizeSelectorWidget(document: widget.document),
-                _buildVerticalDivider(),
-                _buildFormatButton(
-                  icon: Icons.format_bold,
-                  tooltip: "Bold (Ctrl+B)",
-                  isActive: _isBold,
-                  handler: widget.document.eventHandler.handleBold,
-                ),
-                _buildFormatButton(
-                  icon: Icons.format_italic,
-                  tooltip: "Italic (Ctrl+I)",
-                  isActive: _isItalic,
-                  handler: widget.document.eventHandler.handleItalic,
-                ),
-                _buildFormatButton(
-                  icon: Icons.format_underline,
-                  tooltip: "Underline (Ctrl+U)",
-                  isActive: _isUnderline,
-                  handler: widget.document.eventHandler.handleUnderline,
-                ),
-                FluentColorButton(
-                  document: widget.document,
-                  labels: widget.labels,
-                  title: widget.labels?.textColor ?? 'Text color',
-                  noneLabel: 'Auto',
-                  presets: presetColors,
-                  saveStateDescription: 'Text color',
-                  defaultCustomColor: Colors.black,
-                  customDialogTitle: 'Custom color',
-                  icon: Icons.format_color_text,
-                  resolveColor: (doc) => doc.pendingColor,
-                  handleColor: (c) => widget.document.eventHandler.handleTextColor(c),
-                ),
-                FluentColorButton(
-                  document: widget.document,
-                  labels: widget.labels,
-                  title: widget.labels?.highlightColor ?? 'Highlight',
-                  noneLabel: 'None',
-                  presets: presetHighlightColors,
-                  saveStateDescription: 'Highlight color',
-                  defaultCustomColor: const Color(0xFFFFFF00),
-                  customDialogTitle: 'Custom highlight color',
-                  icon: Icons.border_color,
-                  resolveColor: (doc) => doc.pendingHighlightColor,
-                  handleColor: (c) => widget.document.eventHandler.handleHighlightColor(c),
-                ),
-                _buildVerticalDivider(),
-                _buildToolbarButton(
-                  icon: Icons.link,
-                  tooltip: "Insert Link",
-                  onPressed: () {
-                    widget.document.dialogPresenter.handleInsertLink(context);
-                    widget.document.requestEditorFocus();
-                  },
-                ),
-                _buildToolbarButton(
-                  icon: Icons.format_list_bulleted,
-                  tooltip: "Insert Bullet List",
-                  onPressed: () {
-                    widget.document.eventHandler.handleInsertNode('list', {'listType': 'bullet'});
-                    widget.document.requestEditorFocus();
-                  },
-                ),
-                _buildToolbarButton(
-                  icon: Icons.format_list_numbered,
-                  tooltip: "Insert Numbered List",
-                  onPressed: () {
-                    widget.document.eventHandler.handleInsertNode('list', {'listType': 'ordered'});
-                    widget.document.requestEditorFocus();
-                  },
-                ),
-                _buildToolbarButton(
-                  icon: Icons.format_clear,
-                  tooltip: "Clear formatting",
-                  onPressed: () {
-                    widget.document.eventHandler.handleClearFormatting();
-                    widget.document.requestEditorFocus();
-                  },
-                ),
-                _buildVerticalDivider(),
-                _buildAlignButton(Icons.format_align_left, TextAlign.left, 'Align left'),
-                _buildAlignButton(Icons.format_align_center, TextAlign.center, 'Align center'),
-                _buildAlignButton(Icons.format_align_right, TextAlign.right, 'Align right'),
-                _buildAlignButton(Icons.format_align_justify, TextAlign.justify, 'Justify'),
-                _buildVerticalDivider(),
-                _buildToolbarButton(
-                  icon: Icons.format_indent_increase,
-                  tooltip: "Indent (Tab)",
-                  onPressed: () {
-                    widget.document.eventHandler.handleTab();
-                    widget.document.requestEditorFocus();
-                  },
-                ),
-                _buildToolbarButton(
-                  icon: Icons.format_indent_decrease,
-                  tooltip: "Outdent (Shift+Tab)",
-                  onPressed: () {
-                    widget.document.eventHandler.handleShiftTab();
-                    widget.document.requestEditorFocus();
-                  },
-                ),
-                _buildVerticalDivider(),
-                FluentParagraphSpacingButton(document: widget.document, labels: widget.labels),
-              ],
-            ),
-          ),
+          FluentFormattingBar(document: widget.document, labels: widget.labels),
         ],
       ),
-    );
-  }
-
-  Widget _buildVerticalDivider() {
-    return Container(
-      height: 24,
-      width: 1,
-      margin: const EdgeInsets.symmetric(horizontal: 8),
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.outlineVariant,
-      ),
-    );
-  }
-
-  Widget _buildToolbarButton({
-    required IconData icon,
-    required String tooltip,
-    VoidCallback? onPressed,
-    Color? iconColor,
-    Color? backgroundColor,
-  }) {
-    return Tooltip(
-      message: tooltip,
-      child: Material(
-        color: backgroundColor,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
-        child: InkWell(
-          onTap: onPressed,
-          borderRadius: BorderRadius.circular(4),
-          mouseCursor: onPressed != null
-              ? SystemMouseCursors.click
-              : SystemMouseCursors.forbidden,
-          child: Padding(
-            padding: const EdgeInsets.all(8),
-            child: Icon(icon, color: iconColor, size: 20),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildFormatButton({
-    required IconData icon,
-    required String tooltip,
-    required bool isActive,
-    required VoidCallback handler,
-  }) {
-    return _buildToolbarButton(
-      icon: icon,
-      tooltip: tooltip,
-      iconColor: isActive ? Theme.of(context).colorScheme.primary : null,
-      backgroundColor: isActive
-          ? Theme.of(context).colorScheme.primaryContainer.withAlpha(180)
-          : null,
-      onPressed: () {
-        handler();
-        widget.document.requestEditorFocus();
-      },
     );
   }
 

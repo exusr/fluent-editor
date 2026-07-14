@@ -12,8 +12,12 @@ import 'package:fluent_editor/localization/fluent_editor_labels.dart';
 import 'package:fluent_editor/widgets/node_widget_builder.dart';
 import 'package:fluent_editor/utils/node_operations.dart';
 import 'package:fluent_editor/widgets/editor/fluent_toolbar_widget.dart';
+import 'package:fluent_editor/widgets/editor/fluent_bubble_toolbar.dart';
 import 'package:fluent_editor/widgets/nodes/virtualized_selectable_area.dart';
 import 'package:fluent_editor/plugins/plugin_api.dart';
+
+/// Toolbar display mode.
+enum FluentToolbarMode { fixed, bubble }
 
 class FluentDocumentWidget extends StatefulWidget {
   const FluentDocumentWidget({
@@ -22,12 +26,14 @@ class FluentDocumentWidget extends StatefulWidget {
     this.maxWidth = 800.0,
     this.labels,
     this.sidebar,
+    this.toolbarMode = FluentToolbarMode.fixed,
   });
 
   final FluentDocument document;
   final double maxWidth;
   final FluentEditorLabels? labels;
   final Widget? sidebar;
+  final FluentToolbarMode toolbarMode;
 
   @override
   State<FluentDocumentWidget> createState() => _FluentDocumentWidgetState();
@@ -543,10 +549,13 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
       color: Theme.of(context).colorScheme.surface,
       child: Column(
         children: [
-          FluentToolbar(document: widget.document, labels: widget.labels),
-          ..._buildPluginUiContributions(FluentPluginUiLocation.toolbar),
+          if (widget.toolbarMode == FluentToolbarMode.fixed) ...[
+            FluentToolbar(document: widget.document, labels: widget.labels),
+            ..._buildPluginUiContributions(FluentPluginUiLocation.toolbar),
+          ],
           Expanded(
             child: Stack(
+              key: _contentStackKey,
               children: [
                 Stack(
                   children: [
@@ -643,6 +652,13 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
                         },
                       ),
                     ),
+                  ),
+                if (widget.toolbarMode == FluentToolbarMode.bubble)
+                  FluentBubbleToolbar(
+                    document: widget.document,
+                    labels: widget.labels,
+                    stackKey: _contentStackKey,
+                    scrollController: _scrollController,
                   ),
               ],
             ),
