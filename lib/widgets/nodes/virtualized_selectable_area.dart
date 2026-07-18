@@ -34,6 +34,7 @@ class VirtualizedSelectableArea extends StatefulWidget {
 class _VirtualizedSelectableAreaState extends State<VirtualizedSelectableArea> {
   bool _isSelecting = false;
   Offset? _pointerDownPosition;
+  int _pointerDownButtons = 0;
   final ScrollController _internalScrollController = ScrollController();
 
   ScrollController get _scrollController =>
@@ -84,6 +85,7 @@ class _VirtualizedSelectableAreaState extends State<VirtualizedSelectableArea> {
     }
 
     _pointerDownPosition = event.position;
+    _pointerDownButtons = event.buttons;
     _isDragging = false;
     _isSelecting = false;
     _isScrolling = false;
@@ -156,7 +158,7 @@ class _VirtualizedSelectableAreaState extends State<VirtualizedSelectableArea> {
     _tapTimer?.cancel();
     _longPressTimer?.cancel();
 
-    if (!_isDragging && !_isScrolling) {
+    if (!_isDragging && !_isScrolling && _pointerDownButtons != kSecondaryMouseButton) {
       _handleTapAt(event.position);
     }
 
@@ -167,6 +169,7 @@ class _VirtualizedSelectableAreaState extends State<VirtualizedSelectableArea> {
     _isScrolling = false;
     _isSelecting = false;
     _pointerDownPosition = null;
+    _pointerDownButtons = 0;
     _selectionUpdateTimer?.cancel();
     _lastSelectionResult = null;
     _lastSelectionPosition = null;

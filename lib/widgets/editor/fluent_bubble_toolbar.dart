@@ -16,12 +16,16 @@ class FluentBubbleToolbar extends StatefulWidget {
     required this.stackKey,
     this.labels,
     this.scrollController,
+    this.bubbleActions = const [],
   });
 
   final FluentDocument document;
   final GlobalKey stackKey;
   final FluentEditorLabels? labels;
   final ScrollController? scrollController;
+
+  /// Extra widgets appended to the bubble toolbar.
+  final List<Widget> bubbleActions;
 
   @override
   State<FluentBubbleToolbar> createState() => _FluentBubbleToolbarState();
@@ -168,6 +172,7 @@ class _FluentBubbleToolbarState extends State<FluentBubbleToolbar> {
               document: widget.document,
               labels: widget.labels,
               compact: true,
+              compactActions: widget.bubbleActions,
             ),
           ),
         ),

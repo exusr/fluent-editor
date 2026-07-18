@@ -213,7 +213,6 @@ class FluentParagraphWidgetState<T extends FluentParagraphWidget> extends State<
         child: GestureDetector(
           onTapDown: (details) {
             if (_isSecondaryTap) {
-              _isSecondaryTap = false;
               return; // Do not move cursor / collapse selection on right-click
             }
 
@@ -265,6 +264,10 @@ class FluentParagraphWidgetState<T extends FluentParagraphWidget> extends State<
             }
           },
           onTap: () {
+            if (_isSecondaryTap) {
+              _isSecondaryTap = false;
+              return; // Right-click: preserve selection, do not request focus
+            }
             widget.document.requestEditorFocus();
             widget.document.requestMobileKeyboardFocus(context);
             if (_savedSelection != null && _lastTapPosition != null && mounted) {
@@ -340,6 +343,10 @@ class FluentParagraphWidgetState<T extends FluentParagraphWidget> extends State<
 
     final fragment = widget.document.nodeById(fragmentResult.fragmentId);
     if (fragment == null) return;
+
+    // Release IME before showing context menu so dialogs opened from
+    // menu items get exclusive keyboard focus.
+    widget.document.editorFocusNode.unfocus();
 
     final parentId = widget.document.findParentCached(fragment.id);
     if (parentId != null) {
@@ -430,7 +437,10 @@ class FluentParagraphWidgetState<T extends FluentParagraphWidget> extends State<
     ));
 
     if (items.isNotEmpty && mounted) {
-      showFluentContextMenu(context: context, globalPosition: globalPosition, items: items);
+      showFluentContextMenu(context: context, globalPosition: globalPosition, items: items)
+          .then((_) {
+        if (mounted) widget.document.requestEditorFocus();
+      });
     }
   }
 

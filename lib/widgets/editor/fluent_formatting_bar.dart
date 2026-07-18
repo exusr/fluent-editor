@@ -24,6 +24,7 @@ class FluentFormattingBar extends StatefulWidget {
     required this.document,
     this.labels,
     this.compact = false,
+    this.compactActions = const [],
   });
 
   final FluentDocument document;
@@ -32,6 +33,10 @@ class FluentFormattingBar extends StatefulWidget {
   /// When true, renders buttons in a single horizontal [Row] (no wrapping).
   /// Intended for the bubble toolbar where vertical space is limited.
   final bool compact;
+
+  /// Extra widgets appended to the end of the compact bar.
+  /// Intended for plugin-injected actions like "Add comment".
+  final List<Widget> compactActions;
 
   @override
   State<FluentFormattingBar> createState() => _FluentFormattingBarState();
@@ -416,6 +421,10 @@ class _FluentFormattingBarState extends State<FluentFormattingBar> {
       _buildVerticalDivider(),
       FluentParagraphSpacingButton(
           document: widget.document, labels: widget.labels),
+      if (widget.compactActions.isNotEmpty) ...[
+        _buildVerticalDivider(),
+        ...widget.compactActions,
+      ],
     ];
   }
 

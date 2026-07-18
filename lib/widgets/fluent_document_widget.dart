@@ -27,6 +27,7 @@ class FluentDocumentWidget extends StatefulWidget {
     this.labels,
     this.sidebar,
     this.toolbarMode = FluentToolbarMode.fixed,
+    this.bubbleActions = const [],
   });
 
   final FluentDocument document;
@@ -34,6 +35,9 @@ class FluentDocumentWidget extends StatefulWidget {
   final FluentEditorLabels? labels;
   final Widget? sidebar;
   final FluentToolbarMode toolbarMode;
+
+  /// Extra widgets appended to the bubble toolbar when in bubble mode.
+  final List<Widget> bubbleActions;
 
   @override
   State<FluentDocumentWidget> createState() => _FluentDocumentWidgetState();
@@ -413,7 +417,11 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
     final isMeta = keyboard.isMetaPressed;
     final key = event.logicalKey;
 
-    if (doc.editorFocusNode.hasFocus && !_shortcutKeys.contains(key)) {
+    // When the editor doesn't have focus (e.g. a dialog is open), let all
+    // key events pass through to the framework so other widgets get input.
+    if (!doc.editorFocusNode.hasFocus) return false;
+
+    if (!_shortcutKeys.contains(key)) {
       return false;
     }
 
@@ -628,28 +636,26 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
                   Positioned(
                     top: 8,
                     right: 8,
-                    child: Material(
-                      elevation: 2,
-                      borderRadius: BorderRadius.circular(20),
-                      color: Theme.of(
-                        context,
-                      ).colorScheme.surfaceContainerHighest,
-                      child: IconButton(
-                        icon: Icon(
-                          _isSidebarCollapsed
-                              ? Icons.chevron_left
-                              : Icons.chevron_right,
-                        ),
-                        tooltip: _isSidebarCollapsed
-                            ? (widget.labels?.showCommentsLabel ??
-                                  'Show comments')
-                            : (widget.labels?.hideCommentsLabel ??
-                                  'Hide comments'),
-                        onPressed: () {
-                          setState(() {
-                            _isSidebarCollapsed = !_isSidebarCollapsed;
-                          });
-                        },
+                    child: IconButton(
+                      icon: Icon(
+                        _isSidebarCollapsed
+                            ? Icons.chevron_left
+                            : Icons.chevron_right,
+                      ),
+                      tooltip: _isSidebarCollapsed
+                          ? (widget.labels?.showCommentsLabel ??
+                                'Show comments')
+                          : (widget.labels?.hideCommentsLabel ??
+                                'Hide comments'),
+                      onPressed: () {
+                        setState(() {
+                          _isSidebarCollapsed = !_isSidebarCollapsed;
+                        });
+                      },
+                      style: IconButton.styleFrom(
+                        backgroundColor: Theme.of(
+                          context,
+                        ).colorScheme.surfaceContainerHighest,
                       ),
                     ),
                   ),
@@ -659,6 +665,7 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
                     labels: widget.labels,
                     stackKey: _contentStackKey,
                     scrollController: _scrollController,
+                    bubbleActions: widget.bubbleActions,
                   ),
               ],
             ),

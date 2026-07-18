@@ -280,6 +280,13 @@ packages:
       relative: true
     source: path
     version: "1.0.7"
+  fluent_editor_comments:
+    dependency: "direct main"
+    description:
+      path: "../../fluent_editor_comments"
+      relative: true
+    source: path
+    version: "1.0.0"
   flutter:
     dependency: "direct main"
     description: flutter
