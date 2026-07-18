@@ -39,7 +39,7 @@ dependencies:
     path: ../
 
   fluent_editor_comments:
-    path: ../../fluent_editor_comments
+    path: ../../fluent-editor-comments
 
 dev_dependencies:
   flutter_test:

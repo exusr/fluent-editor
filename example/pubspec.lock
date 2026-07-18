@@ -283,7 +283,7 @@ packages:
   fluent_editor_comments:
     dependency: "direct main"
     description:
-      path: "../../fluent_editor_comments"
+      path: "../../fluent-editor-comments"
       relative: true
     source: path
     version: "1.0.0"

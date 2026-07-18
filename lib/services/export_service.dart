@@ -13,8 +13,7 @@ import 'package:fluent_editor/localization/fluent_editor_labels.dart';
 import 'package:flutter/services.dart';
 
 import 'export_service_web_stub.dart'
-    if (dart.library.html) 'export_service_web_html.dart'
-    ;
+    if (dart.library.html) 'export_service_web_html.dart';
 
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
@@ -38,7 +37,11 @@ class _TextSeg {
   _TextSeg(this.text, this.comment);
 }
 
-List<_TextSeg> _extractSegments(String text, int baseOffset, List<_CommentSeg> segs) {
+List<_TextSeg> _extractSegments(
+  String text,
+  int baseOffset,
+  List<_CommentSeg> segs,
+) {
   final result = <_TextSeg>[];
   int pos = 0;
   final textLen = text.length;
@@ -50,7 +53,9 @@ List<_TextSeg> _extractSegments(String text, int baseOffset, List<_CommentSeg> s
       result.add(_TextSeg(text.substring(pos, segStartLocal), null));
     }
     if (segStartLocal < segEndLocal) {
-      result.add(_TextSeg(text.substring(segStartLocal, segEndLocal), seg.comment));
+      result.add(
+        _TextSeg(text.substring(segStartLocal, segEndLocal), seg.comment),
+      );
     }
     pos = segEndLocal;
     if (pos >= textLen) break;
@@ -80,7 +85,11 @@ class _CommentAnnotWidget extends pw.Widget {
   final Map<dynamic, List<double>> usedYs;
 
   @override
-  void layout(pw.Context context, pw.BoxConstraints constraints, {bool parentUsesSize = false}) {
+  void layout(
+    pw.Context context,
+    pw.BoxConstraints constraints, {
+    bool parentUsesSize = false,
+  }) {
     box = PdfRect(0, 0, 0, 0);
   }
 
@@ -226,10 +235,7 @@ class ExportService {
   Future<Uint8List> exportToPdf() async {
     final fontFamilies = _collectFontFamilies(document.content.nodes);
 
-    await Future.wait([
-      _fontProvider.init(fontFamilies),
-      _prefetchImages(),
-    ]);
+    await Future.wait([_fontProvider.init(fontFamilies), _prefetchImages()]);
 
     final pdf = pw.Document();
     final root = document.content;
@@ -238,7 +244,8 @@ class ExportService {
     pdf.addPage(
       pw.MultiPage(
         pageFormat: PdfPageFormat.a4,
-        build: (context) => _buildPdfNodes(root.nodes, 0, usedAnnotYs: usedAnnotYs),
+        build: (context) =>
+            _buildPdfNodes(root.nodes, 0, usedAnnotYs: usedAnnotYs),
       ),
     );
 
@@ -247,37 +254,58 @@ class ExportService {
 
   /// Converts a list of nodes to PDF widgets.
   /// [depth] is the nesting level (for lists).
-  List<pw.Widget> _buildPdfNodes(List<FNode> nodes, int depth, {
-    List<Map<String,dynamic>>? comments,
+  List<pw.Widget> _buildPdfNodes(
+    List<FNode> nodes,
+    int depth, {
+    List<Map<String, dynamic>>? comments,
     Map<dynamic, List<double>>? usedAnnotYs,
   }) {
     final widgets = <pw.Widget>[];
-    final allComments = comments ?? document.commentProvider?.exportComments() ?? [];
+    final allComments =
+        comments ?? document.commentProvider?.exportComments() ?? [];
 
     for (final node in nodes) {
       if (node is FluentImage) {
         widgets.add(_buildPdfImage(node));
       } else if (node is HorizontalRule) {
-        widgets.add(pw.Padding(
-          padding: const pw.EdgeInsets.symmetric(vertical: 8),
-          child: pw.Divider(thickness: 1, color: PdfColors.grey400),
-        ));
+        widgets.add(
+          pw.Padding(
+            padding: const pw.EdgeInsets.symmetric(vertical: 8),
+            child: pw.Divider(thickness: 1, color: PdfColors.grey400),
+          ),
+        );
       } else if (node is FluentList) {
-        widgets.addAll(_buildPdfList(node, depth, comments: allComments, usedAnnotYs: usedAnnotYs));
+        widgets.addAll(
+          _buildPdfList(
+            node,
+            depth,
+            comments: allComments,
+            usedAnnotYs: usedAnnotYs,
+          ),
+        );
       } else if (node is FluentTable) {
-        widgets.add(_buildPdfTable(node, comments: allComments, usedAnnotYs: usedAnnotYs));
+        widgets.add(
+          _buildPdfTable(node, comments: allComments, usedAnnotYs: usedAnnotYs),
+        );
       } else if (node is Paragraph) {
-        widgets.add(_buildPdfParagraph(node, comments: allComments, usedAnnotYs: usedAnnotYs));
+        widgets.add(
+          _buildPdfParagraph(
+            node,
+            comments: allComments,
+            usedAnnotYs: usedAnnotYs,
+          ),
+        );
       }
     }
 
     return widgets;
   }
 
-  pw.Widget _buildPdfParagraph(Paragraph paragraph, {
+  pw.Widget _buildPdfParagraph(
+    Paragraph paragraph, {
     bool suppressIndent = false,
     bool inListItem = false,
-    List<Map<String,dynamic>>? comments,
+    List<Map<String, dynamic>>? comments,
     Map<dynamic, List<double>>? usedAnnotYs,
   }) {
     final style = paragraph.getStyle();
@@ -285,17 +313,22 @@ class ExportService {
     final isCode = style.name == 'code';
 
     final spans = _buildPdfSpans(
-      paragraph.fragments, style,
+      paragraph.fragments,
+      style,
       paragraphId: paragraph.id,
       comments: comments,
       usedAnnotYs: usedAnnotYs,
     );
 
     if (spans.isEmpty) {
-      return pw.SizedBox(height: (style.spacingAfter ?? document.pendingSpacingAfter));
+      return pw.SizedBox(
+        height: (style.spacingAfter ?? document.pendingSpacingAfter),
+      );
     }
 
-    final spacingBefore = inListItem ? 0.0 : (style.spacingBefore ?? document.pendingSpacingBefore);
+    final spacingBefore = inListItem
+        ? 0.0
+        : (style.spacingBefore ?? document.pendingSpacingBefore);
     final spacingAfter = style.spacingAfter ?? document.pendingSpacingAfter;
 
     final lineHeight = style.lineHeight ?? document.pendingLineHeight;
@@ -350,7 +383,7 @@ class ExportService {
     List<FNode> fragments,
     ParagraphStyle pStyle, {
     String? paragraphId,
-    List<Map<String,dynamic>>? comments,
+    List<Map<String, dynamic>>? comments,
     Map<dynamic, List<double>>? usedAnnotYs,
   }) {
     final spans = <pw.InlineSpan>[];
@@ -359,12 +392,12 @@ class ExportService {
     final emittedAnnots = <String>{};
     if (comments != null && paragraphId != null) {
       for (final c in comments) {
-        if (c['nodeId'] == paragraphId && c['resolved'] != true && c['orphan'] != true) {
-          segs.add(_CommentSeg(
-            c['startOffset'] as int,
-            c['endOffset'] as int,
-            c,
-          ));
+        if (c['nodeId'] == paragraphId &&
+            c['resolved'] != true &&
+            c['orphan'] != true) {
+          segs.add(
+            _CommentSeg(c['startOffset'] as int, c['endOffset'] as int, c),
+          );
         }
       }
       segs.sort((a, b) => a.start.compareTo(b.start));
@@ -375,14 +408,31 @@ class ExportService {
       final id = comment['id'] as String? ?? '';
       if (id.isEmpty || emittedAnnots.contains(id)) return;
       emittedAnnots.add(id);
-      spans.add(pw.WidgetSpan(
-        child: _CommentAnnotWidget(
-          commentText: comment['text'] as String? ?? '',
-          authorName: comment['authorName'] as String? ?? 'Anonimo',
-          subject: _labels?.pdfCommentSubject ?? 'Comment',
-          usedYs: usedAnnotYs ?? {},
+
+      final text = comment['text'] as String? ?? '';
+      final author = comment['authorName'] as String? ?? 'Anonimo';
+      final replies = comment['replies'] as List? ?? [];
+      final fullText = replies.isEmpty
+          ? text
+          : '$text\n' +
+                replies
+                    .map((r) {
+                      final rAuthor = (r as Map)['authorName'] as String? ?? '';
+                      final rText = r['text'] as String? ?? '';
+                      return '  \u21b3 $rAuthor: $rText';
+                    })
+                    .join('\n');
+
+      spans.add(
+        pw.WidgetSpan(
+          child: _CommentAnnotWidget(
+            commentText: fullText,
+            authorName: author,
+            subject: _labels?.pdfCommentSubject ?? 'Comment',
+            usedYs: usedAnnotYs ?? {},
+          ),
         ),
-      ));
+      );
     }
 
     for (final frag in fragments) {
@@ -393,17 +443,25 @@ class ExportService {
             final imgWidget = _buildPdfInlineImage(linkFrag);
             if (imgWidget != null) spans.add(pw.WidgetSpan(child: imgWidget));
           } else if (linkFrag is Fragment) {
-            final subs = _extractSegments(linkFrag.text, globalOffset + linkOffset, segs);
+            final subs = _extractSegments(
+              linkFrag.text,
+              globalOffset + linkOffset,
+              segs,
+            );
             for (final sub in subs) {
               _maybeEmitAnnot(sub.comment);
-              spans.add(pw.TextSpan(
-                text: sub.text,
-                style: _getPdfFragmentStyle(linkFrag, pStyle).copyWith(
-                  color: PdfColors.blue,
-                  decoration: pw.TextDecoration.underline,
-                  background: sub.comment != null ? pw.BoxDecoration(color: PdfColor.fromHex('#FFEB3B')) : null,
+              spans.add(
+                pw.TextSpan(
+                  text: sub.text,
+                  style: _getPdfFragmentStyle(linkFrag, pStyle).copyWith(
+                    color: PdfColors.blue,
+                    decoration: pw.TextDecoration.underline,
+                    background: sub.comment != null
+                        ? pw.BoxDecoration(color: PdfColor.fromHex('#FFEB3B'))
+                        : null,
+                  ),
                 ),
-              ));
+              );
             }
             linkOffset += linkFrag.text.length;
           }
@@ -414,26 +472,42 @@ class ExportService {
         if (imgWidget != null) spans.add(pw.WidgetSpan(child: imgWidget));
       } else if (frag is Fragment) {
         final fragStyles = frag.styles ?? [];
-        if (fragStyles.contains('superscript') || fragStyles.contains('subscript')) {
+        if (fragStyles.contains('superscript') ||
+            fragStyles.contains('subscript')) {
           final isSup = fragStyles.contains('superscript');
           final style = _getPdfFragmentStyle(frag, pStyle);
           final baseFontSize = pStyle.fontSize ?? 14.0;
-          final hasComment = segs.any((s) => s.start < globalOffset + frag.text.length && s.end > globalOffset);
+          final hasComment = segs.any(
+            (s) =>
+                s.start < globalOffset + frag.text.length &&
+                s.end > globalOffset,
+          );
           final widget = pw.Transform.translate(
-            offset: PdfPoint(0, isSup ? baseFontSize * 0.35 : -(baseFontSize * 0.15)),
+            offset: PdfPoint(
+              0,
+              isSup ? baseFontSize * 0.35 : -(baseFontSize * 0.15),
+            ),
             child: pw.Text(frag.text, style: style),
           );
           if (hasComment) {
-            _maybeEmitAnnot(segs.firstWhere(
-              (s) => s.start < globalOffset + frag.text.length && s.end > globalOffset,
-              orElse: () => _CommentSeg(0, 0, {}),
-            ).comment);
-            spans.add(pw.WidgetSpan(
-              child: pw.Container(
-                color: PdfColor.fromHex('#FFEB3B'),
-                child: widget,
+            _maybeEmitAnnot(
+              segs
+                  .firstWhere(
+                    (s) =>
+                        s.start < globalOffset + frag.text.length &&
+                        s.end > globalOffset,
+                    orElse: () => _CommentSeg(0, 0, {}),
+                  )
+                  .comment,
+            );
+            spans.add(
+              pw.WidgetSpan(
+                child: pw.Container(
+                  color: PdfColor.fromHex('#FFEB3B'),
+                  child: widget,
+                ),
               ),
-            ));
+            );
           } else {
             spans.add(pw.WidgetSpan(child: widget));
           }
@@ -443,15 +517,18 @@ class ExportService {
             _maybeEmitAnnot(sub.comment);
             final style = _getPdfFragmentStyle(frag, pStyle);
             if (sub.comment != null) {
-              spans.add(pw.TextSpan(
-                text: sub.text,
-                style: style.copyWith(background: pw.BoxDecoration(color: PdfColor.fromHex('#FFEB3B'))),
-              ));
+              spans.add(
+                pw.TextSpan(
+                  text: sub.text,
+                  style: style.copyWith(
+                    background: pw.BoxDecoration(
+                      color: PdfColor.fromHex('#FFEB3B'),
+                    ),
+                  ),
+                ),
+              );
             } else {
-              spans.add(pw.TextSpan(
-                text: sub.text,
-                style: style,
-              ));
+              spans.add(pw.TextSpan(text: sub.text, style: style));
             }
           }
         }
@@ -496,7 +573,8 @@ class ExportService {
     final pStyles = pStyle.styles ?? [];
 
     final isBold = fragStyles.contains('bold') || pStyles.contains('bold');
-    final isItalic = fragStyles.contains('italic') || pStyles.contains('italic');
+    final isItalic =
+        fragStyles.contains('italic') || pStyles.contains('italic');
     final hasUnderline = fragStyles.contains('underline');
     final hasStrikethrough = fragStyles.contains('strikethrough');
 
@@ -524,7 +602,9 @@ class ExportService {
       color = _parsePdfColor(pStyle.color!);
     }
 
-    final fontFamily = normalizeFontFamily(fragment.fontFamily.isNotEmpty ? fragment.fontFamily : pStyle.fontFamily);
+    final fontFamily = normalizeFontFamily(
+      fragment.fontFamily.isNotEmpty ? fragment.fontFamily : pStyle.fontFamily,
+    );
     final selectedFont = _fontProvider.selectFont(
       fontFamily,
       pStyle.name,
@@ -532,20 +612,20 @@ class ExportService {
       italic: isItalic,
     );
 
-    if (fragStyles.contains('superscript') || fragStyles.contains('subscript')) {
+    if (fragStyles.contains('superscript') ||
+        fragStyles.contains('subscript')) {
       fontSize = fontSize * 0.65;
     }
 
     PdfColor? backgroundColor;
-    if (fragment.highlightColor != null && fragment.highlightColor!.isNotEmpty) {
+    if (fragment.highlightColor != null &&
+        fragment.highlightColor!.isNotEmpty) {
       backgroundColor = _parsePdfColor(fragment.highlightColor!);
     }
 
     return pw.TextStyle(
       font: selectedFont,
-      fontFallback: [
-        _fontProvider.sansRegular ?? pw.Font.helvetica(),
-      ],
+      fontFallback: [_fontProvider.sansRegular ?? pw.Font.helvetica()],
       fontSize: fontSize,
       decoration: decoration,
       color: color,
@@ -638,7 +718,9 @@ class ExportService {
                   ),
                   pw.SizedBox(height: 2),
                   pw.Text(
-                    image.src.length > 60 ? '${image.src.substring(0, 60)}...' : image.src,
+                    image.src.length > 60
+                        ? '${image.src.substring(0, 60)}...'
+                        : image.src,
                     style: pw.TextStyle(
                       font: _fontProvider.sansRegular ?? pw.Font.helvetica(),
                       fontSize: 7,
@@ -654,8 +736,10 @@ class ExportService {
     );
   }
 
-  List<pw.Widget> _buildPdfList(FluentList list, int depth, {
-    List<Map<String,dynamic>>? comments,
+  List<pw.Widget> _buildPdfList(
+    FluentList list,
+    int depth, {
+    List<Map<String, dynamic>>? comments,
     Map<dynamic, List<double>>? usedAnnotYs,
   }) {
     final widgets = <pw.Widget>[];
@@ -668,13 +752,22 @@ class ExportService {
 
       for (final child in item.children) {
         if (child is FluentImage) {
-          widgets.add(pw.Padding(
-            padding: pw.EdgeInsets.only(left: indent + 24),
-            child: _buildPdfImage(child),
-          ));
+          widgets.add(
+            pw.Padding(
+              padding: pw.EdgeInsets.only(left: indent + 24),
+              child: _buildPdfImage(child),
+            ),
+          );
           firstChild = false;
         } else if (child is FluentList) {
-          widgets.addAll(_buildPdfList(child, depth + 1, comments: comments, usedAnnotYs: usedAnnotYs));
+          widgets.addAll(
+            _buildPdfList(
+              child,
+              depth + 1,
+              comments: comments,
+              usedAnnotYs: usedAnnotYs,
+            ),
+          );
           firstChild = false;
         } else if (child is Paragraph) {
           final pStyle = child.getStyle();
@@ -688,22 +781,31 @@ class ExportService {
             font: markerFont,
             fontSize: pStyle.fontSize ?? 14,
           );
-          widgets.add(pw.Padding(
-            padding: pw.EdgeInsets.only(left: indent),
-            child: pw.Row(
-              crossAxisAlignment: pw.CrossAxisAlignment.start,
-              children: [
-                if (firstChild)
-                  pw.SizedBox(
-                    width: 24,
-                    child: pw.Text(bullet, style: markerStyle),
-                  )
-                else
-                  pw.SizedBox(width: 24),
-                pw.Expanded(child: _buildPdfParagraph(child, inListItem: true, comments: comments, usedAnnotYs: usedAnnotYs)),
-              ],
+          widgets.add(
+            pw.Padding(
+              padding: pw.EdgeInsets.only(left: indent),
+              child: pw.Row(
+                crossAxisAlignment: pw.CrossAxisAlignment.start,
+                children: [
+                  if (firstChild)
+                    pw.SizedBox(
+                      width: 24,
+                      child: pw.Text(bullet, style: markerStyle),
+                    )
+                  else
+                    pw.SizedBox(width: 24),
+                  pw.Expanded(
+                    child: _buildPdfParagraph(
+                      child,
+                      inListItem: true,
+                      comments: comments,
+                      usedAnnotYs: usedAnnotYs,
+                    ),
+                  ),
+                ],
+              ),
             ),
-          ));
+          );
           firstChild = false;
         }
       }
@@ -740,13 +842,25 @@ class ExportService {
         return '${_toRoman(index).toUpperCase()})';
       case 'bullet':
       case 'unordered':
-        const bullets = ['\u2022', '\u25E6', '\u25AA']; // \u2022, \u25E6, \u25AA
+        const bullets = [
+          '\u2022',
+          '\u25E6',
+          '\u25AA',
+        ]; // \u2022, \u25E6, \u25AA
         return bullets[depth % bullets.length];
       case 'bullet-circle':
-        const circles = ['\u25CB', '\u25E6', '\u25CF']; // \u25CB, \u25E6, \u25CF
+        const circles = [
+          '\u25CB',
+          '\u25E6',
+          '\u25CF',
+        ]; // \u25CB, \u25E6, \u25CF
         return circles[depth % circles.length];
       case 'bullet-square':
-        const squares = ['\u25A1', '\u25AB', '\u25A0']; // \u25A1, \u25AB, \u25A0
+        const squares = [
+          '\u25A1',
+          '\u25AB',
+          '\u25A0',
+        ]; // \u25A1, \u25AB, \u25A0
         return squares[depth % squares.length];
       case 'checkbox':
         return '\u2610'; // \u2610
@@ -763,7 +877,21 @@ class ExportService {
   String _toRoman(int number) {
     if (number <= 0 || number > 3999) return number.toString();
     final values = [1000, 900, 500, 400, 100, 90, 50, 40, 10, 9, 5, 4, 1];
-    final symbols = ['m', 'cm', 'd', 'cd', 'c', 'xc', 'l', 'xl', 'x', 'ix', 'v', 'iv', 'i'];
+    final symbols = [
+      'm',
+      'cm',
+      'd',
+      'cd',
+      'c',
+      'xc',
+      'l',
+      'xl',
+      'x',
+      'ix',
+      'v',
+      'iv',
+      'i',
+    ];
     String result = '';
     int n = number;
     for (int i = 0; i < values.length; i++) {
@@ -775,8 +903,9 @@ class ExportService {
     return result;
   }
 
-  pw.Widget _buildPdfTable(FluentTable table, {
-    List<Map<String,dynamic>>? comments,
+  pw.Widget _buildPdfTable(
+    FluentTable table, {
+    List<Map<String, dynamic>>? comments,
     Map<dynamic, List<double>>? usedAnnotYs,
   }) {
     final rows = <pw.TableRow>[];
@@ -789,20 +918,35 @@ class ExportService {
           if (child is FluentImage) {
             cellWidgets.add(_buildPdfImage(child));
           } else if (child is FluentList) {
-            cellWidgets.addAll(_buildPdfList(child, 0, comments: comments, usedAnnotYs: usedAnnotYs));
+            cellWidgets.addAll(
+              _buildPdfList(
+                child,
+                0,
+                comments: comments,
+                usedAnnotYs: usedAnnotYs,
+              ),
+            );
           } else if (child is Paragraph) {
-            cellWidgets.add(_buildPdfParagraph(child, comments: comments, usedAnnotYs: usedAnnotYs));
+            cellWidgets.add(
+              _buildPdfParagraph(
+                child,
+                comments: comments,
+                usedAnnotYs: usedAnnotYs,
+              ),
+            );
           }
         }
-        cells.add(pw.Padding(
-          padding: const pw.EdgeInsets.all(6),
-          child: cellWidgets.isEmpty
-              ? pw.SizedBox(height: 14)
-              : pw.Column(
-                  crossAxisAlignment: pw.CrossAxisAlignment.start,
-                  children: cellWidgets,
-                ),
-        ));
+        cells.add(
+          pw.Padding(
+            padding: const pw.EdgeInsets.all(6),
+            child: cellWidgets.isEmpty
+                ? pw.SizedBox(height: 14)
+                : pw.Column(
+                    crossAxisAlignment: pw.CrossAxisAlignment.start,
+                    children: cellWidgets,
+                  ),
+          ),
+        );
       }
       rows.add(pw.TableRow(children: cells));
     }
@@ -820,9 +964,14 @@ class ExportService {
   (int, int)? _readImageDimensions(Uint8List bytes) {
     if (bytes.length < 24) return null;
 
-    if (bytes[0] == 0x89 && bytes[1] == 0x50 && bytes[2] == 0x4E && bytes[3] == 0x47) {
-      final w = (bytes[16] << 24) | (bytes[17] << 16) | (bytes[18] << 8) | bytes[19];
-      final h = (bytes[20] << 24) | (bytes[21] << 16) | (bytes[22] << 8) | bytes[23];
+    if (bytes[0] == 0x89 &&
+        bytes[1] == 0x50 &&
+        bytes[2] == 0x4E &&
+        bytes[3] == 0x47) {
+      final w =
+          (bytes[16] << 24) | (bytes[17] << 16) | (bytes[18] << 8) | bytes[19];
+      final h =
+          (bytes[20] << 24) | (bytes[21] << 16) | (bytes[22] << 8) | bytes[23];
       return (w, h);
     }
 
@@ -979,7 +1128,8 @@ class ExportService {
     final buffer = StringBuffer();
     final indent = '    ' * depth;
     final isOrdered = list.listType == 'ordered';
-    final isCheckbox = list.items.isNotEmpty &&
+    final isCheckbox =
+        list.items.isNotEmpty &&
         (list.items.first.bulletType.startsWith('checkbox'));
 
     for (var i = 0; i < list.items.length; i++) {
@@ -989,7 +1139,9 @@ class ExportService {
           : (isOrdered ? '${i + 1}.' : '-');
       final children = item.children;
 
-      final inlineChildren = children.where((c) => c is Paragraph || c is FluentImage).toList();
+      final inlineChildren = children
+          .where((c) => c is Paragraph || c is FluentImage)
+          .toList();
       final blockChildren = children.where((c) => c is FluentList).toList();
 
       if (inlineChildren.isNotEmpty) {
@@ -1095,20 +1247,30 @@ class ExportService {
     buffer.writeln('<html><head><meta charset="utf-8"><title>Document</title>');
     buffer.writeln('<style>');
     buffer.writeln('p { margin: 0 0 4px 0; }');
-    buffer.writeln('body { font-family: DejaVu Sans, Helvetica, sans-serif; font-size: 14px; margin: 40px; line-height: 1.4; color: #222; }');
+    buffer.writeln(
+      'body { font-family: DejaVu Sans, Helvetica, sans-serif; font-size: 14px; margin: 40px; line-height: 1.4; color: #222; }',
+    );
     buffer.writeln('h1 { font-size: 28px; margin: 24px 0 12px; }');
     buffer.writeln('h2 { font-size: 22px; margin: 20px 0 10px; }');
     buffer.writeln('h3 { font-size: 18px; margin: 16px 0 8px; }');
     buffer.writeln('h4 { font-size: 16px; margin: 14px 0 6px; }');
     buffer.writeln('h5 { font-size: 14px; margin: 12px 0 4px; }');
     buffer.writeln('h6 { font-size: 13px; margin: 10px 0 2px; }');
-    buffer.writeln('blockquote { border-left: 3px solid #999; margin: 12px 0; padding: 8px 16px; font-style: italic; font-family: Georgia, serif; color: #555; }');
-    buffer.writeln('pre { background: #f5f5f5; border: 1px solid #ddd; border-radius: 4px; padding: 12px; font-family: "Courier New", monospace; font-size: 13px; white-space: pre-wrap; margin: 8px 0; }');
+    buffer.writeln(
+      'blockquote { border-left: 3px solid #999; margin: 12px 0; padding: 8px 16px; font-style: italic; font-family: Georgia, serif; color: #555; }',
+    );
+    buffer.writeln(
+      'pre { background: #f5f5f5; border: 1px solid #ddd; border-radius: 4px; padding: 12px; font-family: "Courier New", monospace; font-size: 13px; white-space: pre-wrap; margin: 8px 0; }',
+    );
     buffer.writeln('table { border-collapse: collapse; margin: 12px 0; }');
-    buffer.writeln('td, th { border: 1px solid #999; padding: 4px 8px; vertical-align: top; }');
+    buffer.writeln(
+      'td, th { border: 1px solid #999; padding: 4px 8px; vertical-align: top; }',
+    );
     buffer.writeln('img { max-width: 100%; }');
     buffer.writeln('a { color: #1a73e8; }');
-    buffer.writeln('hr { border: none; border-top: 1px solid #ccc; margin: 16px 0; }');
+    buffer.writeln(
+      'hr { border: none; border-top: 1px solid #ccc; margin: 16px 0; }',
+    );
     buffer.writeln('</style>');
     buffer.writeln('</head><body>');
 
@@ -1182,14 +1344,20 @@ class ExportService {
     if (pStyle.lineHeight != null && pStyle.lineHeight != 1.4) {
       cssProps.add('line-height:${pStyle.lineHeight}');
     }
-    if (pStyle.spacingBefore != null && pStyle.spacingBefore! > 0 && headingLevel == 0) {
+    if (pStyle.spacingBefore != null &&
+        pStyle.spacingBefore! > 0 &&
+        headingLevel == 0) {
       cssProps.add('margin-top:${pStyle.spacingBefore!.toInt()}px');
     }
-    if (pStyle.spacingAfter != null && pStyle.spacingAfter! > 0 && headingLevel == 0) {
+    if (pStyle.spacingAfter != null &&
+        pStyle.spacingAfter! > 0 &&
+        headingLevel == 0) {
       cssProps.add('margin-bottom:${pStyle.spacingAfter!.toInt()}px');
     }
 
-    final styleAttr = cssProps.isNotEmpty ? ' style="${cssProps.join(';')}"' : '';
+    final styleAttr = cssProps.isNotEmpty
+        ? ' style="${cssProps.join(';')}"'
+        : '';
     final inlineContent = _fragmentsToHtml(paragraph.fragments, pStyle);
 
     if (headingLevel > 0) {
@@ -1215,20 +1383,27 @@ class ExportService {
           if (linkChild is FluentImage) {
             final resolvedSrc = _resolveImageSrc(linkChild.src);
             final imgAttrs = <String>[];
-            if (linkChild.width != null) imgAttrs.add('width="${linkChild.width!.toInt()}"');
-            if (linkChild.height != null) imgAttrs.add('height="${linkChild.height!.toInt()}"');
-            final imgAttrStr = imgAttrs.isNotEmpty ? ' ${imgAttrs.join(' ')}' : '';
+            if (linkChild.width != null)
+              imgAttrs.add('width="${linkChild.width!.toInt()}"');
+            if (linkChild.height != null)
+              imgAttrs.add('height="${linkChild.height!.toInt()}"');
+            final imgAttrStr = imgAttrs.isNotEmpty
+                ? ' ${imgAttrs.join(' ')}'
+                : '';
             linkBuffer.write('<img src="$resolvedSrc"$imgAttrStr alt="">');
           } else if (linkChild is Fragment) {
             linkBuffer.write(_fragmentToHtml(linkChild, pStyle));
           }
         }
-        buffer.write('<a href="${_escapeHtml(frag.url)}">${linkBuffer.toString()}</a>');
+        buffer.write(
+          '<a href="${_escapeHtml(frag.url)}">${linkBuffer.toString()}</a>',
+        );
       } else if (frag is FluentImage) {
         final resolvedSrc = _resolveImageSrc(frag.src);
         final imgAttrs = <String>[];
         if (frag.width != null) imgAttrs.add('width="${frag.width!.toInt()}"');
-        if (frag.height != null) imgAttrs.add('height="${frag.height!.toInt()}"');
+        if (frag.height != null)
+          imgAttrs.add('height="${frag.height!.toInt()}"');
         final imgAttrStr = imgAttrs.isNotEmpty ? ' ${imgAttrs.join(' ')}' : '';
         buffer.write('<img src="$resolvedSrc"$imgAttrStr alt="">');
       } else if (frag is Fragment) {
@@ -1259,7 +1434,8 @@ class ExportService {
     if (fragment.color != null && fragment.color!.isNotEmpty) {
       cssStyles.add('color:${fragment.color}');
     }
-    if (fragment.highlightColor != null && fragment.highlightColor!.isNotEmpty) {
+    if (fragment.highlightColor != null &&
+        fragment.highlightColor!.isNotEmpty) {
       cssStyles.add('background-color:${fragment.highlightColor}');
     }
 
@@ -1281,14 +1457,17 @@ class ExportService {
   }
 
   String _listToHtml(FluentList list) {
-    final isCheckbox = list.items.isNotEmpty && _isCheckboxType(list.items.first.bulletType);
+    final isCheckbox =
+        list.items.isNotEmpty && _isCheckboxType(list.items.first.bulletType);
     final tag = list.listType == 'ordered' ? 'ol' : 'ul';
 
     final buffer = StringBuffer();
     if (isCheckbox) {
       buffer.writeln('<ul style="list-style:none;padding-left:20px">');
     } else {
-      final listStyleType = _htmlListStyleType(list.items.isNotEmpty ? list.items.first.bulletType : 'bullet');
+      final listStyleType = _htmlListStyleType(
+        list.items.isNotEmpty ? list.items.first.bulletType : 'bullet',
+      );
       if (listStyleType != null) {
         buffer.writeln('<$tag style="list-style-type:$listStyleType">');
       } else {
@@ -1297,7 +1476,8 @@ class ExportService {
     }
 
     for (final item in list.items) {
-      final hasOnlyList = item.children.length == 1 && item.children.first is FluentList;
+      final hasOnlyList =
+          item.children.length == 1 && item.children.first is FluentList;
 
       if (!hasOnlyList) {
         if (isCheckbox) {
@@ -1331,7 +1511,9 @@ class ExportService {
   }
 
   bool _isCheckboxType(String bulletType) {
-    return bulletType == 'checkbox' || bulletType == 'checkbox-checked' || bulletType == 'checkbox-crossed';
+    return bulletType == 'checkbox' ||
+        bulletType == 'checkbox-checked' ||
+        bulletType == 'checkbox-crossed';
   }
 
   String? _htmlListStyleType(String bulletType) {
@@ -1343,16 +1525,20 @@ class ExportService {
       'ordered' => 'decimal',
       'ordered-parenthesis' => 'decimal',
       'ordered-alpha' || 'ordered-alpha-parenthesis' => 'lower-alpha',
-      'ordered-alpha-upper' || 'ordered-alpha-upper-parenthesis' => 'upper-alpha',
+      'ordered-alpha-upper' ||
+      'ordered-alpha-upper-parenthesis' => 'upper-alpha',
       'ordered-roman' || 'ordered-roman-parenthesis' => 'lower-roman',
-      'ordered-roman-upper' || 'ordered-roman-upper-parenthesis' => 'upper-roman',
+      'ordered-roman-upper' ||
+      'ordered-roman-upper-parenthesis' => 'upper-roman',
       _ => null,
     };
   }
 
   String _tableToHtml(FluentTable table) {
     final buffer = StringBuffer();
-    buffer.writeln('<table width="100%" border="1" cellpadding="0" cellspacing="0">');
+    buffer.writeln(
+      '<table width="100%" border="1" cellpadding="0" cellspacing="0">',
+    );
     for (final row in table.rows) {
       buffer.writeln('<tr>');
       for (final cell in row.cells) {
@@ -1368,7 +1554,9 @@ class ExportService {
           } else if (child is FluentList) {
             buffer.write(_listToHtml(child));
           } else if (child is Paragraph) {
-            buffer.write('<p style="margin:0;padding:2px 6px;line-height:1.15;font-size:14px">');
+            buffer.write(
+              '<p style="margin:0;padding:2px 6px;line-height:1.15;font-size:14px">',
+            );
             buffer.write(_fragmentsToHtml(child.fragments, child.getStyle()));
             buffer.write('</p>');
           }
@@ -1389,7 +1577,11 @@ class ExportService {
         .replaceAll('"', '&quot;');
   }
 
-  Future<String?> saveFileNative(Uint8List bytes, String defaultName, String extension) async {
+  Future<String?> saveFileNative(
+    Uint8List bytes,
+    String defaultName,
+    String extension,
+  ) async {
     if (kIsWeb) {
       downloadFileWeb(bytes, '$defaultName.$extension');
       return null;
@@ -1407,8 +1599,7 @@ class ExportService {
         if (result != null) {
           return result;
         }
-      } catch (e) {
-      }
+      } catch (e) {}
       return null;
     }
 
@@ -1449,6 +1640,18 @@ class ExportService {
           }
         }
       } catch (_) {}
+
+      // Fallback: file_selector (GTK dialog on Linux)
+      try {
+        final location = await getSaveLocation(suggestedName: defaultName);
+        if (location != null) {
+          var path = location.path;
+          if (!path.endsWith('.$extension')) path += '.$extension';
+          final file = File(path);
+          await file.writeAsBytes(bytes);
+          return path;
+        }
+      } catch (_) {}
     } else if (Platform.isMacOS || Platform.isWindows) {
       try {
         final location = await getSaveLocation(suggestedName: defaultName);
@@ -1465,7 +1668,11 @@ class ExportService {
     return null;
   }
 
-  Future<String?> saveTextFileNative(String content, String defaultName, String extension) async {
+  Future<String?> saveTextFileNative(
+    String content,
+    String defaultName,
+    String extension,
+  ) async {
     final bytes = Uint8List.fromList(utf8.encode(content));
     return saveFileNative(bytes, defaultName, extension);
   }
