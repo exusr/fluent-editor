@@ -52,16 +52,21 @@ class DocxExporter {
   final Map<String, int> _commentIdMap = {};
   final Map<String, int> _replyDocxIds = {}; // "${parentId}_$index" -> replyDocxId
   final Map<String, String> _paragraphParaIds = {}; // paragraph.id -> paraId
+  final Map<String, String> _commentParaIds = {}; // comment internal id -> 8-char hex paraId
+  final Map<String, String> _replyParaIds = {}; // "${commentId}_$replyIndex" -> 8-char hex paraId
 
   Future<Uint8List> build() async {
     final allComments = document.commentProvider?.exportComments() ?? [];
     for (final c in allComments) {
       if (c['resolved'] == true || c['orphan'] == true) continue;
       final docxId = _ensureDocxCommentId(c);
+      final commentId = c['id'] as String;
+      _commentParaIds[commentId] = _generateParaId();
       final replies = (c['replies'] as List<dynamic>?) ?? [];
       for (var ri = 0; ri < replies.length; ri++) {
         final replyId = _commentIdCounter++;
         _replyDocxIds['${docxId}_$ri'] = replyId;
+        _replyParaIds['${commentId}_$ri'] = _generateParaId();
       }
     }
 
@@ -388,22 +393,16 @@ class DocxExporter {
       if (startedCommentIds.contains(docxId)) return;
       startedCommentIds.add(docxId);
       _body.write('<w:commentRangeStart w:id="$docxId"/>');
-      for (var ri = 0; ri < replies.length; ri++) {
-        final replyId = _replyDocxIds['${docxId}_$ri']!;
-        startedCommentIds.add(replyId);
-        _body.write('<w:commentRangeStart w:id="$replyId"/>');
-      }
     }
 
     void _emitCommentEnds(
         Map<String, dynamic> comment, int docxId, List<dynamic> replies) {
-      for (var ri = replies.length - 1; ri >= 0; ri--) {
-        final replyId = _replyDocxIds['${docxId}_$ri']!;
-        _body.write('<w:commentRangeEnd w:id="$replyId"/>');
-        _body.write('<w:r><w:commentReference w:id="$replyId"/></w:r>');
-      }
       _body.write('<w:commentRangeEnd w:id="$docxId"/>');
       _body.write('<w:r><w:commentReference w:id="$docxId"/></w:r>');
+      for (var ri = 0; ri < replies.length; ri++) {
+        final replyId = _replyDocxIds['${docxId}_$ri']!;
+        _body.write('<w:r><w:commentReference w:id="$replyId"/></w:r>');
+      }
     }
 
     for (final frag in fragments) {
@@ -690,8 +689,10 @@ class DocxExporter {
         'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" '
         'xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" '
         'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" '
+        'xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" '
         'xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml" '
-        'xmlns:w15="http://schemas.microsoft.com/office/word/2012/wordml">'
+        'xmlns:w15="http://schemas.microsoft.com/office/word/2012/wordml" '
+        'mc:Ignorable="w14 w15">'
         '<w:body>${_body.toString()}'
         '<w:sectPr><w:pgSz w:w="11906" w:h="16838"/>'
         '<w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134" '
@@ -715,21 +716,19 @@ class DocxExporter {
   String _commentsExtendedXml() {
     final b = StringBuffer(
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
-        '<w15:commentsEx xmlns:w15="http://schemas.microsoft.com/office/word/2012/wordml">');
+        '<w15:commentsEx xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" '
+        'xmlns:w15="http://schemas.microsoft.com/office/word/2012/wordml" '
+        'mc:Ignorable="w15">');
 
     for (final c in _docxComments) {
-      final docxId = _commentIdMap[c['id']]!;
-      final paragraphId = c['nodeId'] as String? ?? '';
-      final paraId = _paragraphParaIds[paragraphId] ?? _generateParaId();
-
-      b.write(
-          '<w15:commentEx w15:id="$docxId" w15:paraId="$paraId" w15:done="1"/>');
+      final commentId = c['id'] as String;
+      final paraId = _commentParaIds[commentId] ?? _generateParaId();
 
       final replies = (c['replies'] as List<dynamic>?) ?? [];
       for (var ri = 0; ri < replies.length; ri++) {
-        final replyId = _replyDocxIds['${docxId}_$ri']!;
+        final replyParaId = _replyParaIds['${commentId}_$ri'] ?? _generateParaId();
         b.write(
-            '<w15:commentEx w15:id="$replyId" w15:paraId="$paraId" w15:done="1" w15:parent="$docxId"/>');
+            '<w15:commentEx w15:paraId="$replyParaId" w15:paraIdParent="$paraId"/>');
       }
     }
 
@@ -748,16 +747,21 @@ class DocxExporter {
     final b = StringBuffer(
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
         '<w:comments xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" '
-        'xmlns:w15="http://schemas.microsoft.com/office/word/2012/wordml">');
+        'xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" '
+        'xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml" '
+        'xmlns:w15="http://schemas.microsoft.com/office/word/2012/wordml" '
+        'mc:Ignorable="w14 w15">');
 
     for (final c in _docxComments) {
       final docxId = _commentIdMap[c['id']]!;
+      final commentId = c['id'] as String;
+      final cParaId = _commentParaIds[commentId] ?? _generateParaId();
       final author = _esc(c['authorName'] as String? ?? 'Anonimo');
       final date = _esc(_formatDate(c['createdAt'] as String?));
       final text = _esc(c['text'] as String? ?? '');
 
-      b.write('<w:comment w:id="$docxId" w:author="$author" w:date="$date">'
-          '<w:p><w:r><w:t>$text</w:t></w:r></w:p>'
+      b.write('<w:comment w:id="$docxId" w:author="$author" w:date="$date" w:initials="">'
+          '<w:p w14:paraId="$cParaId"><w:pPr><w:overflowPunct w:val="false"/><w:bidi w:val="0"/><w:rPr></w:rPr></w:pPr><w:r><w:annotationRef/></w:r><w:r><w:rPr></w:rPr><w:t>$text</w:t></w:r></w:p>'
           '</w:comment>');
 
       final replies = (c['replies'] as List<dynamic>?) ?? [];
@@ -768,10 +772,16 @@ class DocxExporter {
         final rDate = _esc(_formatDate(rMap['createdAt'] as String?));
         final rText = _esc(rMap['text'] as String? ?? '');
         final replyId = _replyDocxIds['${docxId}_$ri']!;
+        final rParaId = _replyParaIds['${commentId}_$ri'] ?? _generateParaId();
+
+        final parentAuthor = _esc(c['authorName'] as String? ?? 'Anonimo');
+        final parentDateLocalized = _esc(_formatDateLocalized(c['createdAt'] as String?));
+        final headerText = 'Rispondi a $parentAuthor ($parentDateLocalized): "..."';
 
         b.write(
-            '<w:comment w:id="$replyId" w:author="$rAuthor" w:date="$rDate" w15:parentId="$docxId">'
-            '<w:p><w:r><w:t>$rText</w:t></w:r></w:p>'
+            '<w:comment w:id="$replyId" w:author="$rAuthor" w:date="$rDate" w:initials="">'
+            '<w:p><w:pPr><w:overflowPunct w:val="false"/><w:bidi w:val="0"/><w:rPr></w:rPr></w:pPr><w:r><w:annotationRef/></w:r><w:r><w:rPr><w:i/><w:sz w:val="16"/></w:rPr><w:t>$headerText</w:t></w:r></w:p>'
+            '<w:p w14:paraId="$rParaId"><w:pPr><w:overflowPunct w:val="false"/><w:bidi w:val="0"/><w:rPr></w:rPr></w:pPr><w:r><w:rPr></w:rPr><w:t>$rText</w:t></w:r></w:p>'
             '</w:comment>');
       }
     }
@@ -796,6 +806,26 @@ class DocxExporter {
     }
   }
 
+  /// Formatta la data in formato localizzato (dd/MM/yyyy, HH:mm) per l'intestazione delle risposte.
+  String _formatDateLocalized(String? date) {
+    DateTime d;
+    if (date == null || date.isEmpty) {
+      d = DateTime.now();
+    } else {
+      try {
+        d = DateTime.parse(date);
+      } catch (e) {
+        d = DateTime.now();
+      }
+    }
+    final day = d.day.toString().padLeft(2, '0');
+    final month = d.month.toString().padLeft(2, '0');
+    final year = d.year.toString();
+    final hour = d.hour.toString().padLeft(2, '0');
+    final minute = d.minute.toString().padLeft(2, '0');
+    return '$day/$month/$year, $hour:$minute';
+  }
+
   String _contentTypes() {
     final b = StringBuffer(
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
@@ -809,7 +839,7 @@ class DocxExporter {
         '<Default Extension="ttf" ContentType="application/x-fontdata"/>'
         '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'
         '<Override PartName="/word/comments.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml"/>'
-        '<Override PartName="/word/commentsExtended.xml" ContentType="application/vnd.openxmlformats.microsoftword.commentsExtended+xml"/>'
+        '<Override PartName="/word/commentsExtended.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.commentsExtended+xml"/>'
         '<Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/>');  
     b.write('</Types>');
     return b.toString();
