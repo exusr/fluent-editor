@@ -12,19 +12,40 @@ class FluentEditor extends StatefulWidget {
   final List<FluentEditorPlugin> plugins;
   final FluentToolbarMode toolbarMode;
   final List<Widget> bubbleActions;
-  const FluentEditor({super.key, this.document, this.labels, this.sidebar, this.plugins = const [], this.toolbarMode = FluentToolbarMode.fixed, this.bubbleActions = const []});
+  const FluentEditor({
+    super.key,
+    this.document,
+    this.labels,
+    this.sidebar,
+    this.plugins = const [],
+    this.toolbarMode = FluentToolbarMode.fixed,
+    this.bubbleActions = const [],
+  });
   @override
   State<FluentEditor> createState() => _FluentEditorState();
 }
+
 class _FluentEditorState extends State<FluentEditor> {
   late FluentDocument _document;
 
   @override
   void initState() {
     super.initState();
-    _document = widget.document ?? FluentDocument(
-      registry: createDefaultFluentPluginRegistry(widget.plugins),
-    );
+    if (widget.document != null && widget.plugins.isNotEmpty) {
+      final existing = widget.document!.registry;
+      final allPlugins = [
+        ...existing.plugins,
+        ...widget.plugins.where(
+          (p) => !existing.plugins.any((e) => e.id == p.id),
+        ),
+      ];
+      widget.document!.replaceRegistry(FluentPluginRegistry(allPlugins));
+    }
+    _document =
+        widget.document ??
+        FluentDocument(
+          registry: createDefaultFluentPluginRegistry(widget.plugins),
+        );
     _document.labels = widget.labels;
     _document.addListener(_onDocumentChanged);
     _document.registry.attach(_document);
@@ -50,7 +71,13 @@ class _FluentEditorState extends State<FluentEditor> {
       body: Column(
         children: [
           Expanded(
-            child: FluentDocumentWidget(document: _document, labels: widget.labels, sidebar: widget.sidebar, toolbarMode: widget.toolbarMode, bubbleActions: widget.bubbleActions),
+            child: FluentDocumentWidget(
+              document: _document,
+              labels: widget.labels,
+              sidebar: widget.sidebar,
+              toolbarMode: widget.toolbarMode,
+              bubbleActions: widget.bubbleActions,
+            ),
           ),
         ],
       ),

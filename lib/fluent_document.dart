@@ -313,6 +313,11 @@ class FluentDocument extends ChangeNotifier {
   FluentPluginRegistry get registry =>
       _registry ??= createDefaultFluentPluginRegistry();
 
+  /// Replaces the plugin registry with [registry].
+  void replaceRegistry(FluentPluginRegistry registry) {
+    _registry = registry;
+  }
+
   FluentDocument({Root? content, FluentPluginRegistry? registry}) {
     _registry = registry;
     _content = content ?? Root(nodes: [Paragraph(text: "")]);
@@ -331,27 +336,42 @@ class FluentDocument extends ChangeNotifier {
   /// Creates a FluentDocument from a JSON map (result of jsonDecode).
   /// Supports both the new format (with "nodes" and "settings") and
   /// the legacy format (Root JSON directly).
-  factory FluentDocument.fromJson(Map<String, dynamic> json,
-      {FluentPluginRegistry? registry}) {
+  factory FluentDocument.fromJson(
+    Map<String, dynamic> json, {
+    FluentPluginRegistry? registry,
+  }) {
     FNodeJsonConverter.activeRegistry = registry;
     try {
       if (json.containsKey('nodes') && json.containsKey('settings')) {
         final root = Root.fromJson(json['nodes'] as Map<String, dynamic>);
         final doc = FluentDocument(content: root, registry: registry);
         final settings = json['settings'] as Map<String, dynamic>;
-        doc.pendingLineHeight = (settings['lineHeight'] as num?)?.toDouble() ?? doc.pendingLineHeight;
-        doc.pendingSpacingBefore = (settings['spacingBefore'] as num?)?.toDouble() ?? doc.pendingSpacingBefore;
-        doc.pendingSpacingAfter = (settings['spacingAfter'] as num?)?.toDouble() ?? doc.pendingSpacingAfter;
-        doc.pendingFontFamily = settings['fontFamily'] as String? ?? doc.pendingFontFamily;
-        doc.pendingFontSize = (settings['fontSize'] as num?)?.toDouble() ?? doc.pendingFontSize;
-        doc.pendingTextAlign = settings['textAlign'] as String? ?? doc.pendingTextAlign;
-        doc.pendingIndent = (settings['indent'] as num?)?.toInt() ?? doc.pendingIndent;
+        doc.pendingLineHeight =
+            (settings['lineHeight'] as num?)?.toDouble() ??
+            doc.pendingLineHeight;
+        doc.pendingSpacingBefore =
+            (settings['spacingBefore'] as num?)?.toDouble() ??
+            doc.pendingSpacingBefore;
+        doc.pendingSpacingAfter =
+            (settings['spacingAfter'] as num?)?.toDouble() ??
+            doc.pendingSpacingAfter;
+        doc.pendingFontFamily =
+            settings['fontFamily'] as String? ?? doc.pendingFontFamily;
+        doc.pendingFontSize =
+            (settings['fontSize'] as num?)?.toDouble() ?? doc.pendingFontSize;
+        doc.pendingTextAlign =
+            settings['textAlign'] as String? ?? doc.pendingTextAlign;
+        doc.pendingIndent =
+            (settings['indent'] as num?)?.toInt() ?? doc.pendingIndent;
         doc.pendingColor = settings['color'] as String?;
         doc.pendingHighlightColor = settings['highlightColor'] as String?;
         if (settings['styles'] is List) {
-          doc.pendingStyles = (settings['styles'] as List).map((e) => e as String).toList();
+          doc.pendingStyles = (settings['styles'] as List)
+              .map((e) => e as String)
+              .toList();
         }
-        doc.documentLanguage = settings['documentLanguage'] as String? ?? doc.documentLanguage;
+        doc.documentLanguage =
+            settings['documentLanguage'] as String? ?? doc.documentLanguage;
         final comments = json['comments'];
         if (comments is List && doc.commentProvider != null) {
           doc.commentProvider!.importComments(
@@ -380,7 +400,7 @@ class FluentDocument extends ChangeNotifier {
 
   final Cursor _cursor = Cursor();
   Cursor get cursor => _cursor;
-  
+
   final SelectionManager _selectionManager = SelectionManager();
   SelectionManager get selectionManager => _selectionManager;
 
@@ -408,7 +428,11 @@ class FluentDocument extends ChangeNotifier {
 
   /// Calculates the global offset within [paragraphId] for a local
   /// (fragmentId, localOffset) pair. Returns null if the fragment is not found.
-  int? getGlobalOffsetInParagraph(String paragraphId, String fragmentId, int localOffset) {
+  int? getGlobalOffsetInParagraph(
+    String paragraphId,
+    String fragmentId,
+    int localOffset,
+  ) {
     final node = nodeById(paragraphId);
     if (node is! Paragraph) return null;
     flattenContainer(node);
@@ -423,7 +447,8 @@ class FluentDocument extends ChangeNotifier {
   void requestEditorFocus() => editorFocusNode.requestFocus();
 
   /// Opens the virtual keyboard via the IME handler.
-  void requestMobileKeyboardFocus(BuildContext context) => imeHandler.showKeyboard(context);
+  void requestMobileKeyboardFocus(BuildContext context) =>
+      imeHandler.showKeyboard(context);
 
   final Map<String, GlobalKey> _nodeKeys = {};
   GlobalKey getKeyForNode(String nodeId) {
@@ -450,8 +475,15 @@ class FluentDocument extends ChangeNotifier {
   /// The delta is committed automatically by [updateContent] after the
   /// mutation, producing a minimal undo record that stores only the
   /// changed top-level nodes (50-100x smaller than a full snapshot).
-  void saveState({String description = 'Document change', bool forceNewAction = false}) {
-    _undoRedoManager.beginSaveState(this, description: description, forceNewAction: forceNewAction);
+  void saveState({
+    String description = 'Document change',
+    bool forceNewAction = false,
+  }) {
+    _undoRedoManager.beginSaveState(
+      this,
+      description: description,
+      forceNewAction: forceNewAction,
+    );
   }
 
   /// Forces creation of a new action (not grouped)
@@ -531,12 +563,13 @@ class FluentDocument extends ChangeNotifier {
     }
     _eventHandler.handle(event, this);
   }
-  
+
   bool isNodeSelected(String nodeId) {
     return _selectionManager.isNodeSelected(nodeId);
   }
 
-  ({String startFrag, int startOff, String endFrag, int endOff})? getSelectionRangeForNode(String nodeId) {
+  ({String startFrag, int startOff, String endFrag, int endOff})?
+  getSelectionRangeForNode(String nodeId) {
     return _selectionManager.getRangeForNode(nodeId);
   }
 
@@ -584,7 +617,9 @@ class FluentDocument extends ChangeNotifier {
   /// O(1) when pre-computed, falls back to O(1) cache-miss otherwise.
   String? get cachedCursorContainerId {
     return _cachedCursorContainerId ??
-        (cursor.focusId.isNotEmpty ? findLogicalContainerId(cursor.focusId) : null);
+        (cursor.focusId.isNotEmpty
+            ? findLogicalContainerId(cursor.focusId)
+            : null);
   }
 
   /// Notifies listeners for a cursor/selection-only change that does NOT

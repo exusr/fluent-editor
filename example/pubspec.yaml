@@ -41,6 +41,9 @@ dependencies:
   fluent_editor_comments:
     path: ../../fluent-editor-comments
 
+  fluent_editor_character_map:
+    path: ../../fluent-editor-character-map
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

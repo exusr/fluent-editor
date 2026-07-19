@@ -6,6 +6,7 @@ import 'package:fluent_editor/fluent_editor.dart';
 import 'package:fluent_editor/fluent_document.dart';
 import 'package:fluent_editor/widgets/fluent_document_widget.dart';
 import 'package:fluent_editor_comments/fluent_editor_comments.dart';
+import 'package:fluent_editor_character_map/fluent_editor_character_map.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -13,7 +14,8 @@ Future<void> main() async {
   // Forward all Flutter framework errors to the console (visible on web debug)
   FlutterError.onError = (FlutterErrorDetails details) {
     FlutterError.presentError(details);
-    debugPrint('FlutterError: ${details.exceptionAsString()}\n${details.stack}');
+    debugPrint(
+        'FlutterError: ${details.exceptionAsString()}\n${details.stack}');
   };
 
   // Catch async errors that escape the framework (zone-level)
@@ -32,22 +34,31 @@ Future<void> main() async {
 Future<void> loadBundledFonts() async {
   // DejaVu family (in assets/fonts/)
   const dejavuFonts = [
-    ('DejaVu Sans', [
-      'DejaVuSans.ttf',
-      'DejaVuSans-Oblique.ttf',
-      'DejaVuSans-Bold.ttf',
-      'DejaVuSans-BoldOblique.ttf',
-    ]),
-    ('DejaVu Sans Mono', [
-      'DejaVuSansMono.ttf',
-      'DejaVuSansMono-Bold.ttf',
-    ]),
-    ('DejaVu Serif', [
-      'DejaVuSerif.ttf',
-      'DejaVuSerif-Italic.ttf',
-      'DejaVuSerif-Bold.ttf',
-      'DejaVuSerif-BoldItalic.ttf',
-    ]),
+    (
+      'DejaVu Sans',
+      [
+        'DejaVuSans.ttf',
+        'DejaVuSans-Oblique.ttf',
+        'DejaVuSans-Bold.ttf',
+        'DejaVuSans-BoldOblique.ttf',
+      ]
+    ),
+    (
+      'DejaVu Sans Mono',
+      [
+        'DejaVuSansMono.ttf',
+        'DejaVuSansMono-Bold.ttf',
+      ]
+    ),
+    (
+      'DejaVu Serif',
+      [
+        'DejaVuSerif.ttf',
+        'DejaVuSerif-Italic.ttf',
+        'DejaVuSerif-Bold.ttf',
+        'DejaVuSerif-BoldItalic.ttf',
+      ]
+    ),
   ];
 
   for (final (familyName, files) in dejavuFonts) {
@@ -55,20 +66,28 @@ Future<void> loadBundledFonts() async {
     var loadedAny = false;
     for (final file in files) {
       try {
-        final data = await rootBundle.load('packages/fluent_editor/assets/fonts/$file');
+        final data =
+            await rootBundle.load('packages/fluent_editor/assets/fonts/$file');
         loader.addFont(Future.value(data));
         loadedAny = true;
       } catch (_) {}
     }
     if (loadedAny) {
-      try { await loader.load(); } catch (_) {}
+      try {
+        await loader.load();
+      } catch (_) {}
     }
   }
 
   // Google Fonts (in assets/fonts/)
   const googleFonts = [
-    'Crimson Text', 'Fira Sans', 'Lato', 'Poppins', 'Titillium Web',
-    'Barlow', 'SpaceMono',
+    'Crimson Text',
+    'Fira Sans',
+    'Lato',
+    'Poppins',
+    'Titillium Web',
+    'Barlow',
+    'SpaceMono',
   ];
 
   for (final fontName in googleFonts) {
@@ -76,7 +95,12 @@ Future<void> loadBundledFonts() async {
     final fileName = fontName.replaceAll(' ', '');
     var loadedAny = false;
 
-    for (final suffix in ['-Regular.ttf', '-Italic.ttf', '-Bold.ttf', '-BoldItalic.ttf']) {
+    for (final suffix in [
+      '-Regular.ttf',
+      '-Italic.ttf',
+      '-Bold.ttf',
+      '-BoldItalic.ttf'
+    ]) {
       try {
         final data = await rootBundle.load(
           'packages/fluent_editor/assets/fonts/$fileName$suffix',
@@ -87,14 +111,17 @@ Future<void> loadBundledFonts() async {
     }
 
     if (loadedAny) {
-      try { await loader.load(); } catch (_) {}
+      try {
+        await loader.load();
+      } catch (_) {}
     }
   }
 
   // NotoColorEmoji (in assets/fonts/)
   try {
     final emojiLoader = FontLoader('NotoColorEmoji')
-      ..addFont(rootBundle.load('packages/fluent_editor/assets/fonts/NotoColorEmoji.ttf'));
+      ..addFont(rootBundle
+          .load('packages/fluent_editor/assets/fonts/NotoColorEmoji.ttf'));
     await emojiLoader.load();
   } catch (_) {}
 }
@@ -111,7 +138,8 @@ class _MyAppState extends State<MyApp> {
 
   void _toggleTheme() {
     setState(() {
-      _themeMode = _themeMode == ThemeMode.light ? ThemeMode.dark : ThemeMode.light;
+      _themeMode =
+          _themeMode == ThemeMode.light ? ThemeMode.dark : ThemeMode.light;
     });
   }
 
@@ -130,13 +158,15 @@ class _MyAppState extends State<MyApp> {
         brightness: Brightness.dark,
       ),
       themeMode: _themeMode,
-      home: MyHomePage(title: 'Fluent Editor Demo', onToggleTheme: _toggleTheme),
+      home:
+          MyHomePage(title: 'Fluent Editor Demo', onToggleTheme: _toggleTheme),
     );
   }
 }
 
 class MyHomePage extends StatefulWidget {
-  const MyHomePage({super.key, required this.title, required this.onToggleTheme});
+  const MyHomePage(
+      {super.key, required this.title, required this.onToggleTheme});
   final String title;
   final VoidCallback onToggleTheme;
 
@@ -178,7 +208,9 @@ class _MyHomePageState extends State<MyHomePage> {
     // If the loaded JSON contains comments, import them.
     if (doc.commentProvider != null) {
       try {
-        final jsonMap = jsonDecode(await rootBundle.loadString('assets/example.json')) as Map<String, dynamic>;
+        final jsonMap =
+            jsonDecode(await rootBundle.loadString('assets/example.json'))
+                as Map<String, dynamic>;
         final comments = jsonMap['comments'];
         if (comments is List) {
           _commentProvider.importComments(
@@ -234,8 +266,10 @@ class _MyHomePageState extends State<MyHomePage> {
       body: SafeArea(
         child: FluentEditor(
           document: _document,
+          plugins: [FluentCharacterMapPlugin()],
           toolbarMode: _toolbarMode,
-          sidebar: FluentCommentSidebar(provider: _commentProvider, document: _document!),
+          sidebar: FluentCommentSidebar(
+              provider: _commentProvider, document: _document!),
           bubbleActions: [
             CommentBubbleAction(
               document: _document!,
