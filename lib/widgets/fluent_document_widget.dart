@@ -608,7 +608,9 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
                             '${widget.labels?.wordCount ?? "Words"}: ${_countWords()}',
                           ),
                           const SizedBox(width: 16),
-                          Text('Chars: ${_countChars()}'),
+                          Text(
+                            '${widget.labels?.characterCount ?? "Characters"}: ${_countChars()}',
+                          ),
                         ],
                       ),
                     ),

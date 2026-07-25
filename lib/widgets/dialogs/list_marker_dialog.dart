@@ -79,12 +79,12 @@ class _ListMarkerDialogState extends State<ListMarkerDialog> {
               children: [
                 TextButton(
                   onPressed: () => Navigator.of(context).pop(),
-                  child: const Text('Cancel'),
+                  child: Text(_labels.cancel),
                 ),
                 const SizedBox(width: 8),
                 ElevatedButton(
                   onPressed: () => Navigator.of(context).pop(),
-                  child: const Text('Done'),
+                  child: Text(_labels.done),
                 ),
               ],
             ),
