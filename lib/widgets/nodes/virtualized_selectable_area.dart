@@ -429,7 +429,9 @@ class _VirtualizedSelectableAreaState extends State<VirtualizedSelectableArea> {
               : null,
           itemCount: widget.itemCount,
           itemBuilder: (context, index) {
+            final node = widget.document.content.nodes[index];
             return _VisibilityTracker(
+              key: ValueKey(node.id),
               document: widget.document,
               index: index,
               child: MeasureSize(
@@ -451,6 +453,7 @@ class _VirtualizedSelectableAreaState extends State<VirtualizedSelectableArea> {
 /// paragraphs are visible without an expensive scroll-computation pass.
 class _VisibilityTracker extends StatefulWidget {
   const _VisibilityTracker({
+    super.key,
     required this.document,
     required this.index,
     required this.child,

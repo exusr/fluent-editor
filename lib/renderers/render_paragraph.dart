@@ -142,6 +142,16 @@ class RenderFluentParagraph extends RenderFluentNode
     }
   }
 
+  /// True when in Track Changes (Suggestion) mode, rendering IME preedit as green suggestion preview.
+  bool _isSuggestionMode = false;
+  bool get isSuggestionMode => _isSuggestionMode;
+  set isSuggestionMode(bool value) {
+    if (_isSuggestionMode != value) {
+      _isSuggestionMode = value;
+      markNeedsLayout();
+    }
+  }
+
   /// Local offset where the preedit starts.
   int _imePreeditLocalOffset = 0;
   int get imePreeditLocalOffset => _imePreeditLocalOffset;
@@ -611,17 +621,40 @@ class RenderFluentParagraph extends RenderFluentNode
     size = constraints.constrain(Size(width, height));
   }
 
-  /// Builds a TextSpan for the IME preedit text, styled with a blue dashed
-  /// underline. Inherits font properties from [baseStyle].
+  /// Builds a TextSpan for the IME preedit text, styled with rich preview visuals.
+  /// In suggestion mode, renders with a green background and dashed green underline.
+  /// In standard editing mode, renders with a soft blue background and dashed blue underline.
   TextSpan _buildImePreeditSpan(TextStyle? baseStyle) {
     final base = baseStyle ?? const TextStyle();
+    final isDark = base.color != null && base.color!.computeLuminance() > 0.5;
+    if (_isSuggestionMode) {
+      final suggColor = isDark ? const Color(0xFF81C784) : const Color(0xFF1B5E20);
+      final suggBg = isDark ? const Color(0xFF1B5E20).withAlpha(120) : const Color(0xFFC8E6C9);
+      final suggDeco = isDark ? const Color(0xFF66BB6A) : const Color(0xFF2E7D32);
+      return TextSpan(
+        text: _imePreeditText,
+        style: base.copyWith(
+          color: suggColor,
+          backgroundColor: suggBg,
+          decoration: TextDecoration.underline,
+          decorationStyle: TextDecorationStyle.dashed,
+          decorationColor: suggDeco,
+          decorationThickness: 2.0,
+          fontWeight: FontWeight.w600,
+        ),
+      );
+    }
+    final bgAlpha = isDark ? 80 : 50;
     return TextSpan(
       text: _imePreeditText,
       style: base.copyWith(
+        color: isDark ? _imeCompositionColor : _imeCompositionColor,
+        backgroundColor: _imeCompositionColor.withAlpha(bgAlpha),
         decoration: TextDecoration.underline,
         decorationStyle: TextDecorationStyle.dashed,
         decorationColor: _imeCompositionColor,
-        decorationThickness: 1.5,
+        decorationThickness: 2.0,
+        fontWeight: FontWeight.w600,
       ),
     );
   }
@@ -637,7 +670,9 @@ class RenderFluentParagraph extends RenderFluentNode
     GestureRecognizer? recognizer,
   ) {
     final preeditHere = _imePreeditText.isNotEmpty &&
-        _imePreeditFragmentId == fragmentId &&
+        (_imePreeditFragmentId == fragmentId || _imePreeditFragmentId.isEmpty) &&
+        fragmentLocalOffset >= 0 &&
+        fragmentLocalOffset <= text.length;
         fragmentLocalOffset >= 0 &&
         fragmentLocalOffset <= text.length;
     if (!preeditHere) {
@@ -745,6 +780,30 @@ class RenderFluentParagraph extends RenderFluentNode
                 color: _cachedParseColor(child.color) ?? effectiveStyle.color,
                 backgroundColor: _cachedParseColor(child.highlightColor),
               );
+
+              if (childStyles != null && childStyles.contains('suggestion_addition')) {
+                final isDark = (effectiveStyle.color ?? defaultTextColor).computeLuminance() > 0.5;
+                final addBg = isDark
+                    ? const Color(0x3581C784)
+                    : const Color(0x354CAF50);
+                effectiveStyle = effectiveStyle.copyWith(
+                  backgroundColor: addBg,
+                );
+              } else if (childStyles != null && childStyles.contains('suggestion_deletion')) {
+                final isDark = (effectiveStyle.color ?? defaultTextColor).computeLuminance() > 0.5;
+                final delBg = isDark
+                    ? const Color(0x35EF9A9A)
+                    : const Color(0x35F44336);
+                final delLineColor = isDark ? const Color(0xFFEF5350) : const Color(0xFFE53935);
+                effectiveStyle = effectiveStyle.copyWith(
+                  backgroundColor: delBg,
+                  decoration: TextDecoration.combine([
+                    effectiveStyle.decoration ?? TextDecoration.none,
+                    TextDecoration.lineThrough,
+                  ]),
+                  decorationColor: delLineColor,
+                );
+              }
               
               if (childStyles != null && (childStyles.contains('superscript') || childStyles.contains('subscript'))) {
                 final fontSize = effectiveStyle.fontSize ?? 14;
@@ -847,6 +906,30 @@ class RenderFluentParagraph extends RenderFluentNode
             color: _cachedParseColor(fragment.color),
             backgroundColor: _cachedParseColor(fragment.highlightColor),
           );
+
+          if (styles.contains('suggestion_addition')) {
+            final isDark = (effectiveStyle.color ?? defaultTextColor).computeLuminance() > 0.5;
+            final addBg = isDark
+                ? const Color(0x3581C784)
+                : const Color(0x354CAF50);
+            effectiveStyle = effectiveStyle.copyWith(
+              backgroundColor: addBg,
+            );
+          } else if (styles.contains('suggestion_deletion')) {
+            final isDark = (effectiveStyle.color ?? defaultTextColor).computeLuminance() > 0.5;
+            final delBg = isDark
+                ? const Color(0x35EF9A9A)
+                : const Color(0x35F44336);
+            final delLineColor = isDark ? const Color(0xFFEF5350) : const Color(0xFFE53935);
+            effectiveStyle = effectiveStyle.copyWith(
+              backgroundColor: delBg,
+              decoration: TextDecoration.combine([
+                effectiveStyle.decoration ?? TextDecoration.none,
+                TextDecoration.lineThrough,
+              ]),
+              decorationColor: delLineColor,
+            );
+          }
 
           if (effectiveStyle.decoration != null &&
               effectiveStyle.decoration != TextDecoration.none &&

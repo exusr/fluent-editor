@@ -17,6 +17,10 @@ import 'package:fluent_editor/utils/handler_helpers.dart';
 /// 6. If ctrl is pressed: delete the previous word
 /// 7. Otherwise: delete the previous character in the fragment
 bool executeHandleBackspace(FluentDocument document, {bool ctrl = false, bool lineStart = false}) {
+  if (document.registry.dispatchBackspace(document, ctrl: ctrl, lineStart: lineStart)) {
+    return true;
+  }
+
   final root = document.content;
   final cursor = document.cursor;
 
@@ -31,12 +35,17 @@ bool executeHandleBackspace(FluentDocument document, {bool ctrl = false, bool li
   }
 
   final currentNode = document.nodeById(cursor.anchorId);
-  if (currentNode is HorizontalRule) {
-    return removeNodeAndReposition(document, currentNode);
+  if (currentNode is HorizontalRule || currentNode is FluentImage) {
+    return removeNodeAndReposition(document, currentNode!);
   }
 
   final currentFrag = resolveFragmentFromCursor(currentNode, cursor.anchorOffset);
   if (currentFrag == null) return false;
+  if (currentFrag is FluentImage) {
+    removeNode(root, currentFrag);
+    document.updateContent();
+    return true;
+  }
 
   final container = document.findLogicalContainerCached(cursor.anchorId);
   if (container == null) return false;
@@ -213,9 +222,7 @@ bool _handleBackspaceAtStart(
   }
 
   if (prevContainer is FluentImage || prevContainer is HorizontalRule) {
-    removeNode(root, prevContainer as FNode);
-    document.updateContent();
-    return true;
+    return removeNodeAndReposition(document, prevContainer as FNode, forward: false);
   }
 
   return _mergeContainers(document, prevContainer, container, prevFrag, currentFrag);

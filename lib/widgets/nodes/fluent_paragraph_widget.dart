@@ -62,6 +62,7 @@ class FluentParagraphWidgetState<T extends FluentParagraphWidget> extends State<
   /// Previous IME preedit state for this paragraph.
   String _lastImePreeditText = '';
   String _lastImePreeditFragmentId = '';
+  bool _lastIsSuggestionMode = false;
 
   /// Cached inline images for this paragraph. Recomputed only when the
   /// document content version changes, avoiding a full tree walk on every
@@ -119,13 +120,22 @@ class FluentParagraphWidgetState<T extends FluentParagraphWidget> extends State<
     final preeditText = hasPreedit ? doc.imeHandler.preeditText : '';
     final preeditFragId = hasPreedit ? doc.imeHandler.preeditFragmentId : '';
 
+    final isSuggestionMode = doc.registry.plugins.any((p) {
+      try {
+        return (p as dynamic).controller?.mode?.name == 'suggesting';
+      } catch (_) {
+        return false;
+      }
+    });
+
     if (hasCursor != _lastHadCursor ||
         hasSelection != _lastHadSelection ||
         cursorOffset != _lastCursorOffset ||
         cursorFragmentId != _lastCursorFragmentId ||
         !_sameRange(selRange, _lastSelectionRange) ||
         preeditText != _lastImePreeditText ||
-        preeditFragId != _lastImePreeditFragmentId) {
+        preeditFragId != _lastImePreeditFragmentId ||
+        isSuggestionMode != _lastIsSuggestionMode) {
       _lastHadCursor = hasCursor;
       _lastHadSelection = hasSelection;
       _lastCursorOffset = cursorOffset;
@@ -133,6 +143,7 @@ class FluentParagraphWidgetState<T extends FluentParagraphWidget> extends State<
       _lastSelectionRange = selRange;
       _lastImePreeditText = preeditText;
       _lastImePreeditFragmentId = preeditFragId;
+      _lastIsSuggestionMode = isSuggestionMode;
       setState(() {});
     }
   }
@@ -197,6 +208,14 @@ class FluentParagraphWidgetState<T extends FluentParagraphWidget> extends State<
     final indentLevel = (widget.node as Paragraph).indent;
     final indentPadding = indentLevel * 24.0;
 
+    final isSuggestionMode = widget.document.registry.plugins.any((p) {
+      try {
+        return (p as dynamic).controller?.mode?.name == 'suggesting';
+      } catch (_) {
+        return false;
+      }
+    });
+
     return RepaintBoundary(
       child: Padding(
         padding: EdgeInsets.only(
@@ -205,122 +224,119 @@ class FluentParagraphWidgetState<T extends FluentParagraphWidget> extends State<
           bottom: spacingAfter,
         ),
         child: Listener(
-        onPointerDown: (event) {
-          if (event.buttons == 2) { // kSecondaryMouseButton
-            _isSecondaryTap = true;
-          }
-        },
-        child: GestureDetector(
-          onTapDown: (details) {
-            if (_isSecondaryTap) {
-              return; // Do not move cursor / collapse selection on right-click
+          onPointerDown: (event) {
+            if (event.buttons == 2) { // kSecondaryMouseButton
+              _isSecondaryTap = true;
             }
+          },
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTapDown: (details) {
+              if (_isSecondaryTap) return;
+              final now = DateTime.now();
+              final isConsecutiveTap = _lastTapTime != null &&
+                  _lastTapPosition != null &&
+                  now.difference(_lastTapTime!).inMilliseconds < 500 &&
+                  (details.globalPosition - _lastTapPosition!).distance < 30;
 
-            if (widget.document.imeHandler.isComposing) {
-              widget.document.imeHandler.commitIfComposing();
-            }
-
-            widget.document.requestEditorFocus();
-
-            final now = DateTime.now();
-            final isConsecutiveTap = _lastTapTime != null &&
-                now.difference(_lastTapTime!).inMilliseconds < 300 &&
-                _lastTapPosition != null &&
-                (details.globalPosition - _lastTapPosition!).distance < 30;
-
-            if (isConsecutiveTap) {
-              _tapCount++;
-            } else {
-              _tapCount = 1;
-            }
-            _lastTapTime = now;
-            _lastTapPosition = details.globalPosition;
-
-            final renderObject = _renderWidgetKey.currentContext?.findRenderObject();
-            if (renderObject is RenderBox) {
-              final localPosition = renderObject.globalToLocal(details.globalPosition);
-
-              if (_tapCount >= 3) {
-                _tapCount = 0;
-                _savedSelection = null;
-                widget.document.eventHandler.onTripleTapWithPosition(
-                  localPosition, renderObject, widget);
-              } else if (_tapCount == 2) {
-                _savedSelection = null;
-                widget.document.eventHandler.onDoubleTapWithPosition(
-                  localPosition, renderObject, widget);
+              if (isConsecutiveTap) {
+                _tapCount++;
               } else {
-                final selRange = widget.document.selectionManager.getRangeForNode(widget.node.id);
-                final hasSelection = selRange != null &&
-                    !widget.document.selectionManager.isCollapsed;
-                if (hasSelection) {
-                  _savedSelection = selRange;
-                } else {
+                _tapCount = 1;
+              }
+              _lastTapTime = now;
+              _lastTapPosition = details.globalPosition;
+
+              final renderObject = _renderWidgetKey.currentContext?.findRenderObject();
+              if (renderObject is RenderBox) {
+                final localPosition = renderObject.globalToLocal(details.globalPosition);
+
+                if (_tapCount >= 3) {
+                  _tapCount = 0;
                   _savedSelection = null;
+                  widget.document.eventHandler.onTripleTapWithPosition(
+                    localPosition, renderObject, widget);
+                } else if (_tapCount == 2) {
+                  _savedSelection = null;
+                  widget.document.eventHandler.onDoubleTapWithPosition(
+                    localPosition, renderObject, widget);
+                } else {
+                  final selRange = widget.document.selectionManager.getRangeForNode(widget.node.id);
+                  final hasSelection = selRange != null &&
+                      !widget.document.selectionManager.isCollapsed;
+                  if (hasSelection) {
+                    _savedSelection = selRange;
+                  } else {
+                    _savedSelection = null;
+                    widget.document.eventHandler.onTapDownWithPosition(
+                      localPosition, renderObject, widget);
+                  }
+                }
+              }
+            },
+            onTap: () {
+              if (_isSecondaryTap) {
+                _isSecondaryTap = false;
+                return; // Right-click: preserve selection, do not request focus
+              }
+              widget.document.requestEditorFocus();
+              widget.document.requestMobileKeyboardFocus(context);
+              if (_savedSelection != null && _lastTapPosition != null && mounted) {
+                final renderObject = _renderWidgetKey.currentContext?.findRenderObject();
+                if (renderObject is RenderBox) {
+                  final localPosition = renderObject.globalToLocal(_lastTapPosition!);
                   widget.document.eventHandler.onTapDownWithPosition(
                     localPosition, renderObject, widget);
                 }
+                _savedSelection = null;
               }
-            }
-          },
-          onTap: () {
-            if (_isSecondaryTap) {
+            },
+            onSecondaryTapUp: (details) {
               _isSecondaryTap = false;
-              return; // Right-click: preserve selection, do not request focus
-            }
-            widget.document.requestEditorFocus();
-            widget.document.requestMobileKeyboardFocus(context);
-            if (_savedSelection != null && _lastTapPosition != null && mounted) {
-              final renderObject = _renderWidgetKey.currentContext?.findRenderObject();
-              if (renderObject is RenderBox) {
-                final localPosition = renderObject.globalToLocal(_lastTapPosition!);
-                widget.document.eventHandler.onTapDownWithPosition(
-                  localPosition, renderObject, widget);
-              }
-              _savedSelection = null;
-            }
-          },
-          onSecondaryTapUp: (details) {
-            _isSecondaryTap = false;
-            _onSecondaryTap(details);
-          },
-          onLongPressStart: (details) {
-            _onLongPress(details);
-          },
-          child: FParagraphRenderWidget(
-          key: _renderWidgetKey,
-          node: container,
-          registry: widget.document.paragraphRegistry,
-          lineHeight: style?.lineHeight ?? widget.document.pendingLineHeight,
-          textAlign: parseTextAlign((widget.node as Paragraph).textAlign),
-          shrinkWrap: widget.shrinkWrap,
-          paragraphStyle: style, // Pass the style for fallbacks
-          defaultTextColor: Theme.of(context).colorScheme.onSurface,
-          anchorFragmentId: cursor.anchorId,
-          anchorLocalOffset: cursor.anchorOffset,
-          focusFragmentId: cursor.isCollapsed ? null : cursor.focusId,
-          focusLocalOffset: cursor.isCollapsed ? null : cursor.focusOffset,
-          selAnchorFragmentId: selRange?.startFrag,
-          selAnchorLocalOffset: selRange?.startOff,
-          selFocusFragmentId: selRange?.endFrag,
-          selFocusLocalOffset: selRange?.endOff,
-          commentAnnotations: commentAnnotations,
-          selectedCommentId: selectedCommentId,
-          imePreeditText: hasPreedit
-              ? widget.document.imeHandler.preeditText
-              : '',
-          imePreeditFragmentId: hasPreedit
-              ? widget.document.imeHandler.preeditFragmentId
-              : '',
-          imePreeditLocalOffset: hasPreedit
-              ? widget.document.imeHandler.preeditLocalOffset
-              : 0,
-          children: imageWidgets,
+              _onSecondaryTap(details);
+            },
+            onLongPressStart: (details) {
+              _onLongPress(details);
+            },
+            child: FParagraphRenderWidget(
+              key: _renderWidgetKey,
+              node: container,
+              registry: widget.document.paragraphRegistry,
+              lineHeight: style?.lineHeight ?? widget.document.pendingLineHeight,
+              textAlign: parseTextAlign((widget.node as Paragraph).textAlign),
+              shrinkWrap: widget.shrinkWrap,
+              paragraphStyle: style, // Pass the style for fallbacks
+              defaultTextColor: Theme.of(context).colorScheme.onSurface,
+              anchorFragmentId: cursor.anchorId,
+              anchorLocalOffset: cursor.anchorOffset,
+              focusFragmentId: cursor.isCollapsed ? null : cursor.focusId,
+              focusLocalOffset: cursor.isCollapsed ? null : cursor.focusOffset,
+              selAnchorFragmentId: selRange?.startFrag,
+              selAnchorLocalOffset: selRange?.startOff,
+              selFocusFragmentId: selRange?.endFrag,
+              selFocusLocalOffset: selRange?.endOff,
+              commentAnnotations: commentAnnotations,
+              selectedCommentId: selectedCommentId,
+              imePreeditText: hasPreedit
+                  ? widget.document.imeHandler.preeditText
+                  : '',
+              imePreeditFragmentId: hasPreedit
+                  ? (widget.document.imeHandler.preeditFragmentId.isNotEmpty
+                      ? widget.document.imeHandler.preeditFragmentId
+                      : (cursor.focusId.isNotEmpty
+                          ? cursor.focusId
+                          : cursor.anchorId))
+                  : '',
+              imePreeditLocalOffset: hasPreedit
+                  ? widget.document.imeHandler.preeditLocalOffset
+                  : 0,
+              isSuggestionMode: isSuggestionMode,
+              children: imageWidgets,
+            ),
+          ),
         ),
       ),
-    ),
-  ),
-);
+    );
   }
 
   void _onSecondaryTap(TapUpDetails details) {
@@ -653,6 +669,7 @@ class FParagraphRenderWidget extends MultiChildRenderObjectWidget {
     this.imePreeditText = '',
     this.imePreeditFragmentId = '',
     this.imePreeditLocalOffset = 0,
+    this.isSuggestionMode = false,
     super.children = const [],
   });
 
@@ -681,6 +698,7 @@ class FParagraphRenderWidget extends MultiChildRenderObjectWidget {
   final String imePreeditText;
   final String imePreeditFragmentId;
   final int imePreeditLocalOffset;
+  final bool isSuggestionMode;
 
   @override
   RenderObject createRenderObject(BuildContext context) {
@@ -713,7 +731,8 @@ class FParagraphRenderWidget extends MultiChildRenderObjectWidget {
       ..selectedCommentId = selectedCommentId
       ..imePreeditText = imePreeditText
       ..imePreeditFragmentId = imePreeditFragmentId
-      ..imePreeditLocalOffset = imePreeditLocalOffset;
+      ..imePreeditLocalOffset = imePreeditLocalOffset
+      ..isSuggestionMode = isSuggestionMode;
   }
 
   @override
@@ -745,6 +764,7 @@ class FParagraphRenderWidget extends MultiChildRenderObjectWidget {
     renderObject.imePreeditText = imePreeditText;
     renderObject.imePreeditFragmentId = imePreeditFragmentId;
     renderObject.imePreeditLocalOffset = imePreeditLocalOffset;
+    renderObject.isSuggestionMode = isSuggestionMode;
   }
 }
 
@@ -889,6 +909,37 @@ class _InlineImageWidgetState extends State<InlineImageWidget> {
             child: Stack(
               children: [
                 Positioned.fill(child: _buildImage(widget.node.src)),
+                if (widget.node.styles?.contains('suggestion_deletion') == true ||
+                    widget.node.styles?.contains('strikethrough') == true)
+                  Positioned.fill(
+                    child: IgnorePointer(
+                      child: Stack(
+                        children: [
+                          ColoredBox(
+                            color: Colors.red.withValues(alpha: 0.35),
+                            child: const SizedBox.expand(),
+                          ),
+                          Center(
+                            child: Container(
+                              height: 4,
+                              color: const Color(0xFFE53935),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                if (widget.node.styles?.contains('suggestion_addition') == true)
+                  Positioned.fill(
+                    child: IgnorePointer(
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: const Color(0x404CAF50),
+                          border: Border.all(color: const Color(0xFF4CAF50), width: 3),
+                        ),
+                      ),
+                    ),
+                  ),
                 if (showHandles) ..._buildResizeHandles(imgWidth, imgHeight),
               ],
             ),

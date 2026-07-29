@@ -26,12 +26,9 @@ Fragment? _setFragText(FluentDocument document, Fragment frag, String newText, R
   }
 
   if (frag is FluentImage) {
-    if (newText.isEmpty) {
+    if (newText.isEmpty || newText == Whitespaces.zws) {
       removeNode(root, frag);
       return null;
-    }
-    if (newText == Whitespaces.zws) {
-      return frag; // image survives intact
     }
     final parent = findParentCached(document, frag);
     final isBlockLevel = parent is! Paragraph; // Link is Paragraph
@@ -50,6 +47,8 @@ Fragment? _setFragText(FluentDocument document, Fragment frag, String newText, R
 }
 
 void executeHandleReplaceSelection(String character, FluentDocument document) {
+  if (document.registry.dispatchReplaceSelection(character, document)) return;
+
   final sel = resolveSelectionFromCursor(document);
 
   if (sel == null) return;
@@ -106,8 +105,10 @@ void executeHandleReplaceSelection(String character, FluentDocument document) {
     FluentDocument document, ResolvedSelection sel, String character, Root root) {
   final baseFrag = sel.base.fragment;
   final extFrag  = sel.extent.fragment;
-  final baseOff  = sel.base.offset.clamp(0, baseFrag.text.length);
-  final extOff   = sel.extent.offset.clamp(0, extFrag.text.length);
+  final baseLen  = baseFrag is FluentImage ? 1 : baseFrag.text.length;
+  final extLen   = extFrag is FluentImage  ? 1 : extFrag.text.length;
+  final baseOff  = sel.base.offset.clamp(0, baseLen);
+  final extOff   = sel.extent.offset.clamp(0, extLen);
 
   if (baseFrag.id == extFrag.id) {
     final newText = baseFrag.text.substring(0, baseOff) +

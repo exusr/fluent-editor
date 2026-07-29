@@ -18,10 +18,8 @@ class DialogPresenter {
     if (result != null) {
       final url = result['url']!;
       final text = result['text']!;
-      document.saveState(description: 'Insert link', forceNewAction: true);
-      handleInsertNodeExceution(
+      document.eventHandler.handleInsertNode(
         'link',
-        document,
         {'url': url, 'text': text},
       );
     }
@@ -32,10 +30,8 @@ class DialogPresenter {
     final result = await showImageInsertDialog(context, labels: document.labels);
     if (result != null) {
       final src = result['src']!;
-      document.saveState(description: 'Insert image', forceNewAction: true);
-      handleInsertNodeExceution(
+      document.eventHandler.handleInsertNode(
         'image',
-        document,
         {'src': src},
       );
     }

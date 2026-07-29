@@ -93,9 +93,9 @@ class UndoRedoManager {
       currentIds.add(node.id);
       final cached = _jsonCache[node.id];
       if (cached != null) {
-        oldJsonList.add(cached);
+        oldJsonList.add(_deepCopyJsonMap(cached));
       } else {
-        final json = node.toJson();
+        final json = _deepCopyJsonMap(node.toJson());
         _jsonCache[node.id] = json;
         oldJsonList.add(json);
       }
@@ -109,6 +109,9 @@ class UndoRedoManager {
       oldCursor: CursorSnapshot.fromDocument(document),
     );
 
+    _forceNewAction = forceNewAction;
+    _currentGroupDescription = description;
+    _lastActionTime = now;
     _forceNewAction = forceNewAction;
     _currentGroupDescription = description;
     _lastActionTime = now;
@@ -134,7 +137,7 @@ class UndoRedoManager {
         final oldJson = oldNodes[i];
         final newNode = newNodes[i];
 
-        final newJson = newNode.toJson();
+        final newJson = _deepCopyJsonMap(newNode.toJson());
         if (!_mapsEqual(oldJson, newJson)) {
           changes.add(NodeChange(
             index: i,
@@ -149,7 +152,7 @@ class UndoRedoManager {
           : newNodes.length;
       for (int i = 0; i < maxLen; i++) {
         final oldJson = i < oldNodes.length ? oldNodes[i] : null;
-        final newJson = i < newNodes.length ? newNodes[i].toJson() : null;
+        final newJson = i < newNodes.length ? _deepCopyJsonMap(newNodes[i].toJson()) : null;
         if (oldJson == null || newJson == null || !_mapsEqual(oldJson, newJson)) {
           changes.add(NodeChange(
             index: i,
@@ -411,4 +414,35 @@ bool _mapsEqual(Map<String, dynamic> a, Map<String, dynamic> b) {
     }
   }
   return true;
+}
+
+Map<String, dynamic> _deepCopyJsonMap(Map<String, dynamic> map) {
+  final copy = <String, dynamic>{};
+  for (final entry in map.entries) {
+    final value = entry.value;
+    if (value is Map<String, dynamic>) {
+      copy[entry.key] = _deepCopyJsonMap(value);
+    } else if (value is Map) {
+      copy[entry.key] = _deepCopyJsonMap(value.cast<String, dynamic>());
+    } else if (value is List) {
+      copy[entry.key] = _deepCopyJsonList(value);
+    } else {
+      copy[entry.key] = value;
+    }
+  }
+  return copy;
+}
+
+List<dynamic> _deepCopyJsonList(List list) {
+  return list.map((item) {
+    if (item is Map<String, dynamic>) {
+      return _deepCopyJsonMap(item);
+    } else if (item is Map) {
+      return _deepCopyJsonMap(item.cast<String, dynamic>());
+    } else if (item is List) {
+      return _deepCopyJsonList(item);
+    } else {
+      return item;
+    }
+  }).toList();
 }

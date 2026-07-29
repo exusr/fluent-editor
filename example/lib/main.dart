@@ -7,6 +7,7 @@ import 'package:fluent_editor/fluent_document.dart';
 import 'package:fluent_editor/widgets/fluent_document_widget.dart';
 import 'package:fluent_editor_comments/fluent_editor_comments.dart';
 import 'package:fluent_editor_character_map/fluent_editor_character_map.dart';
+import 'package:fluent_editor_review/fluent_editor_review.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -178,6 +179,11 @@ class _MyHomePageState extends State<MyHomePage> {
   FluentDocument? _document;
   FluentToolbarMode _toolbarMode = FluentToolbarMode.fixed;
   final FluentCommentProvider _commentProvider = FluentCommentProvider();
+  final FluentSuggestionController _suggestionController =
+      FluentSuggestionController();
+  late final FluentSuggestionPlugin _suggestionPlugin =
+      FluentSuggestionPlugin(controller: _suggestionController);
+  bool _showSuggestionsSidebar = false;
 
   @override
   void initState() {
@@ -188,6 +194,7 @@ class _MyHomePageState extends State<MyHomePage> {
   @override
   void dispose() {
     _commentProvider.dispose();
+    _suggestionController.dispose();
     super.dispose();
   }
 
@@ -238,6 +245,21 @@ class _MyHomePageState extends State<MyHomePage> {
         actions: [
           IconButton(
             icon: Icon(
+              _showSuggestionsSidebar
+                  ? Icons.chat_bubble_outline
+                  : Icons.rule,
+            ),
+            tooltip: _showSuggestionsSidebar
+                ? 'Show Comments Sidebar'
+                : 'Show Suggestions Sidebar',
+            onPressed: () {
+              setState(() {
+                _showSuggestionsSidebar = !_showSuggestionsSidebar;
+              });
+            },
+          ),
+          IconButton(
+            icon: Icon(
               _toolbarMode == FluentToolbarMode.bubble
                   ? Icons.view_headline
                   : Icons.bubble_chart,
@@ -266,10 +288,20 @@ class _MyHomePageState extends State<MyHomePage> {
       body: SafeArea(
         child: FluentEditor(
           document: _document,
-          plugins: [FluentCharacterMapPlugin()],
+          plugins: [
+            FluentCharacterMapPlugin(),
+            _suggestionPlugin,
+          ],
           toolbarMode: _toolbarMode,
-          sidebar: FluentCommentSidebar(
-              provider: _commentProvider, document: _document!),
+          sidebar: _showSuggestionsSidebar
+              ? FluentSuggestionSidebar(
+                  controller: _suggestionController,
+                  document: _document!,
+                )
+              : FluentCommentSidebar(
+                  provider: _commentProvider,
+                  document: _document!,
+                ),
           bubbleActions: [
             CommentBubbleAction(
               document: _document!,

@@ -193,6 +193,65 @@ abstract class FluentEditorPlugin {
   List<FluentFormatContribution> get formats => const [];
   void attach(FluentPluginContext context) {}
   void detach(FluentPluginContext context) {}
+
+  /// Intercepts character insertion. Return true if handled.
+  bool onInsertCharacter(String character, FluentDocument document) => false;
+
+  /// Intercepts inserting text (single character or multi-character string from IME/paste). Return true if handled.
+  bool onInsertText(String text, FluentDocument document) => false;
+
+  /// Intercepts inserting a node (e.g. hr, image, list, table). Return true if handled.
+  bool onInsertNode(
+    FluentDocument document,
+    String nodeType,
+    Map<String, dynamic> options,
+  ) =>
+      false;
+
+  /// Intercepts committing IME composition/preedit text. Return true if handled.
+  bool onImeCompositionCommit(String text, FluentDocument document) => false;
+
+  /// Intercepts Backspace key. Return true if handled.
+  bool onBackspace(
+    FluentDocument document, {
+    bool ctrl = false,
+    bool lineStart = false,
+  }) =>
+      false;
+
+  /// Intercepts Delete key. Return true if handled.
+  bool onDelete(FluentDocument document, {bool ctrl = false}) => false;
+
+  /// Intercepts deleting a node (e.g. image, HR, table). Return true if handled.
+  bool onDeleteNode(FluentDocument document, FNode node) => false;
+
+  /// Intercepts Enter key (line/item split). Return true if handled.
+  bool onEnter(FluentDocument document) => false;
+
+  /// Intercepts Tab/Shift+Tab keys (indent/outdent). Return true if handled.
+  bool onTab(FluentDocument document, {required bool isShiftPressed}) => false;
+
+  /// Intercepts replacing active selection with text. Return true if handled.
+  bool onReplaceSelection(String character, FluentDocument document) => false;
+
+  /// Called whenever document text is mutated.
+  void onTextMutation(String paragraphId, int fromOffset, int delta) {}
+
+  /// Called when a saveState operation begins for the document.
+  void onSaveState(FluentDocument document, String description) {}
+
+  /// Called when a saveState operation is committed for the document.
+  void onCommitSaveState(FluentDocument document) {}
+
+  /// Called after an undo operation restores the document state.
+  void onUndo(FluentDocument document) {}
+
+  /// Called after a redo operation restores the document state.
+  void onRedo(FluentDocument document) {}
+
+  /// Returns true if style formatting actions (bold, italic, color, font size, etc.)
+  /// should be disabled for the current document selection or cursor position.
+  bool isFormattingDisabled(FluentDocument document) => false;
 }
 
 class FluentPluginContext {
@@ -339,6 +398,124 @@ class FluentPluginRegistry {
     final context = FluentPluginContext(document, this);
     for (final plugin in plugins.reversed) {
       plugin.detach(context);
+    }
+  }
+
+  bool dispatchInsertCharacter(String character, FluentDocument document) {
+    for (final plugin in plugins) {
+      if (plugin.onInsertCharacter(character, document)) return true;
+    }
+    return false;
+  }
+
+  bool dispatchInsertText(String text, FluentDocument document) {
+    for (final plugin in plugins) {
+      if (plugin.onInsertText(text, document)) return true;
+    }
+    return false;
+  }
+
+  bool dispatchInsertNode(
+    FluentDocument document,
+    String nodeType,
+    Map<String, dynamic> options,
+  ) {
+    for (final plugin in plugins) {
+      if (plugin.onInsertNode(document, nodeType, options)) return true;
+    }
+    return false;
+  }
+
+  bool dispatchImeCompositionCommit(String text, FluentDocument document) {
+    for (final plugin in plugins) {
+      if (plugin.onImeCompositionCommit(text, document)) return true;
+    }
+    return false;
+  }
+
+  bool dispatchEnter(FluentDocument document) {
+    for (final plugin in plugins) {
+      if (plugin.onEnter(document)) return true;
+    }
+    return false;
+  }
+
+  bool dispatchTab(FluentDocument document, {required bool isShiftPressed}) {
+    for (final plugin in plugins) {
+      if (plugin.onTab(document, isShiftPressed: isShiftPressed)) return true;
+    }
+    return false;
+  }
+
+  /// Returns true if any registered plugin requires formatting/style actions to be disabled.
+  bool isFormattingDisabled(FluentDocument document) {
+    for (final plugin in plugins) {
+      if (plugin.isFormattingDisabled(document)) return true;
+    }
+    return false;
+  }
+
+  bool dispatchBackspace(
+    FluentDocument document, {
+    bool ctrl = false,
+    bool lineStart = false,
+  }) {
+    for (final plugin in plugins) {
+      if (plugin.onBackspace(document, ctrl: ctrl, lineStart: lineStart)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  bool dispatchDelete(FluentDocument document, {bool ctrl = false}) {
+    for (final plugin in plugins) {
+      if (plugin.onDelete(document, ctrl: ctrl)) return true;
+    }
+    return false;
+  }
+
+  bool dispatchDeleteNode(FluentDocument document, FNode node) {
+    for (final plugin in plugins) {
+      if (plugin.onDeleteNode(document, node)) return true;
+    }
+    return false;
+  }
+
+  bool dispatchReplaceSelection(String character, FluentDocument document) {
+    for (final plugin in plugins) {
+      if (plugin.onReplaceSelection(character, document)) return true;
+    }
+    return false;
+  }
+
+  void dispatchTextMutation(String paragraphId, int fromOffset, int delta) {
+    for (final plugin in plugins) {
+      plugin.onTextMutation(paragraphId, fromOffset, delta);
+    }
+  }
+
+  void dispatchSaveState(FluentDocument document, String description) {
+    for (final plugin in plugins) {
+      plugin.onSaveState(document, description);
+    }
+  }
+
+  void dispatchCommitSaveState(FluentDocument document) {
+    for (final plugin in plugins) {
+      plugin.onCommitSaveState(document);
+    }
+  }
+
+  void dispatchUndo(FluentDocument document) {
+    for (final plugin in plugins) {
+      plugin.onUndo(document);
+    }
+  }
+
+  void dispatchRedo(FluentDocument document) {
+    for (final plugin in plugins) {
+      plugin.onRedo(document);
     }
   }
 

@@ -421,9 +421,10 @@ class FluentDocument extends ChangeNotifier {
 
   final FluentTextInputHandler imeHandler = FluentTextInputHandler();
 
-  /// Notifies the comment provider that text in [paragraphId] was mutated.
+  /// Notifies the comment provider and registered plugins that text in [paragraphId] was mutated.
   void notifyTextMutation(String paragraphId, int fromOffset, int delta) {
     commentProvider?.onDocumentMutation(paragraphId, fromOffset, delta);
+    registry.dispatchTextMutation(paragraphId, fromOffset, delta);
   }
 
   /// Calculates the global offset within [paragraphId] for a local
@@ -457,12 +458,22 @@ class FluentDocument extends ChangeNotifier {
 
   /// Executes undo of the last action
   bool undo() {
-    return _undoRedoManager.undo(this);
+    final result = _undoRedoManager.undo(this);
+    if (result) {
+      syncPendingFontWithCursor();
+      registry.dispatchUndo(this);
+    }
+    return result;
   }
 
   /// Executes redo of the last undone action
   bool redo() {
-    return _undoRedoManager.redo(this);
+    final result = _undoRedoManager.redo(this);
+    if (result) {
+      syncPendingFontWithCursor();
+      registry.dispatchRedo(this);
+    }
+    return result;
   }
 
   /// Checks if undo is possible
@@ -479,6 +490,7 @@ class FluentDocument extends ChangeNotifier {
     String description = 'Document change',
     bool forceNewAction = false,
   }) {
+    registry.dispatchSaveState(this, description);
     _undoRedoManager.beginSaveState(
       this,
       description: description,
@@ -577,6 +589,7 @@ class FluentDocument extends ChangeNotifier {
     _contentVersion++;
     invalidateNodeIndex();
     _undoRedoManager.commitSaveState(this);
+    registry.dispatchCommitSaveState(this);
     notifyListeners();
   }
 
@@ -589,6 +602,12 @@ class FluentDocument extends ChangeNotifier {
   void notifyDocumentChanged({Set<String>? affectedIds}) {
     _contentVersion++;
     _dirtyNodeIds = affectedIds ?? {};
+    _cachedCursorContainerId = cursor.focusId.isNotEmpty
+        ? findLogicalContainerId(cursor.focusId)
+        : null;
+    cachedSelectionKey = null;
+    cachedSelection = null;
+    cursor.notifyListeners();
     notifyListeners();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _dirtyNodeIds.clear();

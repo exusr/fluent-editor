@@ -1201,11 +1201,12 @@ class _FluentToolbarState extends State<FluentToolbar> {
     required bool isActive,
     required VoidCallback handler,
   }) {
+    final isDisabled = widget.document.registry.isFormattingDisabled(widget.document);
     return _withClickCursor(
       MenuItemButton(
         leadingIcon: Icon(icon),
         trailingIcon: isActive ? const Icon(Icons.check, size: 18) : null,
-        onPressed: _hasSelection()
+        onPressed: (_hasSelection() && !isDisabled)
             ? () {
                 handler();
                 widget.document.requestEditorFocus();

@@ -182,6 +182,8 @@ void _insertImage(
     insertAfter(parent, newImage, afterFrag);
   }
   cursor.moveTo(newImage.id, 1);
+  final containerId = document.findLogicalContainerId(newImage.id) ?? parent.id;
+  document.selectionManager.startSelection(containerId, newImage.id, 1);
 
   recalculateAndUpdate(document);
 }

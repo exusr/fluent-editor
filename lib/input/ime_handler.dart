@@ -1,1318 +1,114 @@
-import 'dart:async';
-    
+import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:fluent_editor/fluent_document.dart';
-import 'package:fluent_editor/factories.dart' show Fragment, FluentCell;
-import 'package:fluent_editor/handlers/handle_insert_character.dart';
-import 'package:fluent_editor/handlers/handle_replace_selection.dart';
-import 'package:fluent_editor/handlers/handle_enter.dart';
-import 'package:fluent_editor/handlers/handle_backspace.dart';
-import 'package:fluent_editor/utils/cursor_navigation.dart';
-import 'package:fluent_editor/utils/fragment_operations.dart';
-import 'package:fluent_editor/utils/node_operations.dart';
-import 'composition_detector_stub.dart'
-    if (dart.library.html) 'composition_detector_web.dart';
 
-/// Singleton IME handler that implements [TextInputClient] for Flutter's
-/// system text input channel. Preedit text is kept isolated from the document
-/// model and only committed when the composition genuinely ends.
-class FluentTextInputHandler with DeltaTextInputClient {
-  static final FluentTextInputHandler _instance = FluentTextInputHandler._internal();
+import 'package:fluent_editor/factories.dart'
+    show Fragment, Paragraph, FluentImage;
+import '../fluent_document.dart';
+import '../handlers/handle_arrow_key.dart';
+import '../handlers/handle_backspace.dart';
+import '../handlers/handle_enter.dart';
+import '../utils/node_operations.dart' show removeNode;
+import 'ime_connection_manager.dart';
+import 'ime_state_manager.dart';
+
+const String _emptyFragmentPlaceholder = '\u200B';
+
+/// Singleton handler for Flutter's [TextInputClient] and [DeltaTextInputClient] channels.
+///
+/// Manages IME composition (preedit underlines, CJK, accents, Gboard),
+/// multi-fragment paragraph isolation for suggestion mode, platform buffer reconciliation,
+/// and document text synchronization across macOS, iOS, Android, Web, and Windows.
+class FluentTextInputHandler implements DeltaTextInputClient {
+  static final FluentTextInputHandler _instance =
+      FluentTextInputHandler._internal();
+
   factory FluentTextInputHandler() => _instance;
-  FluentTextInputHandler._internal();
 
-  TextInputConnection? _connection;
+  final ImeStateManager state = ImeStateManager();
+  late final ImeConnectionManager connectionManager;
+
+  FluentTextInputHandler._internal() {
+    connectionManager = ImeConnectionManager(this);
+  }
+
   FluentDocument? _document;
 
+  FluentDocument? get document => _document;
+  bool get isComposing => state.isComposing;
+  String get preeditText => state.preeditText;
+  String get preeditFragmentId => state.preeditFragmentId;
+  int get preeditLocalOffset => state.preeditLocalOffset;
+
+  bool isPreeditInContainer(String containerId) =>
+      state.isPreeditInContainer(containerId);
+
+  void showKeyboard(BuildContext context) {
+    connectionManager.showKeyboard(
+      context,
+      onSyncBuffer: syncImeBufferToFragment,
+    );
+  }
+
+  bool get _isIOS => defaultTargetPlatform == TargetPlatform.iOS;
+
   bool get _shouldSyncBuffer =>
-      kIsWeb || (defaultTargetPlatform == TargetPlatform.iOS ||
-                  defaultTargetPlatform == TargetPlatform.macOS ||
-                  defaultTargetPlatform == TargetPlatform.windows ||
-                  defaultTargetPlatform == TargetPlatform.linux);
+      kIsWeb || defaultTargetPlatform == TargetPlatform.android;
 
-  bool get _isIOS => !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS;
+  // ===========================================================================
+  // Input Lifecycle
+  // ===========================================================================
 
-  bool get shouldUseBufferSync => _shouldSyncBuffer;
-
-  String _preeditText = '';
-  String get preeditText => _preeditText;
-
-  String _preeditFragmentId = '';
-  int _preeditLocalOffset = 0;
-  String _preeditContainerId = '';
-
-  int _preeditCaretOffset = 0;
-
-  bool _isComposing = false;
-  bool get isComposing => _isComposing;
-
-  String get preeditFragmentId => _preeditFragmentId;
-  int get preeditLocalOffset => _preeditLocalOffset;
-
-  TextRange _composingRange = TextRange.empty;
-  TextRange get composingRange => _composingRange;
-
-  bool _updatingSelf = false;
-  bool _justHandledEnter = false;
-  String _lastSyncedFragmentId = '';
-  String _lastSyncedText = '';
-  String _prevSelectionKey = '';
-
-  bool get isConnectionActive => _connection != null && _connection!.attached;
-
-  Rect? _lastCaretRect;
-  double? _lastViewHeight;
-
-  Timer? _connectionRetryTimer;
-  int _connectionRetryCount = 0;
-  static const int _maxConnectionRetries = 5;
-  static const List<Duration> _windowsRetryDelays = [
-    Duration(milliseconds: 50),
-    Duration(milliseconds: 100),
-    Duration(milliseconds: 200),
-    Duration(milliseconds: 400),
-    Duration(milliseconds: 800),
-  ];
-
-  bool _structuralChangeInProgress = false;
-  Timer? _structuralChangeTimer;
-  static const Duration _structuralChangeGracePeriod =
-      Duration(milliseconds: 300);
-
-  void setViewHeight(double viewHeight) {
-    _lastViewHeight = viewHeight;
-    if (_connection == null || !_connection!.attached) return;
-    if (kIsWeb) return;
-    _connection!.setEditableSizeAndTransform(
-      const Size(9999, 9999),
-      Matrix4.identity(),
-    );
-  }
-
-  void _updateWebImePosition() {
-    if (_connection == null || !_connection!.attached) return;
-    if (_document == null) return;
-    final doc = _document!;
-
-    final fragId = doc.cursor.focusId.isNotEmpty
-        ? doc.cursor.focusId
-        : doc.cursor.anchorId;
-    if (fragId.isEmpty) return;
-
-    final containerId = doc.findLogicalContainerId(fragId);
-    if (containerId == null) return;
-
-    final render = doc.paragraphRegistry.renderFor(containerId);
-    if (render == null || !render.attached || !render.hasSize) return;
-
-    String fontFamily = 'DejaVu Sans';
-    double fontSize = 14.0;
-    FontWeight fontWeight = FontWeight.normal;
-    final fragNode = doc.nodeById(fragId);
-    if (fragNode is Fragment) {
-      fontFamily = fragNode.fontFamily;
-      fontSize = fragNode.fontSize;
-      fontWeight = fragNode.isBold ? FontWeight.bold : FontWeight.normal;
-    }
-
-    final fragmentStartRect = render.getCaretScreenRect(fragId, 0);
-
-    final Matrix4 transform;
-    if (fragmentStartRect != null) {
-      final renderBoxOrigin = render.localToGlobal(Offset.zero);
-      final fragOffsetX = fragmentStartRect.left - renderBoxOrigin.dx;
-      final fragOffsetY = fragmentStartRect.top - renderBoxOrigin.dy;
-      transform = render.getTransformTo(null)
-          .multiplied(Matrix4.translationValues(fragOffsetX, fragOffsetY, 0));
-    } else {
-      transform = render.getTransformTo(null);
-    }
-
-    _connection!.setEditableSizeAndTransform(render.size, transform);
-
-    final browserFontFamily = _webFontFallback(fontFamily);
-    _connection!.setStyle(
-      fontFamily: browserFontFamily,
-      fontSize: fontSize,
-      fontWeight: fontWeight,
-      textDirection: TextDirection.ltr,
-      textAlign: TextAlign.left,
-    );
-  }
-
-  String _webFontFallback(String fontFamily) {
-    const webFontFamilies = {
-      'Crimson Text', 'Fira Sans', 'Lato', 'Poppins', 'Titillium Web',
-      'DejaVu Sans', 'DejaVu Sans Mono', 'DejaVu Serif',
-    };
-    if (webFontFamilies.contains(fontFamily)) {
-      return '$fontFamily, sans-serif';
-    }
-    return switch (fontFamily) {
-      _ => '$fontFamily, sans-serif',
-    };
-  }
-
-  void updateCaretRect(Rect rect) {
-    _lastCaretRect = rect;
-    if (_connection == null || !_connection!.attached) return;
-    if (kIsWeb) {
-      _updateWebImePosition();
-      return;
-    }
-    _connection!.setCaretRect(rect);
-    _connection!.setComposingRect(rect);
-  }
-
-  void attachInput(FluentDocument document) {
-    _document = document;
-    _lastSyncedFragmentId = '';
-    _lastSyncedText = '';
-    _prevSelectionKey = '';
-    CompositionDetector.initialize();
+  void attachInput(FluentDocument doc) {
+    _document = doc;
+    state.attachInput();
+    connectionManager.attachInput(doc);
+    syncImeBufferToFragment();
   }
 
   void detachInput() {
-    commitIfComposing();
-    _connectionRetryTimer?.cancel();
-    _connectionRetryTimer = null;
-    _connectionRetryCount = 0;
-    _structuralChangeTimer?.cancel();
-    _structuralChangeTimer = null;
-    _structuralChangeInProgress = false;
-    _connection?.close();
-    _connection = null;
+    connectionManager.detachInput();
+    state.detachInput();
     _document = null;
-    _resetComposition();
-    _lastSyncedFragmentId = '';
-    _lastSyncedText = '';
-    _prevSelectionKey = '';
   }
 
-  void showKeyboard(BuildContext context) {
-    final int viewId = View.of(context).viewId;
-    if (_connection == null || !_connection!.attached) {
-      _attachConnection(viewId: viewId);
-    }
-    _connection?.show();
-    if (kIsWeb) {
-      _updateWebImePosition();
-      return;
-    }
-    final h = _lastViewHeight;
-    if (h != null) setViewHeight(h);
-    final rect = _lastCaretRect;
-    if (rect != null) {
-      _connection?.setCaretRect(rect);
-      _connection?.setComposingRect(rect);
-    }
-  }
-
-  void hideKeyboard() {
-    commitIfComposing();
-    _connection?.close();
-  }
-
-  bool _attachConnection({required int viewId}) {
-    if (_document == null) return false;
-    try {
-      _connection = TextInput.attach(
-        this,
-        TextInputConfiguration(
-          inputType: TextInputType.multiline,
-          textCapitalization: TextCapitalization.sentences,
-          inputAction: TextInputAction.newline,
-          enableDeltaModel: true,
-          viewId: viewId,
-        ),
-      );
-      if (_connection == null || !_connection!.attached) return false;
-      _connection!.setEditingState(const TextEditingValue());
-      _connection!.show();
-      if (_shouldSyncBuffer) {
-        syncImeBufferToFragment();
-      }
-      _connectionRetryCount = 0;
-      _connectionRetryTimer?.cancel();
-      _connectionRetryTimer = null;
-      return true;
-    } on PlatformException catch (e) {
-      if (defaultTargetPlatform == TargetPlatform.windows &&
-          e.message?.contains('view ID is null') == true &&
-          _connectionRetryCount < _maxConnectionRetries) {
-        final delay = _windowsRetryDelays[_connectionRetryCount.clamp(0, _windowsRetryDelays.length - 1)];
-        _connectionRetryCount++;
-        _connectionRetryTimer?.cancel();
-        _connectionRetryTimer = Timer(delay, () {
-          _connectionRetryTimer = null;
-          _attachConnection(viewId: viewId);
-        });
-        return false;
-      }
-      _connection = null;
-      return false;
-    }
-  }
+  // ===========================================================================
+  // TextInputClient / DeltaTextInputClient Callbacks
+  // ===========================================================================
 
   @override
   AutofillScope? get currentAutofillScope => null;
 
   @override
   TextEditingValue? get currentTextEditingValue {
-    if (_isComposing) {
-      if (_shouldSyncBuffer) {
-        final fragText = _getCurrentFragmentText() ?? '';
-        final start = _preeditLocalOffset.clamp(0, fragText.length);
-        final text = fragText.substring(0, start) + _preeditText + fragText.substring(start);
-        final composingStart = start;
-        final composingEnd = start + _preeditText.length;
-        return TextEditingValue(
-          text: text,
-          selection: TextSelection.collapsed(
-            offset: composingStart + _preeditCaretOffset.clamp(0, _preeditText.length),
-          ),
-          composing: TextRange(start: composingStart, end: composingEnd),
-        );
-      }
-      return TextEditingValue(
-        text: _preeditText,
-        selection: TextSelection.collapsed(offset: _preeditText.length),
-        composing: _composingRange,
-      );
-    }
-    if (_shouldSyncBuffer) {
-      final text = _getCurrentFragmentText();
-      if (text != null) {
-        final doc = _document!;
-        final cursor = doc.cursor;
-        final isSingleFragSelection =
-            !cursor.isCollapsed && cursor.anchorId == cursor.focusId;
-        final offset = _getCursorOffsetInFragment().clamp(0, text.length);
-        if (_isIOS &&
-            cursor.isCollapsed &&
-            offset == 0 &&
-            !text.startsWith(_emptyFragmentPlaceholder)) {
-          return TextEditingValue(
-            text: '$_emptyFragmentPlaceholder$text',
-            selection: const TextSelection.collapsed(offset: 1),
-            composing: TextRange.empty,
-          );
-        }
-        if (isSingleFragSelection) {
-          return TextEditingValue(
-            text: text,
-            selection: TextSelection(
-              baseOffset: cursor.anchorOffset.clamp(0, text.length),
-              extentOffset: cursor.focusOffset.clamp(0, text.length),
-            ),
-            composing: TextRange.empty,
-          );
-        }
-        if (!cursor.isCollapsed) {
-          return TextEditingValue(
-            text: text,
-            selection: TextSelection(
-              baseOffset: 0,
-              extentOffset: text.length,
-            ),
-            composing: TextRange.empty,
-          );
-        }
-        return TextEditingValue(
-          text: text,
-          selection: TextSelection.collapsed(offset: offset),
-          composing: TextRange.empty,
-        );
-      }
-    }
-    return const TextEditingValue();
-  }
-
-  bool _isDeltaRangeValid(TextEditingDelta delta, String text) {
-    final textLength = text.length;
-    bool isRangeSafe(int start, int end) {
-      if (start < 0 || end > textLength || start > end) return false;
-      if (start > 0 && start < textLength) {
-        final prev = text.codeUnitAt(start - 1);
-        final curr = text.codeUnitAt(start);
-        if (prev >= 0xD800 && prev <= 0xDBFF &&
-            curr >= 0xDC00 && curr <= 0xDFFF) return false;
-      }
-      if (end > 0 && end < textLength) {
-        final prev = text.codeUnitAt(end - 1);
-        final curr = text.codeUnitAt(end);
-        if (prev >= 0xD800 && prev <= 0xDBFF &&
-            curr >= 0xDC00 && curr <= 0xDFFF) return false;
-      }
-      return true;
-    }
-    if (delta is TextEditingDeltaDeletion) {
-      return isRangeSafe(delta.deletedRange.start, delta.deletedRange.end);
-    }
-    if (delta is TextEditingDeltaReplacement) {
-      return isRangeSafe(delta.replacedRange.start, delta.replacedRange.end);
-    }
-    if (delta is TextEditingDeltaInsertion) {
-      final offset = delta.insertionOffset;
-      if (offset < 0 || offset > textLength) return false;
-      if (offset > 0 && offset < textLength) {
-        final prev = text.codeUnitAt(offset - 1);
-        final curr = text.codeUnitAt(offset);
-        if (prev >= 0xD800 && prev <= 0xDBFF &&
-            curr >= 0xDC00 && curr <= 0xDFFF) return false;
-      }
-      return true;
-    }
-    return true;
-  }
-
-  TextEditingValue _safeApplyDelta(TextEditingDelta delta, TextEditingValue value) {
-    final String newText;
-    if (delta is TextEditingDeltaInsertion) {
-      newText = value.text.replaceRange(
-          delta.insertionOffset, delta.insertionOffset, delta.textInserted);
-    } else if (delta is TextEditingDeltaDeletion) {
-      newText = value.text.replaceRange(
-          delta.deletedRange.start, delta.deletedRange.end, '');
-    } else if (delta is TextEditingDeltaReplacement) {
-      newText = value.text.replaceRange(
-          delta.replacedRange.start, delta.replacedRange.end, delta.replacementText);
-    } else {
-      return TextEditingValue(
-        text: delta.oldText,
-        selection: delta.selection,
-        composing: delta.composing,
-      );
-    }
-    final len = newText.length;
+    final text = _getCurrentFragmentText() ?? '';
+    final offset = _getCursorOffsetInFragment();
     return TextEditingValue(
-      text: newText,
-      selection: TextSelection(
-        baseOffset: delta.selection.baseOffset.clamp(0, len),
-        extentOffset: delta.selection.extentOffset.clamp(0, len),
-      ),
-      composing: delta.composing.isValid
-          ? TextRange(
-              start: delta.composing.start.clamp(0, len),
-              end: delta.composing.end.clamp(0, len),
-            )
-          : TextRange.empty,
+      text: text,
+      selection: TextSelection.collapsed(offset: offset),
     );
   }
 
-  TextEditingValue _applyDeltasSafely(
-    TextEditingValue initialValue,
-    List<TextEditingDelta> deltas,
-  ) {
-    var value = initialValue;
-    for (final delta in deltas) {
-      if (value.text != delta.oldText) {
-        value = TextEditingValue(
-          text: delta.oldText,
-          selection: delta.selection,
-          composing: delta.composing,
-        );
-      }
-      if (!_isDeltaRangeValid(delta, value.text)) {
-        debugPrint('FluentTextInputHandler: skipping malformed delta '
-            '(range exceeds oldText length ${value.text.length}): $delta');
-        value = TextEditingValue(
-          text: delta.oldText,
-          selection: delta.selection,
-          composing: delta.composing,
-        );
-        continue;
-      }
-      value = _safeApplyDelta(delta, value);
-    }
-    return value;
-  }
-
   @override
-  void updateEditingValueWithDeltas(List<TextEditingDelta> deltas) {
-    if (_updatingSelf) return;
-    if (_structuralChangeInProgress) return;
-    if (_document == null) return;
-    if (deltas.any((d) => d.composing.isValid)) {
-      final value = _applyDeltasSafely(
-        currentTextEditingValue ?? const TextEditingValue(),
-        deltas,
-      );
-      final cleanText = _sanitizeUtf16(value.text);
-      final cleanValue = TextEditingValue(
-        text: cleanText,
-        selection: value.selection,
-        composing: value.composing,
-      );
-      updateEditingValue(cleanValue);
-      return;
-    }
-
-    final isAutocorrectReplacement = !_isComposing &&
-        deltas.any((d) =>
-            d is TextEditingDeltaReplacement && d.replacementText.isNotEmpty);
-
-    if (kIsWeb &&
-        CompositionDetector.isComposing &&
-        !isAutocorrectReplacement &&
-        deltas.any((d) => d is! TextEditingDeltaNonTextUpdate)) {
-      final value = _applyDeltasSafely(
-        currentTextEditingValue ?? const TextEditingValue(),
-        deltas,
-      );
-      final cleanText = _sanitizeUtf16(value.text);
-
-      int composingStart, composingEnd;
-      if (_isComposing) {
-        final fragText = _getCurrentFragmentText() ?? '';
-        final preeditOffset = _preeditLocalOffset.clamp(0, fragText.length);
-        final suffixLen = fragText.length - preeditOffset;
-        composingStart = preeditOffset;
-        composingEnd =
-            (cleanText.length - suffixLen).clamp(composingStart, cleanText.length);
-      } else {
-        final fragText = _getCurrentFragmentText() ?? '';
-        final oldCursorOffset =
-            _getCursorOffsetInFragment().clamp(0, fragText.length);
-        composingStart = oldCursorOffset;
-        composingEnd = value.selection.isValid
-            ? value.selection.extentOffset.clamp(composingStart, cleanText.length)
-            : cleanText.length;
-      }
-
-      final cleanValue = TextEditingValue(
-        text: cleanText,
-        selection: value.selection,
-        composing: TextRange(start: composingStart, end: composingEnd),
-      );
-      updateEditingValue(cleanValue);
-      return;
-    }
-
-    if (!_isComposing) {
-      if (_shouldSyncBuffer) {
-        final _isMacOS = !kIsWeb && defaultTargetPlatform == TargetPlatform.macOS;
-
-        if (_isIOS && cursorIsAtFragmentStart) {
-          final deletedPlaceholder = deltas.any((d) {
-            if (d is TextEditingDeltaDeletion) {
-              return d.oldText.startsWith(_emptyFragmentPlaceholder) &&
-                  d.deletedRange.start == 0 &&
-                  d.deletedRange.end == _emptyFragmentPlaceholder.length;
-            }
-            if (d is TextEditingDeltaReplacement) {
-              return d.oldText.startsWith(_emptyFragmentPlaceholder) &&
-                  d.replacementText.isEmpty &&
-                  d.replacedRange.start == 0 &&
-                  d.replacedRange.end == _emptyFragmentPlaceholder.length;
-            }
-            return false;
-          });
-          if (deletedPlaceholder) {
-            _document!.saveState(description: 'Backspace', forceNewAction: false);
-            executeHandleBackspace(_document!);
-            syncImeBufferToFragment();
-            return;
-          }
-        }
-
-        if (_isIOS && cursorIsAtFragmentStart && deltas.isNotEmpty) {
-          final isZeroContentDeleteAttempt = deltas.every((d) {
-            if (d is TextEditingDeltaNonTextUpdate) return true;
-            if (d is TextEditingDeltaDeletion) {
-              return d.deletedRange.start == d.deletedRange.end;
-            }
-            if (d is TextEditingDeltaReplacement) {
-              return d.replacementText.isEmpty &&
-                  d.replacedRange.start == d.replacedRange.end;
-            }
-            return false;
-          });
-          if (isZeroContentDeleteAttempt) {
-            _document!.saveState(description: 'Backspace', forceNewAction: false);
-            executeHandleBackspace(_document!);
-            syncImeBufferToFragment();
-            return;
-          }
-        }
-
-        if (deltas.length == 1 && deltas.first is TextEditingDeltaReplacement) {
-          final rd = deltas.first as TextEditingDeltaReplacement;
-          if (rd.replacementText.isNotEmpty) {
-            // With an active selection the replacement must go through the
-            // document-level handler: the buffer-based fast path below only
-            // knows the current fragment, so it would rewrite the wrong text
-            // for multi-fragment/multi-node selections and leave the
-            // SelectionManager highlight dangling.
-            if (!_document!.cursor.isCollapsed) {
-              _document!.saveState(
-                  description: 'Replace selection', forceNewAction: false);
-              _insertTextOrReplaceSelection(rd.replacementText, _document!);
-              syncImeBufferToFragment();
-              return;
-            }
-            final currentFragText = _getCurrentFragmentText() ?? '';
-            final oldBufText = rd.oldText;
-            final replacedRange = rd.replacedRange;
-            if (replacedRange.isValid &&
-                replacedRange.start >= 0 &&
-                replacedRange.end <= oldBufText.length) {
-              final prefix = oldBufText.substring(0, replacedRange.start);
-              final suffix = oldBufText.substring(replacedRange.end);
-              final replacement = rd.replacementText;
-              final String newFragText;
-              if (currentFragText.startsWith(prefix) &&
-                  currentFragText.endsWith(suffix) &&
-                  currentFragText.length >= prefix.length + suffix.length) {
-                newFragText = prefix + replacement + suffix;
-              } else {
-                newFragText = prefix + replacement + suffix;
-              }
-              final newCursorOffset = prefix.length + replacement.length;
-              _replaceFragmentText(newFragText, cursorOffset: newCursorOffset);
-              return;
-            }
-          }
-        }
-
-        TextEditingValue value = currentTextEditingValue ?? const TextEditingValue();
-        for (final delta in deltas) {
-          if ((delta is TextEditingDeltaInsertion && delta.textInserted.contains('\n')) ||
-              (delta is TextEditingDeltaReplacement && delta.replacementText.contains('\n'))) {
-            _structuralChangeInProgress = true;
-            _structuralChangeTimer?.cancel();
-            _document!.saveState(description: 'Enter', forceNewAction: true);
-            executeHandleEnter(_document!);
-            _justHandledEnter = true;
-            _lastSyncedFragmentId = _document!.cursor.focusId.isNotEmpty
-                ? _document!.cursor.focusId
-                : _document!.cursor.anchorId;
-            syncImeBufferToFragment();
-            _structuralChangeTimer = Timer(_structuralChangeGracePeriod, () {
-              _structuralChangeInProgress = false;
-            });
-            return;
-          }
-
-          if (_isMacOS && (delta is TextEditingDeltaDeletion ||
-              (delta is TextEditingDeltaReplacement &&
-                  delta.replacementText.isEmpty))) {
-            continue;
-          }
-
-          if (delta.oldText != value.text &&
-              (delta is TextEditingDeltaDeletion ||
-               (delta is TextEditingDeltaReplacement &&
-                delta.replacementText.isEmpty))) {
-            final deletionRange = delta is TextEditingDeltaDeletion
-                ? delta.deletedRange
-                : (delta as TextEditingDeltaReplacement).replacedRange;
-            final deleteStart = deletionRange.start.clamp(0, delta.oldText.length);
-            final deleteEnd = deletionRange.end.clamp(0, delta.oldText.length);
-            final deletedText = delta.oldText.substring(deleteStart, deleteEnd);
-            final graphemeCount = deletedText.characters.length;
-            _document!.saveState(description: 'Backspace', forceNewAction: false);
-            if (!_document!.cursor.isCollapsed) {
-              executeHandleBackspace(_document!);
-            } else {
-              for (int i = 0; i < graphemeCount; i++) {
-                executeHandleBackspace(_document!);
-              }
-            }
-            syncImeBufferToFragment();
-            return;
-          }
-
-          if (!_isMacOS && (delta is TextEditingDeltaDeletion ||
-              (delta is TextEditingDeltaReplacement &&
-                  delta.replacementText.isEmpty))) {
-            final deletionRange = delta is TextEditingDeltaDeletion
-                ? delta.deletedRange
-                : (delta as TextEditingDeltaReplacement).replacedRange;
-            final deletionLength = deletionRange.end - deletionRange.start;
-            if (deletionRange.isValid && deletionLength == 1) {
-              final textBefore = value.text;
-              final deleteStart = deletionRange.start.clamp(0, textBefore.length);
-              var effectiveDeleteStart = deleteStart;
-              if (deleteStart > 0 && deleteStart < textBefore.length) {
-                final prev = textBefore.codeUnitAt(deleteStart - 1);
-                final curr = textBefore.codeUnitAt(deleteStart);
-                if (prev >= 0xD800 && prev <= 0xDBFF &&
-                    curr >= 0xDC00 && curr <= 0xDFFF) {
-                  effectiveDeleteStart = deleteStart - 1;
-                }
-              }
-              if (effectiveDeleteStart < textBefore.length) {
-                final graphemeLen = FragmentOperations.getGraphemeLengthAt(textBefore, effectiveDeleteStart);
-                if (graphemeLen > 1) {
-                  var adjustedSelection = delta.selection;
-                  if (effectiveDeleteStart < deleteStart) {
-                    final shift = deleteStart - effectiveDeleteStart;
-                    adjustedSelection = delta.selection.copyWith(
-                      baseOffset: delta.selection.baseOffset >= deleteStart
-                          ? delta.selection.baseOffset - shift
-                          : delta.selection.baseOffset,
-                      extentOffset: delta.selection.extentOffset >= deleteStart
-                          ? delta.selection.extentOffset - shift
-                          : delta.selection.extentOffset,
-                    );
-                  }
-                  if (delta is TextEditingDeltaDeletion) {
-                    final expandedDelta = TextEditingDeltaDeletion(
-                      oldText: delta.oldText,
-                      deletedRange: TextRange(start: effectiveDeleteStart, end: effectiveDeleteStart + graphemeLen),
-                      selection: adjustedSelection,
-                      composing: delta.composing,
-                    );
-                    if (value.text != delta.oldText) {
-                      value = TextEditingValue(
-                        text: delta.oldText,
-                        selection: delta.selection,
-                        composing: delta.composing,
-                      );
-                    }
-                    if (_isDeltaRangeValid(expandedDelta, value.text)) {
-                      value = _safeApplyDelta(expandedDelta, value);
-                    }
-                  } else if (delta is TextEditingDeltaReplacement) {
-                    final expandedDelta = TextEditingDeltaReplacement(
-                      oldText: delta.oldText,
-                      replacementText: '',
-                      replacedRange: TextRange(start: effectiveDeleteStart, end: effectiveDeleteStart + graphemeLen),
-                      selection: adjustedSelection,
-                      composing: delta.composing,
-                    );
-                    if (value.text != delta.oldText) {
-                      value = TextEditingValue(
-                        text: delta.oldText,
-                        selection: delta.selection,
-                        composing: delta.composing,
-                      );
-                    }
-                    if (_isDeltaRangeValid(expandedDelta, value.text)) {
-                      value = _safeApplyDelta(expandedDelta, value);
-                    }
-                  }
-                  continue;
-                }
-              }
-            }
-          }
-
-          if (value.text != delta.oldText) {
-            value = TextEditingValue(
-              text: delta.oldText,
-              selection: delta.selection,
-              composing: delta.composing,
-            );
-          }
-          if (_isDeltaRangeValid(delta, value.text)) {
-            value = _safeApplyDelta(delta, value);
-          } else {
-            debugPrint('FluentTextInputHandler: skipping malformed delta '
-                '(range exceeds oldText length ${value.text.length}): $delta');
-            value = TextEditingValue(
-              text: delta.oldText,
-              selection: delta.selection,
-              composing: delta.composing,
-            );
-          }
-        }
-        int? cursorOffset;
-        if (value.selection.isValid) {
-          final selOffset = value.selection.extentOffset;
-          final textLen = value.text.length;
-          if (selOffset > 0 && selOffset < textLen) {
-            final prev = value.text.codeUnitAt(selOffset - 1);
-            final curr = value.text.codeUnitAt(selOffset);
-            if (prev >= 0xD800 && prev <= 0xDBFF && curr >= 0xDC00 && curr <= 0xDFFF) {
-              cursorOffset = textLen;
-            } else {
-              cursorOffset = selOffset;
-            }
-          } else {
-            cursorOffset = selOffset;
-          }
-        }
-        updateEditingValue(value, cursorOffset: cursorOffset);
-        return;
-      }
-
-      final hasComposing = deltas.any((d) => d.composing.isValid);
-      if (hasComposing) {
-        final value = _applyDeltasSafely(
-          currentTextEditingValue ?? const TextEditingValue(),
-          deltas,
-        );
-        updateEditingValue(value);
-        return;
-      }
-
-      final doc = _document!;
-      for (final delta in deltas) {
-        if (delta is TextEditingDeltaDeletion ||
-            (delta is TextEditingDeltaReplacement &&
-                delta.replacementText.isEmpty)) {
-          doc.saveState(description: 'Delete', forceNewAction: false);
-          if (!doc.cursor.isCollapsed) {
-            executeHandleBackspace(doc);
-            _resetPlatformBuffer();
-            return;
-          }
-          final deletionRange = delta is TextEditingDeltaDeletion
-              ? delta.deletedRange
-              : (delta as TextEditingDeltaReplacement).replacedRange;
-          if (deletionRange.isValid && deletionRange.start < deletionRange.end) {
-            final oldText = delta.oldText;
-            final deleteStart = deletionRange.start.clamp(0, oldText.length);
-            final deleteEnd = deletionRange.end.clamp(0, oldText.length);
-            final deletedText = oldText.substring(deleteStart, deleteEnd);
-            final graphemeCount = deletedText.characters.length;
-            for (int i = 0; i < graphemeCount; i++) {
-              executeHandleBackspace(doc);
-            }
-          } else if (deletionRange.isValid && deletionRange.start == deletionRange.end) {
-            executeHandleBackspace(doc);
-          }
-        } else if (delta is TextEditingDeltaNonTextUpdate) {
-        } else if (delta is TextEditingDeltaInsertion) {
-          doc.saveState(description: 'Insert text', forceNewAction: false);
-          _insertTextOrReplaceSelection(delta.textInserted, doc);
-        } else if (delta is TextEditingDeltaReplacement) {
-          if (_shouldSyncBuffer) {
-            final value = _applyDeltasSafely(
-              currentTextEditingValue ?? const TextEditingValue(),
-              deltas,
-            );
-            updateEditingValue(value);
-            return;
-          }
-          doc.saveState(description: 'Replace text', forceNewAction: false);
-          final replacedRange = delta.replacedRange;
-          final replacementText = delta.replacementText;
-          final oldText = delta.oldText;
-          if (replacedRange.isValid && replacedRange.start != replacedRange.end) {
-            final fragId = doc.cursor.focusId.isNotEmpty ? doc.cursor.focusId : doc.cursor.anchorId;
-            final currentOffset = doc.cursor.focusOffset;
-            final typedGraphemeCount = oldText.characters.length;
-            final bufferStartInDoc = currentOffset - typedGraphemeCount;
-            final beforeReplace = oldText.substring(0, replacedRange.start.clamp(0, oldText.length));
-            final replaceStartGraphemes = beforeReplace.characters.length;
-            final upToReplaceEnd = oldText.substring(0, replacedRange.end.clamp(0, oldText.length));
-            final replaceEndGraphemes = upToReplaceEnd.characters.length;
-            final docStart = bufferStartInDoc + replaceStartGraphemes;
-            final docEnd = bufferStartInDoc + replaceEndGraphemes;
-            doc.cursor.batchUpdate(() {
-              doc.cursor.anchorId = fragId;
-              doc.cursor.anchorOffset = docStart;
-              doc.cursor.focusId = fragId;
-              doc.cursor.focusOffset = docEnd;
-            });
-            executeHandleReplaceSelection(replacementText, doc);
-          } else {
-            _insertTextOrReplaceSelection(replacementText, doc);
-          }
-          _resetPlatformBuffer();
-        }
-      }
-      if (!_shouldSyncBuffer) {
-        final currentFragText = _getCurrentFragmentText();
-        if (currentFragText != null && currentFragText.isEmpty) {
-          _resetPlatformBuffer();
-        }
-      }
-      doc.updateContent();
-      return;
-    }
-
-    final value = _applyDeltasSafely(
-      currentTextEditingValue ?? const TextEditingValue(),
-      deltas,
-    );
-    updateEditingValue(value);
-  }
-
-  @override
-  void updateEditingValue(TextEditingValue value, {int? cursorOffset}) {
-    if (_updatingSelf) return;
-    if (_structuralChangeInProgress) return;
-    if (_document == null) return;
-    final doc = _document!;
-    final cursor = doc.cursor;
-
-    final currentFragId = cursor.focusId.isNotEmpty ? cursor.focusId : cursor.anchorId;
-    if (doc.nodeById(currentFragId) == null) {
-      final fallback = moveLeft(
-        doc.content,
-        CaretStop(cursor.anchorId, cursor.anchorOffset),
-        stops: doc.caretStops,
-        cachedLines: doc.logicalLines,
-      );
-      if (fallback.position != null) {
-        cursor.moveTo(fallback.position!.fragmentId, fallback.position!.offset);
-      } else {
-        final right = moveRight(
-          doc.content,
-          CaretStop(cursor.anchorId, cursor.anchorOffset),
-          stops: doc.caretStops,
-          cachedLines: doc.logicalLines,
-        );
-        if (right.position != null) {
-          cursor.moveTo(right.position!.fragmentId, right.position!.offset);
-        } else if (doc.caretStops.isNotEmpty) {
-          final first = doc.caretStops.first;
-          cursor.moveTo(first.fragmentId, first.offset);
-        }
-      }
-    }
-
-    if (_shouldSyncBuffer && !_isComposing) {
-      final currentText = _getCurrentFragmentText() ?? '';
-      final docCursorOffset = _getCursorOffsetInFragment();
-
-      if (_isIOS &&
-          docCursorOffset == 0 &&
-          value.text.startsWith(_emptyFragmentPlaceholder)) {
-        final placeholderLen = _emptyFragmentPlaceholder.length;
-        final strippedText = value.text.substring(placeholderLen);
-        final strippedBase = (value.selection.baseOffset - placeholderLen).clamp(0, strippedText.length);
-        final strippedExtent = (value.selection.extentOffset - placeholderLen).clamp(0, strippedText.length);
-        final strippedComposing = value.composing.isValid
-            ? TextRange(
-                start: (value.composing.start - placeholderLen).clamp(0, strippedText.length),
-                end: (value.composing.end - placeholderLen).clamp(0, strippedText.length),
-              )
-            : value.composing;
-        value = TextEditingValue(
-          text: strippedText,
-          selection: value.selection.copyWith(
-            baseOffset: strippedBase,
-            extentOffset: strippedExtent,
-          ),
-          composing: strippedComposing,
-        );
-      }
-
-      if (value.text == currentText &&
-          value.selection.isCollapsed &&
-          value.selection.extentOffset == docCursorOffset) {
-        if (_isIOS && _shouldSyncBuffer && currentText.isEmpty && docCursorOffset == 0) {
-          doc.saveState(description: 'Backspace', forceNewAction: false);
-          executeHandleBackspace(doc);
-          syncImeBufferToFragment();
-        }
-        return;
-      }
-
-      if (value.composing.isValid) {
-        final start = FragmentOperations.adjustIndex(value.text, value.composing.start.clamp(0, value.text.length));
-        final end = FragmentOperations.adjustIndex(value.text, value.composing.end.clamp(0, value.text.length));
-        final rawPreedit = value.text.substring(start, end);
-        final preeditText = _sanitizeUtf16(rawPreedit);
-
-        _isComposing = true;
-
-        int preeditOffset;
-        if (!cursor.isCollapsed) {
-          final anchorNode = doc.nodeById(cursor.anchorId);
-          final focusNode = doc.nodeById(cursor.focusId);
-          final anchorValid = anchorNode is Fragment &&
-              cursor.anchorOffset <= anchorNode.text.length;
-          final focusValid = focusNode is Fragment &&
-              cursor.focusOffset <= focusNode.text.length;
-          if (anchorValid && focusValid) {
-            doc.saveState(description: 'Replace selection', forceNewAction: false);
-            executeHandleReplaceSelection('', doc);
-          } else {
-            if (focusValid) {
-              cursor.moveTo(cursor.focusId, cursor.focusOffset);
-            } else if (anchorValid) {
-              cursor.moveTo(cursor.anchorId, cursor.anchorOffset);
-            }
-            doc.selectionManager.collapse();
-          }
-          preeditOffset = cursor.focusId.isNotEmpty
-              ? cursor.focusOffset
-              : cursor.anchorOffset;
-        } else {
-          final wholeCleanText = _sanitizeUtf16(value.text);
-          final currentFragText = _getCurrentFragmentText() ?? '';
-          final textBefore = wholeCleanText.substring(0, start);
-          final textAfter = wholeCleanText.substring(end);
-          final strippedText = _sanitizeUtf16(textBefore + textAfter);
-          if (strippedText != currentFragText) {
-            _updatingSelf = true;
-            final node = doc.nodeById(cursor.focusId.isNotEmpty ? cursor.focusId : cursor.anchorId);
-            if (node is Fragment) {
-              node.text = strippedText;
-            }
-            _updatingSelf = false;
-          }
-          preeditOffset = start;
-        }
-
-        _preeditFragmentId = cursor.focusId.isNotEmpty ? cursor.focusId : cursor.anchorId;
-        _preeditLocalOffset = preeditOffset;
-        _preeditContainerId = doc.findLogicalContainerId(_preeditFragmentId) ?? '';
-        cursor.imeComposing = true;
-        cursor.imeComposingStart = _preeditLocalOffset;
-        doc.selectionManager.clear();
-        _preeditText = preeditText;
-        _composingRange = TextRange(start: 0, end: preeditText.length);
-        _preeditCaretOffset = value.selection.isValid
-            ? (value.selection.extentOffset - start).clamp(0, preeditText.length)
-            : preeditText.length;
-        _invalidatePreeditRender();
-        return;
-      }
-
-      final oldText = currentText;
-      final newText = value.text;
-
-      if (!cursor.isCollapsed) {
-        if (newText != oldText) {
-          String insertedText;
-          if (cursor.anchorId == cursor.focusId) {
-            final selStart = cursor.anchorOffset < cursor.focusOffset
-                ? cursor.anchorOffset
-                : cursor.focusOffset;
-            final selEnd = cursor.anchorOffset < cursor.focusOffset
-                ? cursor.focusOffset
-                : cursor.anchorOffset;
-            final clampedStart = selStart.clamp(0, oldText.length);
-            final clampedEnd = selEnd.clamp(0, oldText.length);
-            final prefixLen = clampedStart;
-            final suffixLen = oldText.length - clampedEnd;
-            final expectedPrefix = oldText.substring(0, prefixLen);
-            final expectedSuffix = oldText.substring(clampedEnd);
-            final newTextPrefix = newText.length >= prefixLen
-                ? newText.substring(0, prefixLen)
-                : newText;
-            final newTextSuffix = newText.length >= suffixLen
-                ? newText.substring(newText.length - suffixLen)
-                : newText;
-            if (newText.length >= prefixLen + suffixLen &&
-                newTextPrefix == expectedPrefix &&
-                newTextSuffix == expectedSuffix) {
-              insertedText = newText.substring(prefixLen, newText.length - suffixLen);
-            } else {
-              insertedText = _computeInsertedText(oldText, newText);
-            }
-          } else {
-            insertedText = newText;
-          }
-          doc.saveState(description: 'Replace selection', forceNewAction: false);
-          if (insertedText.isNotEmpty) {
-            _insertTextOrReplaceSelection(insertedText, doc);
-          } else {
-            executeHandleReplaceSelection('', doc);
-          }
-          syncImeBufferToFragment();
-          doc.updateContent();
-          return;
-        }
-      }
-
-      final lengthDiff = newText.length - oldText.length;
-      if (lengthDiff == 1 || lengthDiff == 2) {
-        final diffIndex = _findDiffIndex(oldText, newText);
-        if (diffIndex >= 0) {
-          final oldSuffix = oldText.substring(diffIndex);
-          final newSuffix = newText.substring(diffIndex + lengthDiff);
-          if (oldSuffix == newSuffix) {
-            final insertedText = newText.substring(diffIndex, diffIndex + lengthDiff);
-            _moveCursorToFragmentOffset(diffIndex);
-            _insertFinalizedText(insertedText);
-            return;
-          }
-        }
-      }
-
-      final deleteLengthDiff = oldText.length - newText.length;
-      if (deleteLengthDiff == 1 || deleteLengthDiff == 2) {
-        final cursorOff = _getCursorOffsetInFragment();
-        if (cursorOff == 0) {
-          doc.saveState(description: 'Backspace', forceNewAction: false);
-          executeHandleBackspace(doc);
-          syncImeBufferToFragment();
-          return;
-        }
-        doc.saveState(description: 'Backspace', forceNewAction: false);
-        if (deleteLengthDiff == 2) {
-          final diffIndex = _findDiffIndex(newText, oldText);
-          if (diffIndex >= 0) {
-            final deletedText = oldText.substring(diffIndex, diffIndex + 2);
-            final graphemeCount = deletedText.characters.length;
-            for (int i = 0; i < graphemeCount; i++) {
-              executeHandleBackspace(doc);
-            }
-          } else {
-            executeHandleBackspace(doc);
-          }
-        } else {
-          executeHandleBackspace(doc);
-        }
-        syncImeBufferToFragment();
-        return;
-      }
-
-      if (newText != oldText) {
-        if (newText.isEmpty && oldText.isNotEmpty) {
-          final fragId = doc.cursor.focusId.isNotEmpty ? doc.cursor.focusId : doc.cursor.anchorId;
-          final node = doc.nodeById(fragId);
-          if (node is Fragment) {
-            final cellParent = findAncestorCached<FluentCell>(doc, node);
-            if (cellParent != null) {
-              node.text = '\u200B';
-              doc.cursor.moveTo(fragId, 0);
-              doc.updateContent();
-              syncImeBufferToFragment();
-              return;
-            }
-            doc.saveState(description: 'Backspace', forceNewAction: false);
-            node.text = '';
-            doc.cursor.moveTo(fragId, 0);
-            doc.updateContent();
-            executeHandleBackspace(doc);
-            syncImeBufferToFragment();
-            return;
-          }
-        }
-        if (!cursor.isCollapsed) {
-          final insertedText = newText;
-          doc.saveState(description: 'Replace selection', forceNewAction: false);
-          if (insertedText.isNotEmpty) {
-            _insertTextOrReplaceSelection(insertedText, doc);
-          } else {
-            executeHandleReplaceSelection('', doc);
-          }
-          syncImeBufferToFragment();
-          doc.updateContent();
-          return;
-        }
-        _replaceFragmentText(newText, cursorOffset: cursorOffset);
-        return;
-      }
-
-      if (newText == oldText && value.selection.isValid && value.selection.isCollapsed) {
-        _moveCursorToFragmentOffset(value.selection.extentOffset);
-        return;
-      }
-
-      return;
-    }
-
-    if (_isComposing) {
-      if (value.composing.isValid) {
-        if (value.text.isEmpty) {
-          _cancelPreedit();
-          return;
-        }
-        if (_shouldSyncBuffer) {
-          final start = FragmentOperations.adjustIndex(value.text, value.composing.start.clamp(0, value.text.length));
-          final end = FragmentOperations.adjustIndex(value.text, value.composing.end.clamp(0, value.text.length));
-          final rawPreedit = value.text.substring(start, end);
-          final preeditText = _sanitizeUtf16(rawPreedit);
-          _preeditText = preeditText;
-          _composingRange = TextRange(start: 0, end: preeditText.length);
-          _preeditCaretOffset = value.selection.isValid
-              ? (value.selection.extentOffset - start).clamp(0, preeditText.length)
-              : preeditText.length;
-        } else {
-          final start = value.composing.start.clamp(0, value.text.length);
-          final end = value.composing.end.clamp(0, value.text.length);
-          final rawPreedit = value.text.substring(start, end);
-          final preeditText = _sanitizeUtf16(rawPreedit);
-          _preeditText = preeditText;
-          _composingRange = TextRange(start: 0, end: preeditText.length);
-          _preeditCaretOffset = value.selection.isValid
-              ? (value.selection.extentOffset - start).clamp(0, preeditText.length)
-              : preeditText.length;
-        }
-        _invalidatePreeditRender();
-        return;
-      }
-
-      if (!_shouldSyncBuffer && value.text == _preeditText) {
-        return;
-      }
-
-      if (value.text.isEmpty) {
-        _cancelPreedit();
-        return;
-      }
-
-      if (_shouldSyncBuffer) {
-        final fragId = doc.cursor.focusId.isNotEmpty ? doc.cursor.focusId : doc.cursor.anchorId;
-        final node = doc.nodeById(fragId);
-        if (node is Fragment) {
-          _updatingSelf = true;
-          doc.saveState(description: 'Replace text', forceNewAction: false);
-          final currentFragText = node.text;
-          final insertOffset = _preeditLocalOffset.clamp(0, currentFragText.length);
-          final prefix = currentFragText.substring(0, insertOffset);
-          final suffix = currentFragText.substring(insertOffset);
-          String committedText;
-          if (value.text.length >= prefix.length + suffix.length &&
-              value.text.startsWith(prefix) &&
-              value.text.endsWith(suffix)) {
-            committedText = _sanitizeUtf16(
-              value.text.substring(prefix.length, value.text.length - suffix.length),
-            );
-          } else {
-            committedText = _sanitizeUtf16(_preeditText);
-          }
-          node.text = _sanitizeUtf16(prefix + committedText + suffix);
-          final _usePlatformSelection = !kIsWeb &&
-              (defaultTargetPlatform == TargetPlatform.linux ||
-               defaultTargetPlatform == TargetPlatform.windows ||
-               defaultTargetPlatform == TargetPlatform.macOS);
-          final newCursorOffset = (_usePlatformSelection &&
-                  value.selection.isValid &&
-                  value.selection.isCollapsed &&
-                  value.selection.extentOffset >= prefix.length &&
-                  value.selection.extentOffset <= prefix.length + committedText.length)
-              ? value.selection.extentOffset
-              : insertOffset + committedText.length;
-          doc.cursor.moveTo(fragId, _snapCursorOffset(node.text, newCursorOffset));
-          _resetComposition();
-          doc.cursor.imeComposing = false;
-          doc.updateContent();
-          _updatingSelf = false;
-          syncImeBufferToFragment();
-        }
-        return;
-      }
-
-      if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
-        final finalizedText = value.text.isNotEmpty ? value.text : _preeditText;
-        _commitPreedit(finalizedText);
-      } else {
-        _commitPreedit(_preeditText);
-      }
-
-      _resetPlatformBuffer();
-      return;
-    }
-
-    if (value.text.isEmpty) return;
-
-    if (!value.composing.isValid) {
-      if (!_shouldSyncBuffer) {
-        final currentFragText = _getCurrentFragmentText() ?? '';
-        if (value.text == currentFragText) return;
-      }
-      _insertFinalizedText(value.text);
-      if (_shouldSyncBuffer) {
-        syncImeBufferToFragment();
-      } else {
-        _resetPlatformBuffer();
-      }
-      return;
-    }
-
-    _isComposing = true;
-
-    if (!cursor.isCollapsed) {
-      final anchorNode = doc.nodeById(cursor.anchorId);
-      final focusNode = doc.nodeById(cursor.focusId);
-      final anchorValid = anchorNode is Fragment &&
-          cursor.anchorOffset <= anchorNode.text.length;
-      final focusValid = focusNode is Fragment &&
-          cursor.focusOffset <= focusNode.text.length;
-      if (anchorValid && focusValid) {
-        doc.saveState(description: 'Replace selection', forceNewAction: false);
-        executeHandleReplaceSelection('', doc);
-      } else {
-        if (focusValid) {
-          cursor.moveTo(cursor.focusId, cursor.focusOffset);
-        } else if (anchorValid) {
-          cursor.moveTo(cursor.anchorId, cursor.anchorOffset);
-        }
-        doc.selectionManager.collapse();
-      }
-    }
-
-    _preeditFragmentId = cursor.focusId.isNotEmpty ? cursor.focusId : cursor.anchorId;
-    _preeditLocalOffset = cursor.focusId.isNotEmpty ? cursor.focusOffset : cursor.anchorOffset;
-    _preeditContainerId = doc.findLogicalContainerId(_preeditFragmentId) ?? '';
-    cursor.imeComposing = true;
-    cursor.imeComposingStart = _preeditLocalOffset;
-    doc.selectionManager.clear();
-    final compStart = value.composing.start.clamp(0, value.text.length);
-    final compEnd = value.composing.end.clamp(0, value.text.length);
-    final rawPreedit = value.text.substring(compStart, compEnd);
-    final preeditText = _sanitizeUtf16(rawPreedit);
-    _preeditText = preeditText;
-    _composingRange = TextRange(start: 0, end: preeditText.length);
-    _preeditCaretOffset = value.selection.isValid
-        ? (value.selection.extentOffset - compStart).clamp(0, preeditText.length)
-        : preeditText.length;
-    _invalidatePreeditRender();
-  }
-
-  @override
-  void performAction(TextInputAction action) {
-    if (_document == null) return;
-    switch (action) {
-      case TextInputAction.newline:
-        if (_justHandledEnter) {
-          _justHandledEnter = false;
-          break;
-        }
-        _structuralChangeInProgress = true;
-        _structuralChangeTimer?.cancel();
-        commitIfComposing();
-        _document!.saveState(description: 'Enter', forceNewAction: true);
-        executeHandleEnter(_document!);
-        _lastSyncedFragmentId = _document!.cursor.focusId.isNotEmpty
-            ? _document!.cursor.focusId
-            : _document!.cursor.anchorId;
-        syncImeBufferToFragment();
-        _structuralChangeTimer = Timer(_structuralChangeGracePeriod, () {
-          _structuralChangeInProgress = false;
-        });
-        break;
-      case TextInputAction.go:
-      case TextInputAction.send:
-      case TextInputAction.done:
-        commitIfComposing();
-        break;
-      default:
-        break;
-    }
-  }
-
-  @override
-  void performPrivateCommand(String action, Map<String, dynamic> data) {}
-
-  bool onFocusReceived() => false;
-
-  @override
-  void showAutocorrectionPromptRect(int start, int end) {}
+  void didChangeInputControl(
+    TextInputControl? oldControl,
+    TextInputControl? newControl,
+  ) {}
 
   @override
   void updateFloatingCursor(RawFloatingCursorPoint point) {}
 
   @override
+  void showAutocorrectionPromptRect(int start, int end) {}
+
+  @override
   void connectionClosed() {
-    commitIfComposing();
-    _connection = null;
+    connectionManager.connection = null;
   }
 
   @override
-  void didChangeInputControl(TextInputControl? oldControl, TextInputControl? newControl) {}
-
-  @override
-  void insertContent(KeyboardInsertedContent content) {}
-
-  @override
   void insertTextPlaceholder(Size size) {}
-
-  @override
-  void performSelector(String selectorName) {}
 
   @override
   void removeTextPlaceholder() {}
@@ -1320,203 +116,679 @@ class FluentTextInputHandler with DeltaTextInputClient {
   @override
   void showToolbar() {}
 
-  void commitIfComposing() {
-    if (_isComposing && _preeditText.isNotEmpty) {
-      _commitPreedit(_preeditText);
-    } else if (_isComposing) {
-      _cancelPreedit();
+  @override
+  void insertContent(KeyboardInsertedContent content) {}
+
+  @override
+  void performAction(TextInputAction action) {
+    final doc = _document;
+    if (doc == null) return;
+    if (action == TextInputAction.newline ||
+        action == TextInputAction.done ||
+        action == TextInputAction.go ||
+        action == TextInputAction.send) {
+      commitIfComposing();
+      executeHandleEnter(doc);
     }
   }
 
-  void _insertTextOrReplaceSelection(String text, FluentDocument doc) {
-    for (final char in text.characters) {
-      if (!doc.cursor.isCollapsed) {
-        executeHandleReplaceSelection(char, doc);
-      } else {
-        executeHandleInsertCharacter(char, doc);
+  @override
+  void performPrivateCommand(String action, Map<String, dynamic> data) {}
+
+  @override
+  void performSelector(String selectorName) {
+    final doc = _document;
+    if (doc == null) return;
+    switch (selectorName) {
+      case 'moveLeft:':
+        executeHandleArrowKey(LogicalKeyboardKey.arrowLeft, doc);
+        break;
+      case 'moveRight:':
+        executeHandleArrowKey(LogicalKeyboardKey.arrowRight, doc);
+        break;
+      case 'deleteBackward:':
+        executeHandleBackspace(doc);
+        break;
+    }
+  }
+
+  @override
+  void updateEditingValue(TextEditingValue value) {
+    final doc = _document;
+    if (doc == null) return;
+    if (state.updatingSelf) return;
+
+    final cursor = doc.cursor;
+    final fragId = cursor.focusId.isNotEmpty ? cursor.focusId : cursor.anchorId;
+    final currentText = _getCurrentFragmentText() ?? '';
+
+    // ignore: avoid_print
+    print(
+      '[IME_DEBUG] updateEditingValue text="${value.text}" '
+      'selection=${value.selection} composing=${value.composing}',
+    );
+
+    // -------------------------------------------------------------------------
+    // 1. Preedit Active / Updating
+    // -------------------------------------------------------------------------
+    if (value.composing.isValid) {
+      final wasComposing = state.isComposing;
+      if (!doc.cursor.isCollapsed && !wasComposing) {
+        executeHandleBackspace(doc);
       }
-    }
-  }
+      final hasPlaceholder = value.text.startsWith(_emptyFragmentPlaceholder);
+      final rawStart = (hasPlaceholder && value.composing.start > 0)
+          ? (value.composing.start - 1).clamp(0, value.text.length)
+          : value.composing.start.clamp(0, value.text.length);
+      final rawEnd = (hasPlaceholder && value.composing.end > 0)
+          ? (value.composing.end - 1).clamp(0, value.text.length)
+          : value.composing.end.clamp(0, value.text.length);
+      final actualStart = value.composing.start.clamp(0, value.text.length);
+      final actualEnd = value.composing.end.clamp(0, value.text.length);
+      final rawPreedit = value.text.substring(actualStart, actualEnd);
 
-  String _computeInsertedText(String oldText, String newText) {
-    if (oldText.isEmpty) return newText;
-    if (newText.isEmpty) return '';
-    int prefixLen = 0;
-    final minLen = oldText.length < newText.length ? oldText.length : newText.length;
-    while (prefixLen < minLen && oldText[prefixLen] == newText[prefixLen]) {
-      prefixLen++;
-    }
-    int suffixLen = 0;
-    while (suffixLen < oldText.length - prefixLen &&
-        suffixLen < newText.length - prefixLen &&
-        oldText[oldText.length - 1 - suffixLen] ==
-            newText[newText.length - 1 - suffixLen]) {
-      suffixLen++;
-    }
-    return newText.substring(prefixLen, newText.length - suffixLen);
-  }
+      state.preeditFragmentId = fragId;
+      if (!wasComposing) {
+        state.isComposing = true;
+        final initialOffset = cursor.isCollapsed
+            ? cursor.focusOffset
+            : (cursor.anchorOffset < cursor.focusOffset
+                  ? cursor.anchorOffset
+                  : cursor.focusOffset);
+        state.preeditLocalOffset = initialOffset;
+        state.lastSyncedText = _getCurrentFragmentText() ?? '';
+        final parentId = doc.findParentCached(fragId);
+        state.preeditContainerId = parentId ?? '';
+        state.justCommittedComposition = false;
+      }
+      state.isComposing = true;
 
-  void _insertFinalizedText(String text) {
-    if (_document == null || text.isEmpty) return;
-    final doc = _document!;
-    doc.saveState(description: 'Insert text', forceNewAction: false);
-    _insertTextOrReplaceSelection(text, doc);
-    if (_shouldSyncBuffer) {
-      syncImeBufferToFragment();
-    } else {
-      _resetPlatformBuffer();
-    }
-    doc.updateContent();
-  }
+      if (rawPreedit.isNotEmpty) {
+        final preeditText = _extractPreeditText(value);
+        if (preeditText.isNotEmpty) {
+          state.preeditText = preeditText;
+          state.composingRange = TextRange(start: 0, end: preeditText.length);
+          state.preeditCaretOffset = value.selection.isValid
+              ? (value.selection.extentOffset - rawStart).clamp(
+                  0,
+                  preeditText.length,
+                )
+              : preeditText.length;
 
-  void _commitPreedit(String text) {
-    if (_document == null || text.isEmpty) {
-      _cancelPreedit();
+          cursor.imeComposing = true;
+          cursor.imeComposingStart = state.preeditLocalOffset;
+
+          final targetNode = doc.nodeById(fragId);
+          if (targetNode is Fragment && targetNode.text.isNotEmpty) {
+            if (rawStart >= 0 && rawEnd <= value.text.length) {
+              final prefixText = value.text.substring(0, rawStart);
+              final suffixText = value.text.substring(rawEnd);
+              if (targetNode.text == prefixText + preeditText + suffixText) {
+                targetNode.text = prefixText + suffixText;
+                doc.cursor.moveTo(fragId, rawStart);
+              }
+            }
+          }
+        }
+      }
+
+      doc.selectionManager.clear();
+      _invalidatePreeditRender();
       return;
     }
-    final doc = _document!;
-    _updatingSelf = true;
-    doc.saveState(description: 'IME commit', forceNewAction: false);
-    doc.cursor.imeComposing = false;
-    doc.cursor.moveTo(_preeditFragmentId, _preeditLocalOffset);
-    _insertTextOrReplaceSelection(text, doc);
-    _resetComposition();
-    _updatingSelf = false;
-    if (_shouldSyncBuffer) {
-      syncImeBufferToFragment();
-    } else {
-      _resetPlatformBuffer();
-    }
-    doc.updateContent();
-  }
 
-  void _cancelPreedit() {
-    final doc = _document;
-    _resetComposition();
-    if (doc != null) {
-      doc.cursor.imeComposing = false;
-      if (_shouldSyncBuffer) {
-        syncImeBufferToFragment();
-      } else {
-        _resetPlatformBuffer();
+    // -------------------------------------------------------------------------
+    // 2. Post-Commit Platform Buffer Sync Guard
+    // -------------------------------------------------------------------------
+    if (state.justCommittedComposition) {
+      if (!value.composing.isValid) {
+        state.justCommittedComposition = false;
+        if (state.lastCommittedText.isEmpty ||
+            value.text.contains(state.lastCommittedText)) {
+          final parentId = doc.findParentCached(fragId);
+          final paragraphNode = parentId != null
+              ? doc.nodeById(parentId)
+              : null;
+          if (paragraphNode is Paragraph) {
+            final pText = paragraphNode.text;
+            if (pText == value.text ||
+                (value.text.isNotEmpty && pText.contains(value.text)) ||
+                (pText.isNotEmpty && value.text.contains(pText))) {
+              state.lastSyncedText = value.text;
+              return;
+            }
+          }
+          state.lastSyncedText = value.text;
+          syncImeBufferToFragment();
+          return;
+        }
       }
-      doc.cursorOnlyUpdate();
     }
-  }
 
-  void _resetPlatformBuffer() {
-    if (_connection == null || !_connection!.attached) return;
-    final wasUpdatingSelf = _updatingSelf;
-    _updatingSelf = true;
-    try {
-      _connection!.setEditingState(const TextEditingValue());
-      _lastSyncedText = '';
-    } on PlatformException catch (e) {
-      debugPrint('FluentTextInputHandler: _resetPlatformBuffer failed: ${e.message}');
+    // -------------------------------------------------------------------------
+    // 3. Composition Transition / Commit
+    // -------------------------------------------------------------------------
+    if (state.isComposing) {
+      if (value.text.isNotEmpty) {
+        final (prefix, suffix) = _getParagraphPrefixAndSuffix();
+        final prefixPos = prefix.isNotEmpty ? value.text.indexOf(prefix) : 0;
+        final suffixPos = suffix.isNotEmpty
+            ? _findSuffixPos(value.text, suffix)
+            : value.text.length;
+        if (prefixPos != -1 &&
+            suffixPos != -1 &&
+            suffixPos >= prefixPos + prefix.length) {
+          final extracted = value.text.substring(
+            prefixPos + prefix.length,
+            suffixPos,
+          );
+          final current = _getCurrentFragmentText() ?? '';
+          if (extracted.isNotEmpty &&
+              extracted != current &&
+              !current.contains(extracted)) {
+            final cleaned =
+                (state.preeditText.isNotEmpty &&
+                    extracted.trim() == state.preeditText.trim())
+                ? state.preeditText
+                : extracted.trim();
+            if (cleaned.isNotEmpty) {
+              state.preeditText = _sanitizeUtf16(cleaned);
+            }
+          }
+        }
+      }
+      final textToCommit = state.preeditText;
+      if (textToCommit.isNotEmpty) {
+        _commitPreedit(textToCommit);
+      }
+      _resetComposition();
+      _invalidatePreeditRender();
+      if (!value.composing.isValid) {
+        state.lastSyncedText = value.text;
+        syncImeBufferToFragment();
+        return;
+      }
     }
-    _updatingSelf = wasUpdatingSelf;
-  }
 
-  void _resetComposition() {
-    _isComposing = false;
-    _preeditText = '';
-    _composingRange = TextRange.empty;
-    _preeditFragmentId = '';
-    _preeditLocalOffset = 0;
-    _preeditContainerId = '';
-    _preeditCaretOffset = 0;
-  }
+    // -------------------------------------------------------------------------
+    // 4. Non-Composing Text Edits (Typing, Selection Replace, Deletion)
+    // -------------------------------------------------------------------------
+    final oldText = currentText;
+    final newText = value.text;
 
-  static const String _emptyFragmentPlaceholder = '\u200B';
-
-  String? _getCurrentFragmentText() {
-    final doc = _document;
-    if (doc == null) return null;
-    final fragId = doc.cursor.focusId.isNotEmpty ? doc.cursor.focusId : doc.cursor.anchorId;
-    final node = doc.nodeById(fragId);
-    if (node is Fragment) return node.text;
-    return null;
-  }
-
-  int _getCursorOffsetInFragment() {
-    final doc = _document;
-    if (doc == null) return 0;
-    return doc.cursor.focusId.isNotEmpty ? doc.cursor.focusOffset : doc.cursor.anchorOffset;
-  }
-
-  bool get cursorIsAtFragmentStart => _getCursorOffsetInFragment() == 0;
-
-  int _findDiffIndex(String a, String b) {
-    final minLen = a.length < b.length ? a.length : b.length;
-    for (var i = 0; i < minLen; i++) {
-      if (a[i] != b[i]) return i;
+    if (!cursor.isCollapsed) {
+      if (newText != oldText) {
+        final inserted = _computeInsertedText(oldText, newText);
+        doc.saveState(description: 'Replace selection', forceNewAction: false);
+        if (inserted.isNotEmpty) {
+          _insertFinalizedText(inserted);
+        } else {
+          _replaceFragmentText(
+            newText,
+            cursorOffset: value.selection.extentOffset,
+          );
+        }
+        _resetPlatformBuffer();
+        return;
+      }
     }
-    if (a.length != b.length) return minLen;
-    return -1;
-  }
 
-  int _snapCursorOffset(String text, int offset) {
-    if (text.isEmpty) return offset;
-    return FragmentOperations.adjustIndex(text, offset.clamp(0, text.length));
-  }
+    if (newText.length > oldText.length) {
+      var prefixLen = _commonPrefixLength(oldText, newText);
+      if (prefixLen == oldText.length &&
+          oldText.isNotEmpty &&
+          !oldText.endsWith(' ')) {
+        final lastSpace = oldText.lastIndexOf(' ');
+        final lastWordStart = lastSpace == -1 ? 0 : lastSpace + 1;
+        final lastWord = oldText.substring(lastWordStart);
+        if (lastWord.isNotEmpty &&
+            lastWordStart < newText.length &&
+            newText.substring(lastWordStart).startsWith(lastWord)) {
+          final newTail = newText.substring(lastWordStart);
+          if (newTail.length > lastWord.length &&
+              (newTail.endsWith(' ') || newTail.contains(' '))) {
+            prefixLen = lastWordStart;
+          }
+        }
+      }
+      final suffixLen = _commonSuffixLength(
+        oldText.substring(prefixLen),
+        newText.substring(prefixLen),
+      );
+      final oldReplaced = oldText.substring(
+        prefixLen,
+        oldText.length - suffixLen,
+      );
+      final newInserted = newText.substring(
+        prefixLen,
+        newText.length - suffixLen,
+      );
 
-  void _moveCursorToFragmentOffset(int offset) {
-    final doc = _document;
-    if (doc == null) return;
-    final fragId = doc.cursor.focusId.isNotEmpty ? doc.cursor.focusId : doc.cursor.anchorId;
-    final node = doc.nodeById(fragId);
-    final text = node is Fragment ? node.text : '';
-    doc.cursor.moveTo(fragId, _snapCursorOffset(text, offset));
-  }
+      if (oldReplaced.isNotEmpty) {
+        doc.saveState(description: 'Candidate replace', forceNewAction: false);
+        final containerId = doc.findLogicalContainerId(fragId) ?? fragId;
+        doc.cursor.anchorId = fragId;
+        doc.cursor.anchorOffset = prefixLen;
+        doc.cursor.focusId = fragId;
+        doc.cursor.focusOffset = prefixLen + oldReplaced.length;
+        doc.selectionManager.startSelection(containerId, fragId, prefixLen);
+        doc.selectionManager.updateFocus(
+          containerId,
+          fragId,
+          prefixLen + oldReplaced.length,
+        );
+        _insertFinalizedText(newInserted);
+        _resetPlatformBuffer();
+        return;
+      } else {
+        final inserted = _computeInsertedText(oldText, newText);
+        if (inserted.isNotEmpty) {
+          doc.saveState(description: 'Type', forceNewAction: false);
+          doc.cursor.moveTo(fragId, prefixLen);
+          _insertFinalizedText(inserted);
+        }
+      }
+    } else if (newText.length < oldText.length) {
+      doc.saveState(description: 'Delete', forceNewAction: false);
+      if (oldText.length > newText.length) {
+        executeHandleBackspace(doc);
+      } else {
+        _replaceFragmentText(
+          newText,
+          cursorOffset: value.selection.extentOffset,
+        );
+      }
+    }
 
-  void _replaceFragmentText(String newText, {int? cursorOffset}) {
-    final doc = _document;
-    if (doc == null) return;
-    final fragId = doc.cursor.focusId.isNotEmpty ? doc.cursor.focusId : doc.cursor.anchorId;
-    final node = doc.nodeById(fragId);
-    if (node is! Fragment) return;
-    doc.saveState(description: 'Replace text', forceNewAction: false);
-    final cleanText = _sanitizeUtf16(newText);
-    node.text = cleanText;
-    final finalOffset = _snapCursorOffset(cleanText, cursorOffset ?? cleanText.length);
-    doc.cursor.moveTo(fragId, finalOffset);
-    // Keep the visual selection in sync with the now-collapsed cursor,
-    // otherwise a stale highlight would remain after the replacement.
-    doc.selectionManager.collapse();
-    doc.updateContent();
     syncImeBufferToFragment();
   }
 
-  void syncImeBufferToFragment() {
-    if (_connection == null || !_connection!.attached) return;
-    if (_isComposing) return;
+  @override
+  void updateEditingValueWithDeltas(List<TextEditingDelta> deltas) {
     final doc = _document;
     if (doc == null) return;
-    final currentFragId = doc.cursor.focusId.isNotEmpty ? doc.cursor.focusId : doc.cursor.anchorId;
+    if (state.updatingSelf) return;
 
-    if (!_shouldSyncBuffer) {
-      if (currentFragId != _lastSyncedFragmentId) {
-        _resetPlatformBuffer();
-      }
-      _lastSyncedFragmentId = currentFragId;
+    if (state.isComposing) {
+      final last = deltas.last;
+      updateEditingValue(
+        TextEditingValue(
+          text: last.oldText,
+          selection: last.selection,
+          composing: last.composing,
+        ),
+      );
       return;
     }
 
-    _lastSyncedFragmentId = currentFragId;
+    if (state.justCommittedComposition) {
+      state.justCommittedComposition = false;
+      return;
+    }
+
+    for (final delta in deltas) {
+      // ignore: avoid_print
+      print(
+        '[IME_DEBUG] delta: ${delta.runtimeType} oldText="${delta.oldText}" '
+        'selection=${delta.selection} composing=${delta.composing}',
+      );
+
+      if (delta is TextEditingDeltaDeletion ||
+          (delta is TextEditingDeltaReplacement &&
+              delta.replacementText.isEmpty)) {
+        doc.saveState(description: 'Delete', forceNewAction: false);
+        if (!doc.cursor.isCollapsed) {
+          executeHandleBackspace(doc);
+          _resetPlatformBuffer();
+          return;
+        }
+        final deletionRange = delta is TextEditingDeltaDeletion
+            ? delta.deletedRange
+            : (delta as TextEditingDeltaReplacement).replacedRange;
+        if (deletionRange.isValid && deletionRange.start < deletionRange.end) {
+          final oldText = delta.oldText;
+          final deleteStart = deletionRange.start.clamp(0, oldText.length);
+          final deleteEnd = deletionRange.end.clamp(0, oldText.length);
+          final deletedText = oldText.substring(deleteStart, deleteEnd);
+          final count = deletedText.characters.length;
+          for (var i = 0; i < count; i++) {
+            executeHandleBackspace(doc);
+          }
+        } else {
+          executeHandleBackspace(doc);
+        }
+        _resetPlatformBuffer();
+        return;
+      }
+
+      if (delta is TextEditingDeltaInsertion) {
+        doc.saveState(description: 'Type', forceNewAction: false);
+        if (delta.textInserted.contains('\n')) {
+          _insertFinalizedText(delta.textInserted);
+          _resetPlatformBuffer();
+          return;
+        }
+        if (delta.composing.isValid &&
+            delta.composing.start < delta.composing.end) {
+          state.isComposing = true;
+          state.preeditText = delta.textInserted;
+          state.composingRange = delta.composing;
+          state.preeditLocalOffset = doc.cursor.focusOffset;
+          final fragId = doc.cursor.focusId.isNotEmpty
+              ? doc.cursor.focusId
+              : doc.cursor.anchorId;
+          final parentId = doc.findParentCached(fragId);
+          state.preeditContainerId = parentId ?? '';
+          doc.cursor.imeComposing = true;
+          doc.cursor.imeComposingStart = state.preeditLocalOffset;
+          _invalidatePreeditRender();
+          return;
+        }
+        _insertFinalizedText(delta.textInserted);
+        _resetPlatformBuffer();
+        return;
+      }
+
+      if (delta is TextEditingDeltaReplacement) {
+        doc.saveState(description: 'Replace', forceNewAction: false);
+        final replacementText = delta.replacementText;
+        final oldText = delta.oldText;
+
+        if (delta.replacedRange.isValid &&
+            delta.replacedRange.start <= delta.replacedRange.end &&
+            delta.replacedRange.end <= oldText.length) {
+          final start = delta.replacedRange.start;
+          final end = delta.replacedRange.end;
+          final oldSlice = oldText.substring(start, end);
+          final inserted = _computeInsertedText(oldSlice, replacementText);
+
+          final fragId = doc.cursor.focusId.isNotEmpty
+              ? doc.cursor.focusId
+              : doc.cursor.anchorId;
+          final node = doc.nodeById(fragId);
+
+          if (inserted.isNotEmpty) {
+            final targetOffset =
+                start +
+                (replacementText.length - inserted.length).clamp(
+                  0,
+                  replacementText.length,
+                );
+            if (node is Fragment) {
+              final localOffset = targetOffset.clamp(0, node.text.length);
+              doc.cursor.moveTo(fragId, localOffset);
+            }
+            _insertFinalizedText(inserted);
+            _resetPlatformBuffer();
+            return;
+          }
+        }
+
+        final inserted = _computeInsertedText(oldText, replacementText);
+        if (inserted.isNotEmpty) {
+          _insertFinalizedText(inserted);
+        } else {
+          _replaceFragmentText(replacementText);
+        }
+        _resetPlatformBuffer();
+        return;
+      }
+    }
+  }
+
+  // ===========================================================================
+  // Composition Engine & Preedit Extraction
+  // ===========================================================================
+
+  void commitIfComposing() {
+    if (!state.isComposing) return;
+    final text = state.preeditText;
+    if (text.isNotEmpty) {
+      _commitPreedit(text);
+    } else {
+      _resetComposition();
+    }
+    _invalidatePreeditRender();
+  }
+
+  void _commitPreedit(String text) {
+    final doc = _document;
+    if (doc == null || text.isEmpty) return;
+    state.updatingSelf = true;
+    doc.saveState(description: 'IME Commit', forceNewAction: true);
+    final targetFragId =
+        (!doc.cursor.isCollapsed || state.preeditFragmentId.isEmpty)
+        ? (doc.cursor.focusId.isNotEmpty
+              ? doc.cursor.focusId
+              : doc.cursor.anchorId)
+        : state.preeditFragmentId;
+    final targetOffset = doc.cursor.isCollapsed
+        ? state.preeditLocalOffset
+        : doc.cursor.focusOffset;
+    if (doc.cursor.isCollapsed) {
+      doc.cursor.moveTo(targetFragId, targetOffset);
+    }
+
+    // ignore: avoid_print
+    print(
+      '[IME_DEBUG] _commitPreedit text="$text" targetFragId="$targetFragId" '
+      'targetOffset=$targetOffset preeditText="${state.preeditText}"',
+    );
+
+    if (!doc.registry.dispatchImeCompositionCommit(text, doc)) {
+      _insertTextOrReplaceSelection(text, doc);
+    }
+    _resetComposition();
+    state.justCommittedComposition = true;
+    state.lastCommittedText = text;
+    state.updatingSelf = false;
+    if (_shouldSyncBuffer) {
+      syncImeBufferToFragment();
+    }
+  }
+
+  void _resetComposition() {
+    state.resetComposition();
+    final doc = _document;
+    if (doc != null) {
+      doc.cursor.imeComposing = false;
+      doc.cursor.imeComposingStart = 0;
+    }
+  }
+
+  void _invalidatePreeditRender() {
+    _document?.updateContent();
+  }
+
+  (String, String) _getParagraphPrefixAndSuffix() {
+    final doc = _document;
+    if (doc == null) return ('', '');
+    final targetFragId = state.preeditFragmentId.isNotEmpty
+        ? state.preeditFragmentId
+        : (doc.cursor.focusId.isNotEmpty
+              ? doc.cursor.focusId
+              : doc.cursor.anchorId);
+    if (targetFragId.isEmpty) return ('', '');
+
+    doc.invalidateNodeIndex();
+    final parentId = doc.findParentCached(targetFragId);
+    if (parentId == null) {
+      final node = doc.nodeById(targetFragId);
+      if (node is Fragment) {
+        final text = node.text.isNotEmpty ? node.text : state.lastSyncedText;
+        final offset = state.preeditLocalOffset.clamp(0, text.length);
+        final endOffset = (offset + state.preeditText.length).clamp(
+          offset,
+          text.length,
+        );
+        return (text.substring(0, offset), text.substring(endOffset));
+      }
+      return ('', '');
+    }
+
+    final paragraphNode = doc.nodeById(parentId);
+    if (paragraphNode is! Paragraph) {
+      final node = doc.nodeById(targetFragId);
+      if (node is Fragment) {
+        final text = node.text.isNotEmpty ? node.text : state.lastSyncedText;
+        final offset = state.preeditLocalOffset.clamp(0, text.length);
+        final endOffset = (offset + state.preeditText.length).clamp(
+          offset,
+          text.length,
+        );
+        return (text.substring(0, offset), text.substring(endOffset));
+      }
+      return ('', '');
+    }
+
+    doc.invalidateNodeIndex();
+    doc.flattenContainer(paragraphNode);
+    final paragraphText = paragraphNode.text;
+    final targetFrag = doc.nodeById(targetFragId);
+    final targetFragTextLen = targetFrag is Fragment
+        ? targetFrag.text.length
+        : 0;
+
+    final fragStart = doc.getGlobalOffsetInParagraph(
+      paragraphNode.id,
+      targetFragId,
+      0,
+    );
+    final fragEnd = doc.getGlobalOffsetInParagraph(
+      paragraphNode.id,
+      targetFragId,
+      targetFragTextLen,
+    );
+
+    if (fragStart == null || fragEnd == null) {
+      return ('', '');
+    }
+
+    final fragText = state.isComposing && state.lastSyncedText.isNotEmpty
+        ? state.lastSyncedText
+        : (targetFrag is Fragment ? targetFrag.text : '');
+    final localOffset = state.preeditLocalOffset;
+    final offset = localOffset.clamp(0, fragText.length);
+    final hasPreedit =
+        state.preeditText.isNotEmpty && fragText.contains(state.preeditText);
+    final endIdx = hasPreedit ? offset + state.preeditText.length : offset;
+    final localEnd = endIdx.clamp(offset, fragText.length);
+
+    final fragPrefix = state.isComposing ? fragText.substring(0, offset) : '';
+    final fragSuffix = state.isComposing ? fragText.substring(localEnd) : '';
+
+    final isSingleFrag =
+        paragraphNode.fragments.whereType<Fragment>().length <= 1;
+    final paraPrefix = isSingleFrag
+        ? ''
+        : paragraphText.substring(0, fragStart.clamp(0, paragraphText.length));
+    final paraSuffix = isSingleFrag
+        ? ''
+        : paragraphText.substring(fragEnd.clamp(0, paragraphText.length));
+
+    final prefix = paraPrefix + fragPrefix;
+    final suffix = fragSuffix + paraSuffix;
+    return (prefix, suffix);
+  }
+
+  int _findSuffixPos(String text, String suffix) {
+    if (suffix.isEmpty) return text.length;
+    var pos = text.lastIndexOf(suffix);
+    if (pos != -1) return pos;
+    for (var len = suffix.length - 1; len > 0; len--) {
+      final sub = suffix.substring(suffix.length - len);
+      pos = text.lastIndexOf(sub);
+      if (pos != -1) return pos;
+    }
+    return -1;
+  }
+
+  String _extractPreeditText(TextEditingValue value) {
+    if (value.composing.isValid) {
+      final rawStart = value.composing.start.clamp(0, value.text.length);
+      final rawEnd = value.composing.end.clamp(0, value.text.length);
+      if (rawStart < rawEnd) {
+        final rawPreedit = value.text.substring(rawStart, rawEnd);
+        final clean = _sanitizeUtf16(
+          rawPreedit,
+        ).replaceAll(_emptyFragmentPlaceholder, '');
+        if (clean.isNotEmpty) {
+          return clean;
+        }
+      }
+    }
+
+    if (value.text.isNotEmpty) {
+      final (prefix, suffix) = _getParagraphPrefixAndSuffix();
+      final prefixPos = prefix.isNotEmpty ? value.text.indexOf(prefix) : 0;
+      final suffixPos = suffix.isNotEmpty
+          ? _findSuffixPos(value.text, suffix)
+          : value.text.length;
+      if (prefixPos != -1 &&
+          suffixPos != -1 &&
+          suffixPos >= prefixPos + prefix.length) {
+        final extracted = value.text.substring(
+          prefixPos + prefix.length,
+          suffixPos,
+        );
+        final clean = _sanitizeUtf16(
+          extracted,
+        ).replaceAll(_emptyFragmentPlaceholder, '');
+        if (clean.isNotEmpty) {
+          return clean;
+        }
+      }
+    }
+
+    return '';
+  }
+
+  // ===========================================================================
+  // Buffer Synchronization & Text Insertion Helpers
+  // ===========================================================================
+
+  void syncImeBufferToFragment() {
+    if (connectionManager.connection == null ||
+        !connectionManager.connection!.attached)
+      return;
+    if (state.isComposing) return;
+    final doc = _document;
+    if (doc == null) return;
+    final currentFragId = doc.cursor.focusId.isNotEmpty
+        ? doc.cursor.focusId
+        : doc.cursor.anchorId;
+
+    if (currentFragId != state.lastSyncedFragmentId) {
+      _resetPlatformBuffer();
+    }
+    state.lastSyncedFragmentId = currentFragId;
+
+    if (!_shouldSyncBuffer) {
+      return;
+    }
+
     final text = _getCurrentFragmentText();
-    if (text == null) return;
+    if (text == null) {
+      _resetPlatformBuffer();
+      return;
+    }
     final cursor = doc.cursor;
     final isSingleFragSelection =
         !cursor.isCollapsed && cursor.anchorId == cursor.focusId;
     final isMultiFragSelection =
         !cursor.isCollapsed && cursor.anchorId != cursor.focusId;
     final offset = _getCursorOffsetInFragment();
-    final bool usePlaceholder = _isIOS &&
+    final bool usePlaceholder =
+        _isIOS &&
         cursor.isCollapsed &&
         offset == 0 &&
         !text.startsWith(_emptyFragmentPlaceholder);
-    final syncedText = usePlaceholder ? '$_emptyFragmentPlaceholder$text' : text;
-    final syncedOffset = usePlaceholder ? 1 : offset.clamp(0, syncedText.length);
+    final syncedText = usePlaceholder
+        ? '$_emptyFragmentPlaceholder$text'
+        : text;
+    final syncedOffset = usePlaceholder
+        ? 1
+        : offset.clamp(0, syncedText.length);
     final TextSelection syncedSelection;
     if (isSingleFragSelection && !usePlaceholder) {
       syncedSelection = TextSelection(
@@ -1531,80 +803,226 @@ class FluentTextInputHandler with DeltaTextInputClient {
     } else {
       syncedSelection = TextSelection.collapsed(offset: syncedOffset);
     }
-    final currentSelectionKey =
-        '${cursor.anchorId}:${cursor.anchorOffset}:${cursor.focusId}:${cursor.focusOffset}';
-    final bool selectionChanged = currentSelectionKey != _prevSelectionKey;
-    _prevSelectionKey = currentSelectionKey;
 
-    final wasUpdatingSelf = _updatingSelf;
-    _updatingSelf = true;
+    final selectionChanged =
+        state.prevSelectionKey !=
+        '${syncedSelection.baseOffset}:${syncedSelection.extentOffset}';
+    state.prevSelectionKey =
+        '${syncedSelection.baseOffset}:${syncedSelection.extentOffset}';
+
+    final wasUpdatingSelf = state.updatingSelf;
+    state.updatingSelf = true;
     try {
-      if (kIsWeb && syncedText.length < _lastSyncedText.length) {
-        _connection!.setEditingState(const TextEditingValue());
+      if (kIsWeb && syncedText.length < state.lastSyncedText.length) {
+        connectionManager.connection!.setEditingState(const TextEditingValue());
       }
       if (_isIOS && selectionChanged) {
-        _connection!.setEditingState(const TextEditingValue());
+        connectionManager.connection!.setEditingState(const TextEditingValue());
       }
-      _connection!.setEditingState(TextEditingValue(
-        text: syncedText,
-        selection: syncedSelection,
-        composing: TextRange.empty,
-      ));
-      _lastSyncedText = syncedText;
-    } on PlatformException catch (e) {
-      debugPrint('FluentTextInputHandler: syncImeBufferToFragment failed: ${e.message}');
-    }
-    _updatingSelf = wasUpdatingSelf;
-    if (kIsWeb) {
-      _updateWebImePosition();
+      connectionManager.connection!.setEditingState(
+        TextEditingValue(
+          text: syncedText,
+          selection: syncedSelection,
+          composing: TextRange.empty,
+        ),
+      );
+      state.lastSyncedText = syncedText;
+    } finally {
+      state.updatingSelf = wasUpdatingSelf;
     }
   }
 
-  void _invalidatePreeditRender() {
-    if (_document == null || _preeditContainerId.isEmpty) return;
-    final doc = _document!;
-    final render = doc.paragraphRegistry.renderFor(_preeditContainerId);
-    if (render != null) {
-      render.imePreeditText = _preeditText;
-      render.imeComposingRange = _composingRange;
-      render.imePreeditFragmentId = _preeditFragmentId;
-      render.imePreeditLocalOffset = _preeditLocalOffset;
-      render.markNeedsPaint();
-      final caretOffset = _preeditCaretOffset;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!_isComposing) return;
-        final rect = render.getImePreeditCaretScreenRect(caretOffset);
-        if (rect != null) {
-          updateCaretRect(rect);
-        }
-      });
+  void _insertFinalizedText(String text) {
+    final doc = _document;
+    if (doc == null) return;
+    if (text == '\n') {
+      executeHandleEnter(doc);
+      return;
+    }
+    if (!doc.registry.dispatchInsertText(text, doc)) {
+      _insertTextOrReplaceSelection(text, doc);
     }
   }
 
-  String _sanitizeUtf16(String s) {
-    if (s.isEmpty) return s;
-    final codeUnits = s.codeUnits;
-    final cleanUnits = <int>[];
-    for (int i = 0; i < codeUnits.length; i++) {
-      int unit = codeUnits[i];
+  void _insertTextOrReplaceSelection(String text, FluentDocument doc) {
+    if (doc.cursor.isCollapsed) {
+      final fragId = doc.cursor.focusId.isNotEmpty
+          ? doc.cursor.focusId
+          : doc.cursor.anchorId;
+      final node = doc.nodeById(fragId);
+      if (node is Fragment) {
+        final localOffset = doc.cursor.focusOffset.clamp(0, node.text.length);
+        final before = node.text.substring(0, localOffset);
+        final after = node.text.substring(localOffset);
+        node.text = before + text + after;
+        doc.cursor.moveTo(fragId, localOffset + text.length);
+      }
+    } else {
+      executeHandleBackspace(doc);
+      final fragId = doc.cursor.focusId.isNotEmpty
+          ? doc.cursor.focusId
+          : doc.cursor.anchorId;
+      final node = doc.nodeById(fragId);
+      if (node is Fragment) {
+        final localOffset = doc.cursor.focusOffset.clamp(0, node.text.length);
+        final before = node.text.substring(0, localOffset);
+        final after = node.text.substring(localOffset);
+        node.text = before + text + after;
+        doc.cursor.moveTo(fragId, localOffset + text.length);
+      }
+    }
+    doc.updateContent();
+  }
+
+  void _replaceFragmentText(String newText, {int? cursorOffset}) {
+    final doc = _document;
+    if (doc == null) return;
+    final fragId = doc.cursor.focusId.isNotEmpty
+        ? doc.cursor.focusId
+        : doc.cursor.anchorId;
+    final node = doc.nodeById(fragId);
+    if (node is! Fragment) return;
+    if (node is FluentImage) {
+      removeNode(doc.content, node);
+      doc.updateContent();
+      return;
+    }
+    doc.saveState(description: 'Replace text', forceNewAction: false);
+    final cleanText = _sanitizeUtf16(newText);
+    node.text = cleanText;
+    final finalOffset = _snapCursorOffset(
+      cleanText,
+      cursorOffset ?? cleanText.length,
+    );
+    doc.cursor.moveTo(fragId, finalOffset);
+    doc.selectionManager.collapse();
+    doc.updateContent();
+    syncImeBufferToFragment();
+  }
+
+  void _resetPlatformBuffer() {
+    state.lastSyncedText = '';
+    state.prevSelectionKey = '';
+    if (connectionManager.connection != null &&
+        connectionManager.connection!.attached) {
+      connectionManager.connection!.setEditingState(const TextEditingValue());
+    }
+  }
+
+  String _computeInsertedText(String oldText, String newText) {
+    if (newText.startsWith(oldText)) {
+      return newText.substring(oldText.length);
+    }
+    if (newText.endsWith(oldText)) {
+      return newText.substring(0, newText.length - oldText.length);
+    }
+    var prefixLen = 0;
+    while (prefixLen < oldText.length &&
+        prefixLen < newText.length &&
+        oldText[prefixLen] == newText[prefixLen]) {
+      prefixLen++;
+    }
+    var suffixLen = 0;
+    while (suffixLen < (oldText.length - prefixLen) &&
+        suffixLen < (newText.length - prefixLen) &&
+        oldText[oldText.length - 1 - suffixLen] ==
+            newText[newText.length - 1 - suffixLen]) {
+      suffixLen++;
+    }
+    return newText.substring(prefixLen, newText.length - suffixLen);
+  }
+
+  String? _getCurrentFragmentText() {
+    final doc = _document;
+    if (doc == null) return null;
+    final fragId = doc.cursor.focusId.isNotEmpty
+        ? doc.cursor.focusId
+        : doc.cursor.anchorId;
+    final node = doc.nodeById(fragId);
+    if (node is Fragment && node is! FluentImage) {
+      return node.text;
+    }
+    return null;
+  }
+
+  int _getCursorOffsetInFragment() {
+    final doc = _document;
+    if (doc == null) return 0;
+    final cursor = doc.cursor;
+    final fragId = cursor.focusId.isNotEmpty ? cursor.focusId : cursor.anchorId;
+    final node = doc.nodeById(fragId);
+    if (node is Fragment) {
+      return cursor.focusOffset.clamp(0, node.text.length);
+    }
+    return 0;
+  }
+
+  int _snapCursorOffset(String text, int rawOffset) {
+    if (rawOffset <= 0) return 0;
+    if (rawOffset >= text.length) return text.length;
+    final units = text.codeUnits;
+    if (rawOffset > 0 && rawOffset < units.length) {
+      final prev = units[rawOffset - 1];
+      final curr = units[rawOffset];
+      if (prev >= 0xD800 &&
+          prev <= 0xDBFF &&
+          curr >= 0xDC00 &&
+          curr <= 0xDFFF) {
+        return rawOffset + 1 <= text.length ? rawOffset + 1 : text.length;
+      }
+    }
+    return rawOffset;
+  }
+
+  String _sanitizeUtf16(String text) {
+    if (text.isEmpty) return text;
+    final units = text.codeUnits;
+    final result = <int>[];
+    for (var i = 0; i < units.length; i++) {
+      final unit = units[i];
       if (unit >= 0xD800 && unit <= 0xDBFF) {
-        if (i + 1 < codeUnits.length && codeUnits[i + 1] >= 0xDC00 && codeUnits[i + 1] <= 0xDFFF) {
-          cleanUnits.add(unit);
-          cleanUnits.add(codeUnits[i + 1]);
+        if (i + 1 < units.length &&
+            units[i + 1] >= 0xDC00 &&
+            units[i + 1] <= 0xDFFF) {
+          result.add(unit);
+          result.add(units[i + 1]);
           i++;
-        } else {
-          cleanUnits.add(0xFFFD);
         }
       } else if (unit >= 0xDC00 && unit <= 0xDFFF) {
-        cleanUnits.add(0xFFFD);
+        // Drop orphan low surrogate
       } else {
-        cleanUnits.add(unit);
+        result.add(unit);
       }
     }
-    return String.fromCharCodes(cleanUnits);
+    return String.fromCharCodes(result);
   }
 
-  bool isPreeditInContainer(String containerId) {
-    return _isComposing && _preeditContainerId == containerId;
+  bool get isConnectionActive => connectionManager.isConnectionActive;
+
+  bool get shouldUseBufferSync =>
+      kIsWeb || defaultTargetPlatform == TargetPlatform.android;
+
+  void setViewHeight(double height) => connectionManager.setViewHeight(height);
+
+  void updateCaretRect(Rect rect) => connectionManager.updateCaretRect(rect);
+
+  int _commonPrefixLength(String a, String b) {
+    int i = 0;
+    while (i < a.length && i < b.length && a.codeUnitAt(i) == b.codeUnitAt(i)) {
+      i++;
+    }
+    return i;
+  }
+
+  int _commonSuffixLength(String a, String b) {
+    int i = a.length - 1;
+    int j = b.length - 1;
+    int len = 0;
+    while (i >= 0 && j >= 0 && a.codeUnitAt(i) == b.codeUnitAt(j)) {
+      len++;
+      i--;
+      j--;
+    }
+    return len;
   }
 }

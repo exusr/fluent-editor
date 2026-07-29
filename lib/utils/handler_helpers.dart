@@ -41,6 +41,7 @@ void recalculateAndUpdate(FluentDocument document) {
 
 /// Saves undo state, removes [node] from the document, and updates content.
 void saveAndDeleteNode(FluentDocument document, FNode node, {required String description}) {
+  if (document.registry.dispatchDeleteNode(document, node)) return;
   document.saveState(description: description, forceNewAction: true);
   removeNode(document.content, node);
   document.updateContent();
@@ -68,10 +69,22 @@ void saveAndDeleteNode(FluentDocument document, FNode node, {required String des
 
     if (node.startFragment.id == node.endFragment.id) {
       final frag = node.startFragment;
-      if (node.startOffset > 0 && node.endOffset < frag.text.length) {
-        final before = frag.text.substring(0, node.startOffset);
-        final mid    = frag.text.substring(node.startOffset, node.endOffset);
-        final after  = frag.text.substring(node.endOffset);
+      final len = frag.text.length;
+      var start = node.startOffset.clamp(0, len);
+      var end = node.endOffset.clamp(0, len);
+      if (start > end) {
+        final tmp = start;
+        start = end;
+        end = tmp;
+      }
+
+      if (start == end) {
+        actualStartFrag = frag;
+        actualEndFrag   = frag;
+      } else if (start > 0 && end < len) {
+        final before = frag.text.substring(0, start);
+        final mid    = frag.text.substring(start, end);
+        final after  = frag.text.substring(end);
         frag.text = before;
         final midFrag = FragmentOperations.cloneFragment(frag, text: mid);
         if (startParent != null) insertAfter(startParent, frag, midFrag);
@@ -81,17 +94,17 @@ void saveAndDeleteNode(FluentDocument document, FNode node, {required String des
         }
         actualStartFrag = midFrag;
         actualEndFrag   = midFrag;
-      } else if (node.startOffset > 0) {
-        final before = frag.text.substring(0, node.startOffset);
-        final after  = frag.text.substring(node.startOffset);
+      } else if (start > 0) {
+        final before = frag.text.substring(0, start);
+        final after  = frag.text.substring(start);
         frag.text = before;
         final newFrag = FragmentOperations.cloneFragment(frag, text: after);
         if (startParent != null) insertAfter(startParent, frag, newFrag);
         actualStartFrag = newFrag;
         actualEndFrag   = newFrag;
-      } else if (node.endOffset < frag.text.length) {
-        final selected = frag.text.substring(0, node.endOffset);
-        final after    = frag.text.substring(node.endOffset);
+      } else if (end < len) {
+        final selected = frag.text.substring(0, end);
+        final after    = frag.text.substring(end);
         frag.text = selected;
         final afterFrag = FragmentOperations.cloneFragment(frag, text: after);
         if (startParent != null) insertAfter(startParent, frag, afterFrag);
@@ -103,9 +116,11 @@ void saveAndDeleteNode(FluentDocument document, FNode node, {required String des
       }
     } else {
       final first = node.startFragment;
-      if (node.startOffset > 0 && node.startOffset < first.text.length) {
-        final before = first.text.substring(0, node.startOffset);
-        final after  = first.text.substring(node.startOffset);
+      final firstLen = first.text.length;
+      final sOffset = node.startOffset.clamp(0, firstLen);
+      if (sOffset > 0 && sOffset < firstLen) {
+        final before = first.text.substring(0, sOffset);
+        final after  = first.text.substring(sOffset);
         first.text = before;
         final newFrag = FragmentOperations.cloneFragment(first, text: after);
         if (startParent != null) insertAfter(startParent, first, newFrag);
@@ -115,9 +130,11 @@ void saveAndDeleteNode(FluentDocument document, FNode node, {required String des
       }
 
       final last = node.endFragment;
-      if (node.endOffset > 0 && node.endOffset < last.text.length) {
-        final selected = last.text.substring(0, node.endOffset);
-        final after    = last.text.substring(node.endOffset);
+      final lastLen = last.text.length;
+      final eOffset = node.endOffset.clamp(0, lastLen);
+      if (eOffset > 0 && eOffset < lastLen) {
+        final selected = last.text.substring(0, eOffset);
+        final after    = last.text.substring(eOffset);
         last.text = selected;
         final afterFrag = FragmentOperations.cloneFragment(last, text: after);
         if (endParent != null) insertAfter(endParent, last, afterFrag);
@@ -132,9 +149,11 @@ void saveAndDeleteNode(FluentDocument document, FNode node, {required String des
     for (final leaf in leaves) {
       if (leaf.id == actualStartFrag.id) inRange = true;
       if (inRange && leaf is! FluentImage) {
-        modify(leaf);
-        firstModified ??= leaf;
-        lastModified = leaf;
+        if (leaf.styles?.contains('suggestion_deletion') != true) {
+          modify(leaf);
+          firstModified ??= leaf;
+          lastModified = leaf;
+        }
       }
       if (leaf.id == actualEndFrag.id) inRange = false;
     }
@@ -151,6 +170,10 @@ bool removeNodeAndReposition(
   FNode node, {
   bool forward = false,
 }) {
+  if (document.registry.dispatchDeleteNode(document, node)) return true;
+
+  document.saveState(description: 'Delete node', forceNewAction: true);
+
   final root = document.content;
   final cursor = document.cursor;
   final stop = forward

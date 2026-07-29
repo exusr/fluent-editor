@@ -93,21 +93,63 @@ class _FluentHrWidgetState extends State<FluentHrWidget> {
 
     final isSelected = isNodeInSelectionRange(widget.document.caretStops, cursor, node.id);
 
+    final isDeletion = node.styles?.contains('suggestion_deletion') == true ||
+        node.styles?.contains('strikethrough') == true;
+    final isAddition = node.styles?.contains('suggestion_addition') == true;
+
+    final bgTint = isDeletion
+        ? const Color(0x40F44336)
+        : (isAddition
+            ? const Color(0x404CAF50)
+            : (isSelected
+                ? Theme.of(context).colorScheme.primary.withValues(alpha: 0.4)
+                : null));
+
+    final hrColor = isDeletion
+        ? const Color(0xFFEF5350)
+        : (isAddition
+            ? const Color(0xFF66BB6A)
+            : null);
+
     return GestureDetector(
       onTapDown: _onTapDown,
       child: Stack(
         clipBehavior: Clip.none,
+        alignment: Alignment.center,
         children: [
           Container(
             margin: const EdgeInsets.symmetric(vertical: 8),
+            padding: const EdgeInsets.symmetric(vertical: 4),
             decoration: BoxDecoration(
-              color: isSelected
-                  ? Theme.of(context).colorScheme.primary.withValues(alpha: 0.4)
-                  : null,
-              borderRadius: BorderRadius.circular(2),
+              color: bgTint,
+              borderRadius: BorderRadius.circular(4),
+              border: isDeletion
+                  ? Border.all(color: const Color(0xFFE53935).withValues(alpha: 0.5), width: 1)
+                  : isAddition
+                      ? Border.all(color: const Color(0xFF4CAF50).withValues(alpha: 0.5), width: 1)
+                      : null,
             ),
-            child: const Divider(thickness: 2, height: 18),
+            child: Divider(
+              thickness: 2,
+              height: 18,
+              color: hrColor ?? Theme.of(context).dividerColor,
+            ),
           ),
+          if (isDeletion)
+            Positioned.fill(
+              child: IgnorePointer(
+                child: Center(
+                  child: Container(
+                    height: 4,
+                    margin: const EdgeInsets.symmetric(horizontal: 4),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFE53935),
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+              ),
+            ),
           if (cursorBefore)
             const Positioned(left: 0, top: 0, bottom: 0, child: _CaretLine()),
           if (cursorAfter)

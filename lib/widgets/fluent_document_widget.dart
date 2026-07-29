@@ -184,6 +184,13 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
       focusNode: widget.document.editorFocusNode,
       autofocus: true,
       onKeyEvent: (node, event) {
+        if (event is KeyUpEvent) {
+          widget.document.manageEvent(event);
+          return KeyEventResult.ignored;
+        }
+        if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
+          return KeyEventResult.ignored;
+        }
         final keyboard = HardwareKeyboard.instance;
         if ((event is KeyDownEvent || event is KeyRepeatEvent) &&
             _shortcutKeys.contains(event.logicalKey) &&
@@ -207,7 +214,7 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
                 defaultTargetPlatform == TargetPlatform.windows ||
                 defaultTargetPlatform == TargetPlatform.linux);
         if (_shouldRouteToIME &&
-            widget.document.imeHandler.isConnectionActive) {
+            widget.document.imeHandler.isComposing) {
           final _isCtrl = HardwareKeyboard.instance.isControlPressed;
           final _isMeta = HardwareKeyboard.instance.isMetaPressed;
           if (!_isCtrl && !_isMeta) {

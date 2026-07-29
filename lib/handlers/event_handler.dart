@@ -138,15 +138,17 @@ class EventHandler {
   }
 
   void handleInsertNode(String nodeType, [Map<String, dynamic>? options]) {
-    options ??= <String, dynamic>{
+    final opts = options ?? <String, dynamic>{
       'rows': 2,
       'cells': 2,
       'url': 'https://google.com',
       'src': 'https://picsum.photos/200/300',
     };
 
+    if (document.registry.dispatchInsertNode(document, nodeType, opts)) return;
+
     document.saveState(description: 'Insert $nodeType', forceNewAction: true);
-    handleInsertNodeExceution(nodeType, document, options);
+    handleInsertNodeExceution(nodeType, document, opts);
   }
 
   void handle(dynamic event, FluentDocument document) {
@@ -196,6 +198,9 @@ class EventHandler {
 
   bool handleCharacterInput(KeyEvent event) {
     if (event.character != null && event.character!.isNotEmpty) {
+      if (document.imeHandler.isComposing) {
+        return false;
+      }
       final character = event.character!;
 
       document.saveState(description: 'Type character: $character');
@@ -212,6 +217,7 @@ class EventHandler {
 
   bool handleEnterKey(KeyEvent event) {
     if (event.logicalKey == LogicalKeyboardKey.enter) {
+      if (document.registry.dispatchEnter(document)) return true;
       document.saveState(description: 'Enter', forceNewAction: true);
       executeHandleEnter(document);
       return true;
@@ -371,6 +377,7 @@ class EventHandler {
 
   bool handleTabKey(KeyEvent event) {
     if (event.logicalKey == LogicalKeyboardKey.tab) {
+      if (document.registry.dispatchTab(document, isShiftPressed: isShiftPressed)) return true;
       document.saveState(description: isShiftPressed ? 'Outdent' : 'Indent', forceNewAction: true);
       return executeHandleTab(document, shift: isShiftPressed);
     }
@@ -431,51 +438,60 @@ class EventHandler {
   }
 
   bool handleBold() {
+    if (document.registry.isFormattingDisabled(document)) return false;
     executeHandleBold(document);
     return true;
   }
 
   bool handleItalic() {
+    if (document.registry.isFormattingDisabled(document)) return false;
     executeHandleItalic(document);
     return true;
   }
 
   bool handleUnderline() {
+    if (document.registry.isFormattingDisabled(document)) return false;
     executeHandleUnderline(document);
     return true;
   }
 
   bool handleStrikethrough() {
+    if (document.registry.isFormattingDisabled(document)) return false;
     document.saveState(description: 'Strikethrough', forceNewAction: true);
     executeHandleStrikethrough(document);
     return true;
   }
 
   bool handleSmallCaps() {
+    if (document.registry.isFormattingDisabled(document)) return false;
     document.saveState(description: 'Small caps', forceNewAction: true);
     executeHandleSmallCaps(document);
     return true;
   }
 
   bool handleSuperscript() {
+    if (document.registry.isFormattingDisabled(document)) return false;
     document.saveState(description: 'Superscript', forceNewAction: true);
     executeHandleSuperscript(document);
     return true;
   }
 
   bool handleSubscript() {
+    if (document.registry.isFormattingDisabled(document)) return false;
     document.saveState(description: 'Subscript', forceNewAction: true);
     executeHandleSubscript(document);
     return true;
   }
 
   bool handleFontFamily(String fontFamily) {
+    if (document.registry.isFormattingDisabled(document)) return false;
     document.saveState(description: 'Change font to $fontFamily');
     executeHandleFontFamily(document, fontFamily);
     return true;
   }
 
   bool handleFontSize(double fontSize) {
+    if (document.registry.isFormattingDisabled(document)) return false;
     document.saveState(description: 'Change font size', forceNewAction: true);
     executeHandleFontSize(document, fontSize);
     return true;
@@ -486,6 +502,7 @@ class EventHandler {
     double? spacingBefore,
     double? spacingAfter,
   }) {
+    if (document.registry.isFormattingDisabled(document)) return false;
     document.saveState(description: 'Change paragraph spacing', forceNewAction: true);
     executeHandleParagraphSpacing(document,
         lineHeight: lineHeight,
@@ -495,12 +512,14 @@ class EventHandler {
   }
 
   bool handleTextColor(String? color) {
+    if (document.registry.isFormattingDisabled(document)) return false;
     document.saveState(description: 'Change text color', forceNewAction: true);
     executeHandleTextColor(document, color);
     return true;
   }
 
   bool handleHighlightColor(String? color) {
+    if (document.registry.isFormattingDisabled(document)) return false;
     document.saveState(description: 'Change highlight color', forceNewAction: true);
     executeHandleHighlightColor(document, color);
     return true;
@@ -525,12 +544,14 @@ class EventHandler {
   }
 
   bool handleClearFormatting() {
+    if (document.registry.isFormattingDisabled(document)) return false;
     executeHandleClearFormatting(document);
     return true;
   }
 
   /// Applies a paragraph style to the current paragraph or selection.
   bool handleParagraphStyle(ParagraphStyle style) {
+    if (document.registry.isFormattingDisabled(document)) return false;
     document.saveState(description: 'Apply paragraph style', forceNewAction: true);
     executeHandleParagraphStyle(document, style);
     return true;

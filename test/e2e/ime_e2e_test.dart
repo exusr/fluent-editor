@@ -576,6 +576,43 @@ void main() {
       expect(doc.imeHandler.preeditText, '你好');
     });
 
+    test('Switching IME candidate updates preedit preview to match candidate 2', () {
+      final doc = _docWithText('Hello ');
+      final frag = _firstFrag(doc);
+      doc.cursor.moveTo(frag.id, 6);
+
+      // Candidate 1 preview ("あ")
+      doc.imeHandler.updateEditingValue(TextEditingValue(
+        text: 'Hello あ',
+        selection: const TextSelection.collapsed(offset: 7),
+        composing: const TextRange(start: 6, end: 7),
+      ));
+      expect(doc.imeHandler.isComposing, isTrue);
+      expect(doc.imeHandler.preeditText, 'あ');
+
+      // Candidate 2 preview ("ありがとう")
+      doc.imeHandler.updateEditingValue(TextEditingValue(
+        text: 'Hello ありがとう',
+        selection: const TextSelection.collapsed(offset: 11),
+        composing: const TextRange(start: 6, end: 11),
+      ));
+
+      expect(doc.imeHandler.isComposing, isTrue);
+      expect(doc.imeHandler.preeditText, 'ありがとう',
+          reason: 'Preview must update to candidate 2 before commit');
+
+      // Candidate 2 commit
+      doc.imeHandler.updateEditingValue(TextEditingValue(
+        text: 'Hello ありがとう',
+        selection: const TextSelection.collapsed(offset: 11),
+        composing: TextRange.empty,
+      ));
+
+      expect(doc.imeHandler.isComposing, isFalse);
+      expect(frag.text, 'Hello ありがとう',
+          reason: 'Committed text must match candidate 2 preview');
+    });
+
     test('CJK composition end commits text to document', () {
       debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
       addTearDown(() => debugDefaultTargetPlatformOverride = null);
@@ -697,6 +734,101 @@ void main() {
 
       expect(frag.text, 'italico');
       expect(doc.cursor.anchorOffset, 7);
+    });
+
+    test('TextEditingDeltaReplacement mapping when oldText contains full paragraph prefix', () {
+      debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+      addTearDown(() => debugDefaultTargetPlatformOverride = null);
+
+      final doc = _docWithText('Cross-platform support: Linux, macOS');
+      final frag = _firstFrag(doc);
+      doc.cursor.moveTo(frag.id, 24);
+
+      doc.imeHandler.updateEditingValueWithDeltas([
+        const TextEditingDeltaReplacement(
+          oldText: 'Cross-platform support: Linux, macOS',
+          replacementText: 'Liあ',
+          replacedRange: const TextRange(start: 24, end: 26),
+          selection: const TextSelection.collapsed(offset: 27),
+          composing: TextRange.empty,
+        ),
+      ]);
+
+      expect(frag.text, 'Cross-platform support: Liあnux, macOS');
+    });
+
+    test('composition commit when replacementText is the full paragraph buffer', () {
+      debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+      addTearDown(() => debugDefaultTargetPlatformOverride = null);
+
+      final doc = _docWithText('Cross-platform support: Linux, macOS');
+      final frag = _firstFrag(doc);
+      // 'Cross-platform support: Li' is 26 characters
+      doc.cursor.moveTo(frag.id, 26);
+
+      doc.imeHandler.updateEditingValueWithDeltas([
+        const TextEditingDeltaInsertion(
+          oldText: 'Cross-platform support: Linux, macOS',
+          textInserted: 'あ',
+          insertionOffset: 26,
+          selection: const TextSelection.collapsed(offset: 27),
+          composing: const TextRange(start: 26, end: 27),
+        ),
+      ]);
+      expect(doc.imeHandler.isComposing, isTrue);
+
+      doc.imeHandler.updateEditingValueWithDeltas([
+        const TextEditingDeltaReplacement(
+          oldText: 'Cross-platform support: Linux, macOS',
+          replacementText: 'Cross-platform support: Liあnux, macOS',
+          replacedRange: const TextRange(start: 0, end: 36),
+          selection: const TextSelection.collapsed(offset: 27),
+          composing: TextRange.empty,
+        ),
+      ]);
+
+      expect(doc.imeHandler.isComposing, isFalse);
+      expect(frag.text, 'Cross-platform support: Liあnux, macOS');
+    });
+
+    test('composition commit in multi-fragment paragraph extracts only net committed text', () {
+      debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+      addTearDown(() => debugDefaultTargetPlatformOverride = null);
+
+      final doc = _docWithText('Cross-platform support: Linux, macOS');
+      final p = doc.content.nodes.first as Paragraph;
+      p.fragments.clear();
+      final f1 = Fragment('Cross-platform support: Li');
+      final f2 = Fragment('あ')..styles = ['suggestion_addition'];
+      final f3 = Fragment('nux, macOS');
+      p.fragments.addAll([f1, f2, f3]);
+      doc.invalidateNodeIndex();
+
+      doc.cursor.moveTo(f2.id, 1);
+
+      doc.imeHandler.updateEditingValueWithDeltas([
+        const TextEditingDeltaInsertion(
+          oldText: 'Cross-platform support: Liあnux, macOS',
+          textInserted: 'り',
+          insertionOffset: 27,
+          selection: const TextSelection.collapsed(offset: 28),
+          composing: const TextRange(start: 26, end: 28),
+        ),
+      ]);
+      expect(doc.imeHandler.isComposing, isTrue);
+
+      doc.imeHandler.updateEditingValueWithDeltas([
+        const TextEditingDeltaReplacement(
+          oldText: 'Cross-platform support: Liあnux, macOS',
+          replacementText: 'Cross-platform support: Liありnux, macOS',
+          replacedRange: const TextRange(start: 0, end: 37),
+          selection: const TextSelection.collapsed(offset: 28),
+          composing: TextRange.empty,
+        ),
+      ]);
+
+      expect(doc.imeHandler.isComposing, isFalse);
+      expect(f1.text, 'Cross-platform support: Li');
     });
   });
 }

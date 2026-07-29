@@ -51,25 +51,26 @@ class _FluentParagraphStyleSelectorState
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final isDisabled = widget.document.registry.isFormattingDisabled(widget.document);
 
     return MouseRegion(
-      cursor: SystemMouseCursors.click,
+      cursor: isDisabled ? SystemMouseCursors.basic : SystemMouseCursors.click,
       child: Container(
         height: 32,
         padding: const EdgeInsets.symmetric(horizontal: 8),
         decoration: BoxDecoration(
-          color: colorScheme.surfaceContainerHighest.withAlpha(100),
+          color: colorScheme.surfaceContainerHighest.withAlpha(isDisabled ? 40 : 100),
           borderRadius: BorderRadius.circular(4),
-          border: Border.all(color: colorScheme.outline.withAlpha(100)),
+          border: Border.all(color: colorScheme.outline.withAlpha(isDisabled ? 40 : 100)),
         ),
         child: DropdownButtonHideUnderline(
           child: DropdownButton<ParagraphStyle>(
             value: _currentStyle,
             isDense: true,
-            icon: const Icon(Icons.arrow_drop_down, size: 18),
+            icon: Icon(Icons.arrow_drop_down, size: 18, color: isDisabled ? colorScheme.onSurface.withAlpha(90) : null),
             style: TextStyle(
               fontSize: 13,
-              color: colorScheme.onSurface,
+              color: isDisabled ? colorScheme.onSurface.withAlpha(90) : colorScheme.onSurface,
             ),
             selectedItemBuilder: (context) {
               return ParagraphStyle.predefinedStyles.map((style) {
@@ -77,7 +78,7 @@ class _FluentParagraphStyleSelectorState
                   child: Text(
                     _currentStyle.displayName,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontSize: 13),
+                    style: TextStyle(fontSize: 13, color: isDisabled ? colorScheme.onSurface.withAlpha(90) : null),
                   ),
                 );
               }).toList();
@@ -100,12 +101,14 @@ class _FluentParagraphStyleSelectorState
                 ),
               );
             }).toList(),
-            onChanged: (ParagraphStyle? newStyle) {
-              if (newStyle != null) {
-                widget.document.eventHandler.handleParagraphStyle(newStyle);
-                widget.document.requestEditorFocus();
-              }
-            },
+            onChanged: widget.document.registry.isFormattingDisabled(widget.document)
+                ? null
+                : (ParagraphStyle? newStyle) {
+                    if (newStyle != null) {
+                      widget.document.eventHandler.handleParagraphStyle(newStyle);
+                      widget.document.requestEditorFocus();
+                    }
+                  },
           ),
         ),
       ),

@@ -383,29 +383,30 @@ class _FluentFontSelectorWidgetState extends State<FluentFontSelectorWidget> {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final isDisabled = widget.document.registry.isFormattingDisabled(widget.document);
 
     return MouseRegion(
-      cursor: SystemMouseCursors.click,
+      cursor: isDisabled ? SystemMouseCursors.basic : SystemMouseCursors.click,
       child: ConstrainedBox(
         constraints: const BoxConstraints(minWidth: 150),
         child: Container(
           height: 32,
           padding: const EdgeInsets.symmetric(horizontal: 8),
           decoration: BoxDecoration(
-            color: colorScheme.surfaceContainerHighest.withAlpha(100),
+            color: colorScheme.surfaceContainerHighest.withAlpha(isDisabled ? 40 : 100),
             borderRadius: BorderRadius.circular(4),
             border: Border.all(
-              color: colorScheme.outline.withAlpha(100),
+              color: colorScheme.outline.withAlpha(isDisabled ? 40 : 100),
             ),
           ),
           child: DropdownButtonHideUnderline(
             child: DropdownButton<String>(
               value: _getDropdownValue(),
               isDense: true,
-              icon: const Icon(Icons.arrow_drop_down, size: 18),
+              icon: Icon(Icons.arrow_drop_down, size: 18, color: isDisabled ? colorScheme.onSurface.withAlpha(90) : null),
               style: TextStyle(
                 fontSize: 13,
-                color: colorScheme.onSurface,
+                color: isDisabled ? colorScheme.onSurface.withAlpha(90) : colorScheme.onSurface,
               ),
               selectedItemBuilder: (context) {
                 return _availableFonts.map((font) {
@@ -413,7 +414,11 @@ class _FluentFontSelectorWidgetState extends State<FluentFontSelectorWidget> {
                     child: Text(
                       _currentFont,
                       overflow: TextOverflow.ellipsis,
-                      style: TextStyle(fontFamily: _currentFont, fontSize: 13),
+                      style: TextStyle(
+                        fontFamily: _currentFont,
+                        fontSize: 13,
+                        color: isDisabled ? colorScheme.onSurface.withAlpha(90) : null,
+                      ),
                     ),
                   );
                 }).toList();
@@ -427,14 +432,16 @@ class _FluentFontSelectorWidgetState extends State<FluentFontSelectorWidget> {
                   ),
                 );
               }).toList(),
-              onChanged: (String? newValue) {
-                if (newValue != null) {
-                  widget.document.eventHandler.handleFontFamily(newValue);
-                  if (kIsWeb || !(Platform.isAndroid || Platform.isIOS)) {
-                    widget.document.requestEditorFocus();
-                  }
-                }
-              },
+              onChanged: widget.document.registry.isFormattingDisabled(widget.document)
+                  ? null
+                  : (String? newValue) {
+                      if (newValue != null) {
+                        widget.document.eventHandler.handleFontFamily(newValue);
+                        if (kIsWeb || !(Platform.isAndroid || Platform.isIOS)) {
+                          widget.document.requestEditorFocus();
+                        }
+                      }
+                    },
             ),
           ),
         ),

@@ -295,10 +295,12 @@ class _FluentFormattingBarState extends State<FluentFormattingBar> {
       _buildToolbarButton(
         icon: Icons.format_clear,
         tooltip: "Clear formatting",
-        onPressed: () {
-          widget.document.eventHandler.handleClearFormatting();
-          widget.document.requestEditorFocus();
-        },
+        onPressed: widget.document.registry.isFormattingDisabled(widget.document)
+            ? null
+            : () {
+                widget.document.eventHandler.handleClearFormatting();
+                widget.document.requestEditorFocus();
+              },
       ),
       _buildVerticalDivider(),
       _buildAlignButton(Icons.format_align_left, TextAlign.left, 'Align left'),
@@ -410,10 +412,12 @@ class _FluentFormattingBarState extends State<FluentFormattingBar> {
       _buildToolbarButton(
         icon: Icons.format_clear,
         tooltip: "Clear formatting",
-        onPressed: () {
-          widget.document.eventHandler.handleClearFormatting();
-          widget.document.requestEditorFocus();
-        },
+        onPressed: widget.document.registry.isFormattingDisabled(widget.document)
+            ? null
+            : () {
+                widget.document.eventHandler.handleClearFormatting();
+                widget.document.requestEditorFocus();
+              },
       ),
       _buildVerticalDivider(),
       _buildCompactAlignButton(),
@@ -446,20 +450,26 @@ class _FluentFormattingBarState extends State<FluentFormattingBar> {
     Color? iconColor,
     Color? backgroundColor,
   }) {
+    final isDisabled = onPressed == null;
+    final effectiveIconColor = isDisabled
+        ? (iconColor ?? Theme.of(context).colorScheme.onSurface).withAlpha(90)
+        : iconColor;
+    final effectiveBgColor = isDisabled ? null : backgroundColor;
+
     return Tooltip(
       message: tooltip,
       child: Material(
-        color: backgroundColor,
+        color: effectiveBgColor,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
         child: InkWell(
           onTap: onPressed,
           borderRadius: BorderRadius.circular(4),
-          mouseCursor: onPressed != null
-              ? SystemMouseCursors.click
-              : SystemMouseCursors.forbidden,
+          mouseCursor: isDisabled
+              ? SystemMouseCursors.basic
+              : SystemMouseCursors.click,
           child: Padding(
             padding: const EdgeInsets.all(8),
-            child: Icon(icon, color: iconColor, size: 20),
+            child: Icon(icon, color: effectiveIconColor, size: 20),
           ),
         ),
       ),
@@ -472,6 +482,7 @@ class _FluentFormattingBarState extends State<FluentFormattingBar> {
     required bool isActive,
     required VoidCallback handler,
   }) {
+    final isDisabled = widget.document.registry.isFormattingDisabled(widget.document);
     return _buildToolbarButton(
       icon: icon,
       tooltip: tooltip,
@@ -479,10 +490,12 @@ class _FluentFormattingBarState extends State<FluentFormattingBar> {
       backgroundColor: isActive
           ? Theme.of(context).colorScheme.primaryContainer.withAlpha(180)
           : null,
-      onPressed: () {
-        handler();
-        widget.document.requestEditorFocus();
-      },
+      onPressed: isDisabled
+          ? null
+          : () {
+              handler();
+              widget.document.requestEditorFocus();
+            },
     );
   }
 

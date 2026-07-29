@@ -79,6 +79,7 @@ bool _executeHandleExclusiveStyle(FluentDocument document, String styleName, Str
 }
 
 void _toggleStyle(Fragment f, String styleName) {
+  if (f.styles?.contains('suggestion_deletion') == true) return;
   final s = f.styles ?? [];
   if (s.contains(styleName)) {
     f.styles = s.where((x) => x != styleName).toList();

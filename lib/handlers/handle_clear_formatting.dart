@@ -63,12 +63,14 @@ bool _clearFormattingFromSelection(FluentDocument document, ResolvedSelection se
       if (leaf.id == node.startFragment.id) inRange = true;
 
       if (inRange && leaf is! FluentImage) {
-        leaf.styles = [];
-        leaf.fontFamily = 'DejaVu Sans';
-        leaf.fontSize = 14.0;
-        leaf.color = null;
-        leaf.highlightColor = null;
-        lastCleared = leaf;
+        if (leaf.styles?.contains('suggestion_deletion') != true) {
+          leaf.styles = [];
+          leaf.fontFamily = 'DejaVu Sans';
+          leaf.fontSize = 14.0;
+          leaf.color = null;
+          leaf.highlightColor = null;
+          lastCleared = leaf;
+        }
       }
 
       if (leaf.id == node.endFragment.id) inRange = false;

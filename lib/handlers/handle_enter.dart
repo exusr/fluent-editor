@@ -12,6 +12,7 @@ import 'package:fluent_editor/utils/node_operations.dart';
 /// - Cells: creates a new fragment with line break or new row if at the end
 /// - Lists: creates a new list item
 bool executeHandleEnter(FluentDocument document) {
+  if (document.registry.dispatchEnter(document)) return true;
   final cursor = document.cursor;
 
   if (!cursor.isCollapsed) {

@@ -208,8 +208,12 @@ class FluentColorButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isDisabled = document.registry.isFormattingDisabled(document);
     final currentColor = resolveColor(document);
     final colorSwatch = ColorUtils.parseColor(currentColor);
+    final effectiveColor = isDisabled
+        ? Theme.of(context).colorScheme.onSurface.withAlpha(90)
+        : colorSwatch;
 
     return Tooltip(
       message: title,
@@ -217,12 +221,16 @@ class FluentColorButton extends StatelessWidget {
         color: Colors.transparent,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
         child: InkWell(
-          onTap: () => _showColorPicker(context),
+          onTap: isDisabled ? null : () => _showColorPicker(context),
           borderRadius: BorderRadius.circular(4),
-          mouseCursor: SystemMouseCursors.click,
+          mouseCursor: isDisabled ? SystemMouseCursors.basic : SystemMouseCursors.click,
           child: Padding(
             padding: const EdgeInsets.all(8),
-            child: Icon(icon, size: 20, color: colorSwatch),
+            child: Icon(
+              icon,
+              size: 20,
+              color: effectiveColor,
+            ),
           ),
         ),
       ),

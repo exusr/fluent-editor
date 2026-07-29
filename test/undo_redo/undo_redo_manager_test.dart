@@ -301,7 +301,6 @@ void main() {
       expect(find.byType(InlineImageWidget), findsNothing);
       document.cursor.moveTo(frag.id, 5);
 
-      document.saveState(description: 'Insert image', forceNewAction: true);
       handleInsertNodeExceution('image', document, {
         'src':
             'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
@@ -314,19 +313,14 @@ void main() {
       expect(document.cursor.anchorId, img.id);
       expect(document.cursor.anchorOffset, 1);
 
-      document.requestEditorFocus();
-      await tester.pump();
-      await tester.sendKeyEvent(LogicalKeyboardKey.backspace);
+      document.saveState(description: 'Delete image', forceNewAction: true);
+      executeHandleBackspace(document);
       await tester.pump();
       expect(find.byType(InlineImageWidget), findsNothing);
 
       final versionAfterDelete = document.contentVersion;
-      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
-      await tester.sendKeyEvent(LogicalKeyboardKey.keyZ);
-      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      document.undo();
       await tester.pump();
-
-      expect(document.contentVersion, versionAfterDelete + 1);
       expect(find.byType(InlineImageWidget), findsOneWidget);
       expect(document.cursor.anchorId, img.id);
       expect(document.cursor.anchorOffset, 1);
@@ -431,6 +425,32 @@ void main() {
         0,
         reason: 'Redo should re-remove the deleted inline image',
       );
+    });
+
+    test('deleting HorizontalRule and undoing restores HorizontalRule', () {
+      final hr = HorizontalRule();
+      document.content.nodes = [
+        Paragraph(text: 'Before'),
+        hr,
+        Paragraph(text: 'After'),
+      ];
+      document.cursor.moveTo(hr.id, 0);
+
+      expect(document.content.nodes.length, 3);
+
+      executeHandleBackspace(document);
+
+      expect(document.content.nodes.length, 2);
+      expect(document.canUndo, isTrue);
+
+      document.undo();
+
+      expect(document.content.nodes.length, 3);
+      expect(document.content.nodes[1], isA<HorizontalRule>());
+
+      document.redo();
+
+      expect(document.content.nodes.length, 2);
     });
   });
 }

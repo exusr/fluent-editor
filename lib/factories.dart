@@ -186,11 +186,18 @@ class HorizontalRule extends Fragment implements InlineContainerNode {
   factory HorizontalRule.fromJson(Map<String, dynamic> json) {
     final hr = HorizontalRule();
     hr.id = json['id'] as String? ?? hr.id;
+    if (json['styles'] is List) {
+      hr.styles = (json['styles'] as List).cast<String>();
+    }
     return hr;
   }
 
   @override
-  Map<String, dynamic> toJson() => {'type': 'hr', 'id': id};
+  Map<String, dynamic> toJson() => {
+        'type': 'hr',
+        'id': id,
+        if (styles != null && styles!.isNotEmpty) 'styles': List<String>.from(styles!),
+      };
 }
 
 @JsonSerializable()

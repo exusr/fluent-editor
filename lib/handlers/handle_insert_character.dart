@@ -29,6 +29,8 @@ void executeHandleInsertText(String text, FluentDocument document) {
 }
 
 void executeHandleInsertCharacter(String character, FluentDocument document) {
+  if (document.registry.dispatchInsertCharacter(character, document)) return;
+
   final node = getNodeAtCursor(document.eventHandler);
   bool inserted = false;
   bool needsForward = true;
