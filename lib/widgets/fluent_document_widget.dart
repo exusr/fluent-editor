@@ -14,6 +14,8 @@ import 'package:fluent_editor/utils/node_operations.dart';
 import 'package:fluent_editor/widgets/editor/fluent_toolbar_widget.dart';
 import 'package:fluent_editor/widgets/editor/fluent_bubble_toolbar.dart';
 import 'package:fluent_editor/widgets/nodes/virtualized_selectable_area.dart';
+import 'package:fluent_editor/widgets/editor/fluent_positioned_sidebar.dart';
+import 'package:fluent_editor/widgets/editor/fluent_unified_sidebar.dart';
 import 'package:fluent_editor/plugins/plugin_api.dart';
 
 /// Toolbar display mode.
@@ -309,6 +311,8 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
     });
   }
 
+  int _lastTopLevelNodeCount = -1;
+
   void _onDocumentChanged() {
     _updateImeCaretRect();
     widget.document.imeHandler.syncImeBufferToFragment();
@@ -558,16 +562,26 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
         .toList();
   }
 
+  Widget? _resolveSidebar(BuildContext context) {
+    if (widget.sidebar != null) return widget.sidebar;
+    final items = widget.document.registry.buildSidebarItems(context, widget.document);
+    if (items.isEmpty) return null;
+    return FluentUnifiedSidebar(
+      document: widget.document,
+      items: items,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final activeSidebar = _resolveSidebar(context);
+
     return Container(
       color: Theme.of(context).colorScheme.surface,
       child: Column(
         children: [
-          if (widget.toolbarMode == FluentToolbarMode.fixed) ...[
+          if (widget.toolbarMode == FluentToolbarMode.fixed)
             FluentToolbar(document: widget.document, labels: widget.labels),
-            ..._buildPluginUiContributions(FluentPluginUiLocation.toolbar),
-          ],
           Expanded(
             child: Stack(
               key: _contentStackKey,
@@ -575,16 +589,16 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
                 Stack(
                   children: [
                     _buildVirtualizedContent(),
-                    if (widget.sidebar != null && !_isSidebarCollapsed)
+                    if (activeSidebar != null && !_isSidebarCollapsed)
                       Positioned(
                         top: 0,
                         right: 0,
                         bottom: 0,
-                        width: 280,
+                        width: 300,
                         child: DocumentLayout(
                           scrollController: _scrollController,
                           contentStackKey: _contentStackKey,
-                          child: widget.sidebar!,
+                          child: activeSidebar,
                         ),
                       ),
                   ],
@@ -641,7 +655,7 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
                     ),
                   ),
                 ),
-                if (widget.sidebar != null)
+                if (activeSidebar != null)
                   Positioned(
                     top: 8,
                     right: 8,

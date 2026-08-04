@@ -27,6 +27,18 @@ class _PendingSnapshot {
   });
 }
 
+/// Result of committing a document saveState operation.
+enum SaveStateResult {
+  /// A new delta was created and pushed to the undo stack.
+  created,
+
+  /// The changes were merged into the previous delta on the undo stack.
+  merged,
+
+  /// No changes were detected; no delta was created or merged.
+  noChange,
+}
+
 /// Undo/Redo system manager using node-level deltas instead of
 /// full document snapshots. Memory usage is reduced by 50-100x
 /// because only changed top-level nodes are stored.
@@ -93,7 +105,7 @@ class UndoRedoManager {
       currentIds.add(node.id);
       final cached = _jsonCache[node.id];
       if (cached != null) {
-        oldJsonList.add(_deepCopyJsonMap(cached));
+        oldJsonList.add(cached);
       } else {
         final json = _deepCopyJsonMap(node.toJson());
         _jsonCache[node.id] = json;
@@ -112,9 +124,6 @@ class UndoRedoManager {
     _forceNewAction = forceNewAction;
     _currentGroupDescription = description;
     _lastActionTime = now;
-    _forceNewAction = forceNewAction;
-    _currentGroupDescription = description;
-    _lastActionTime = now;
     _groupingTimer?.cancel();
     _groupingTimer = Timer(_groupingTimeout, _resetGrouping);
   }
@@ -122,9 +131,10 @@ class UndoRedoManager {
   /// Called AFTER a mutation (from [FluentDocument.updateContent]).
   /// Compares the current top-level nodes with the pending snapshot,
   /// builds a minimal [DocumentDelta], and pushes it onto the undo stack.
-  void commitSaveState(FluentDocument document) {
-    if (_isRestoringState) return;
-    if (_pending == null) return;
+  /// Returns a [SaveStateResult] indicating whether a new delta was created,
+  /// merged into an existing delta, or if no changes occurred.
+  SaveStateResult commitSaveState(FluentDocument document) {
+    if (_isRestoringState || _pending == null) return SaveStateResult.noChange;
 
     final pending = _pending!;
     final newNodes = document.content.nodes;
@@ -137,12 +147,13 @@ class UndoRedoManager {
         final oldJson = oldNodes[i];
         final newNode = newNodes[i];
 
-        final newJson = _deepCopyJsonMap(newNode.toJson());
+        final newJson = newNode.toJson();
         if (!_mapsEqual(oldJson, newJson)) {
+          final frozenNewJson = _deepCopyJsonMap(newJson);
           changes.add(NodeChange(
             index: i,
             oldJson: oldJson,
-            newJson: newJson,
+            newJson: frozenNewJson,
           ));
         }
       }
@@ -152,12 +163,13 @@ class UndoRedoManager {
           : newNodes.length;
       for (int i = 0; i < maxLen; i++) {
         final oldJson = i < oldNodes.length ? oldNodes[i] : null;
-        final newJson = i < newNodes.length ? _deepCopyJsonMap(newNodes[i].toJson()) : null;
+        final newNode = i < newNodes.length ? newNodes[i] : null;
+        final newJson = newNode?.toJson();
         if (oldJson == null || newJson == null || !_mapsEqual(oldJson, newJson)) {
           changes.add(NodeChange(
             index: i,
             oldJson: oldJson ?? <String, dynamic>{},
-            newJson: newJson ?? <String, dynamic>{},
+            newJson: newJson != null ? _deepCopyJsonMap(newJson) : <String, dynamic>{},
           ));
         }
       }
@@ -165,7 +177,7 @@ class UndoRedoManager {
 
     if (changes.isEmpty) {
       _pending = null;
-      return;
+      return SaveStateResult.noChange;
     }
 
     final delta = NodeReplaceDelta(
@@ -211,7 +223,7 @@ class UndoRedoManager {
         _redoStack.clear();
         _updateJsonCacheFromChanges(document, mergedChanges.values.toList());
         _enforceMemoryLimit();
-        return;
+        return SaveStateResult.merged;
       }
     }
 
@@ -220,6 +232,7 @@ class UndoRedoManager {
     _pending = null;
     _updateJsonCacheFromChanges(document, changes);
     _enforceMemoryLimit();
+    return SaveStateResult.created;
   }
 
   bool undo(FluentDocument document) {

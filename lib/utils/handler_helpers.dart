@@ -149,7 +149,7 @@ void saveAndDeleteNode(FluentDocument document, FNode node, {required String des
     for (final leaf in leaves) {
       if (leaf.id == actualStartFrag.id) inRange = true;
       if (inRange && leaf is! FluentImage) {
-        if (leaf.styles?.contains('suggestion_deletion') != true) {
+        if (leaf.styles?.contains(document.suggestionStyleHook.deletionTag) != true) {
           modify(leaf);
           firstModified ??= leaf;
           lastModified = leaf;

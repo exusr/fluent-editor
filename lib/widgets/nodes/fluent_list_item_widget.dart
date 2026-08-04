@@ -149,7 +149,104 @@ class _ListMarker extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    String? oldMarkerType;
+    bool isAddition = false;
+    bool isDeletion = false;
+    for (final plugin in document.registry.plugins) {
+      if (plugin.runtimeType.toString() == 'FluentSuggestionPlugin') {
+        dynamic p = plugin;
+        if (p.controller != null) {
+          oldMarkerType = p.controller.getOldMarkerTypeForNode(node.id);
+          try {
+            isAddition = p.controller.isListItemAddition(node);
+          } catch (_) {}
+          try {
+            isDeletion = p.controller.isListItemDeletion(node);
+          } catch (_) {}
+        }
+      }
+    }
+
     final String label = _resolveLabel();
+
+    final bool isDark = Theme.of(context).brightness == Brightness.dark;
+    final Color addBg = isDark ? const Color(0x3581C784) : const Color(0x354CAF50);
+    final Color delBg = isDark ? const Color(0x35EF9A9A) : const Color(0x35F44336);
+    final Color delLineColor = isDark ? const Color(0xFFEF5350) : const Color(0xFFE53935);
+    final Color addTextColor = isDark ? const Color(0xFF81C784) : const Color(0xFF2E7D32);
+    final Color delTextColor = isDark ? const Color(0xFFEF5350) : const Color(0xFFD32F2F);
+
+    Widget labelChild;
+    if (oldMarkerType != null && oldMarkerType != node.bulletType) {
+      final oldLabel = _resolveLabelForType(oldMarkerType);
+      labelChild = RichText(
+        text: TextSpan(
+          children: [
+            TextSpan(
+              text: '$oldLabel ',
+              style: TextStyle(
+                fontSize: 14,
+                height: lineHeight,
+                color: delTextColor,
+                backgroundColor: delBg,
+                decoration: TextDecoration.lineThrough,
+                decorationColor: delLineColor,
+              ),
+            ),
+            TextSpan(
+              text: label,
+              style: TextStyle(
+                fontSize: 14,
+                height: lineHeight,
+                color: addTextColor,
+                backgroundColor: addBg,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ],
+        ),
+      );
+    } else if (isAddition) {
+      labelChild = Text(
+        label,
+        textAlign: TextAlign.left,
+        style: TextStyle(
+          fontSize: 14, 
+          height: lineHeight, 
+          color: addTextColor,
+          backgroundColor: addBg,
+          fontWeight: FontWeight.bold,
+        ),
+      );
+    } else if (isDeletion) {
+      labelChild = Text(
+        label,
+        textAlign: TextAlign.left,
+        style: TextStyle(
+          fontSize: 14, 
+          height: lineHeight, 
+          color: delTextColor,
+          backgroundColor: delBg,
+          decoration: TextDecoration.lineThrough,
+          decorationColor: delLineColor,
+        ),
+      );
+    } else {
+      labelChild = Text(
+        label,
+        textAlign: TextAlign.left,
+        style: TextStyle(
+          fontSize: 14, 
+          height: lineHeight, 
+          color: Theme.of(context).colorScheme.onSurface,
+          decoration: _isCheckboxType(node.bulletType) 
+              ? TextDecoration.none 
+              : TextDecoration.underline,
+          decorationColor: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5),
+          decorationStyle: TextDecorationStyle.dotted,
+        ),
+      );
+    }
 
     return SizedBox(
       width: width,
@@ -161,20 +258,7 @@ class _ListMarker extends StatelessWidget {
           onLongPress: () => _showMarkerTypeDialog(context),
           child: MouseRegion(
             cursor: SystemMouseCursors.click,
-            child: Text(
-              label,
-              textAlign: TextAlign.left,
-              style: TextStyle(
-                fontSize: 14, 
-                height: lineHeight, 
-                color: Theme.of(context).colorScheme.onSurface,
-                decoration: _isCheckboxType(node.bulletType) 
-                    ? TextDecoration.none 
-                    : TextDecoration.underline,
-                decorationColor: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5),
-                decorationStyle: TextDecorationStyle.dotted,
-              ),
-            ),
+            child: labelChild,
           ),
         ),
       ),
@@ -188,6 +272,23 @@ class _ListMarker extends StatelessWidget {
   }
 
   void _toggleCheckboxState() {
+    for (final plugin in document.registry.plugins) {
+      if (plugin.runtimeType.toString() == 'FluentSuggestionPlugin') {
+        dynamic p = plugin;
+        if (p.controller != null && p.controller.mode.toString() == 'FluentSuggestionMode.suggesting') {
+          final nextState = switch (node.bulletType) {
+            'checkbox' => 'checkbox-checked',
+            'checkbox-checked' => 'checkbox-crossed',
+            'checkbox-crossed' => 'checkbox',
+            _ => 'checkbox-checked',
+          };
+          p.controller.handleSuggestedListMarkChange(document, node, nextState);
+          return;
+        }
+      }
+    }
+
+    document.saveState(description: 'Toggle checkbox state', forceNewAction: true);
     switch (node.bulletType) {
       case 'checkbox':
         node.bulletType = 'checkbox-checked';
@@ -216,6 +317,17 @@ class _ListMarker extends StatelessWidget {
   }
 
   void _updateMarkerTypeForList(String newMarkerType) {
+    for (final plugin in document.registry.plugins) {
+      if (plugin.runtimeType.toString() == 'FluentSuggestionPlugin') {
+        dynamic p = plugin;
+        if (p.controller != null && p.controller.mode.toString() == 'FluentSuggestionMode.suggesting') {
+          p.controller.handleSuggestedListMarkChange(document, node, newMarkerType);
+          return;
+        }
+      }
+    }
+
+    document.saveState(description: 'Change list marker', forceNewAction: true);
     final parentList = _findParentFluentList(node);
     if (parentList != null) {
       if (_isCheckboxType(newMarkerType)) {
@@ -245,10 +357,11 @@ class _ListMarker extends StatelessWidget {
     return findAncestorCached<FluentList>(document, listItem);
   }
 
-  String _resolveLabel() {
-    final listType = node.bulletType;
-    final depth = node.indexList.length; // nesting level (0-based)
-    final index = node.indexList.last; // 1-based
+  String _resolveLabel() => _resolveLabelForType(node.bulletType);
+
+  String _resolveLabelForType(String listType) {
+    final depth = node.indexList.isNotEmpty ? node.indexList.length : 1;
+    final index = node.indexList.isNotEmpty ? node.indexList.last : 1;
 
     switch (listType) {
       case 'ordered':

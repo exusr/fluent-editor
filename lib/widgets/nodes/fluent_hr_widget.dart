@@ -93,23 +93,23 @@ class _FluentHrWidgetState extends State<FluentHrWidget> {
 
     final isSelected = isNodeInSelectionRange(widget.document.caretStops, cursor, node.id);
 
-    final isDeletion = node.styles?.contains('suggestion_deletion') == true ||
-        node.styles?.contains('strikethrough') == true;
-    final isAddition = node.styles?.contains('suggestion_addition') == true;
+    Color? bgTint;
+    Color? hrColor;
+    Border? border;
 
-    final bgTint = isDeletion
-        ? const Color(0x40F44336)
-        : (isAddition
-            ? const Color(0x404CAF50)
-            : (isSelected
-                ? Theme.of(context).colorScheme.primary.withValues(alpha: 0.4)
-                : null));
-
-    final hrColor = isDeletion
-        ? const Color(0xFFEF5350)
-        : (isAddition
-            ? const Color(0xFF66BB6A)
-            : null);
+    for (final hook in widget.document.allStyleHooks) {
+      final res = hook.resolveHrStyle(
+        node,
+        context: context,
+        document: widget.document,
+        isSelected: isSelected,
+      );
+      if (res != null) {
+        if (res.bgTint != null) bgTint = res.bgTint;
+        if (res.hrColor != null) hrColor = res.hrColor;
+        if (res.border != null) border = res.border;
+      }
+    }
 
     return GestureDetector(
       onTapDown: _onTapDown,
@@ -123,11 +123,7 @@ class _FluentHrWidgetState extends State<FluentHrWidget> {
             decoration: BoxDecoration(
               color: bgTint,
               borderRadius: BorderRadius.circular(4),
-              border: isDeletion
-                  ? Border.all(color: const Color(0xFFE53935).withValues(alpha: 0.5), width: 1)
-                  : isAddition
-                      ? Border.all(color: const Color(0xFF4CAF50).withValues(alpha: 0.5), width: 1)
-                      : null,
+              border: border,
             ),
             child: Divider(
               thickness: 2,
@@ -135,20 +131,11 @@ class _FluentHrWidgetState extends State<FluentHrWidget> {
               color: hrColor ?? Theme.of(context).dividerColor,
             ),
           ),
-          if (isDeletion)
-            Positioned.fill(
-              child: IgnorePointer(
-                child: Center(
-                  child: Container(
-                    height: 4,
-                    margin: const EdgeInsets.symmetric(horizontal: 4),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFE53935),
-                      borderRadius: BorderRadius.circular(2),
-                    ),
-                  ),
-                ),
-              ),
+          for (final hook in widget.document.allStyleHooks)
+            ...hook.buildNodeOverlayWidgets(
+              node,
+              context: context,
+              document: widget.document,
             ),
           if (cursorBefore)
             const Positioned(left: 0, top: 0, bottom: 0, child: _CaretLine()),

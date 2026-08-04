@@ -13,6 +13,7 @@ import 'package:fluent_editor/widgets/editor/fluent_font_size_selector_widget.da
 import 'package:fluent_editor/widgets/editor/fluent_paragraph_style_selector.dart';
 import 'package:fluent_editor/widgets/editor/fluent_paragraph_spacing_button.dart';
 import 'package:fluent_editor/widgets/editor/fluent_color_button.dart';
+import 'package:fluent_editor/plugins/plugin_api.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 
 /// Reusable formatting bar with all the inline formatting buttons
@@ -327,6 +328,7 @@ class _FluentFormattingBarState extends State<FluentFormattingBar> {
       _buildVerticalDivider(),
       FluentParagraphSpacingButton(
           document: widget.document, labels: widget.labels),
+      ..._buildPluginUiContributions(context),
     ];
   }
 
@@ -429,6 +431,21 @@ class _FluentFormattingBarState extends State<FluentFormattingBar> {
         _buildVerticalDivider(),
         ...widget.compactActions,
       ],
+      ..._buildPluginUiContributions(context),
+    ];
+  }
+
+  List<Widget> _buildPluginUiContributions(BuildContext context) {
+    final doc = widget.document;
+    final contributions = doc.registry
+        .uiAt(FluentPluginUiLocation.toolbar)
+        .where((c) => c.visible?.call(doc) ?? true)
+        .map((c) => c.builder(context, doc))
+        .toList();
+    if (contributions.isEmpty) return const [];
+    return [
+      _buildVerticalDivider(),
+      ...contributions,
     ];
   }
 

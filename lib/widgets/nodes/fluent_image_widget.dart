@@ -260,36 +260,11 @@ class _FluentImageWidgetState
                     Positioned.fill(
                       child: _buildImage(image.src),
                     ),
-                    if (image.styles?.contains('suggestion_deletion') == true ||
-                        image.styles?.contains('strikethrough') == true)
-                      Positioned.fill(
-                        child: IgnorePointer(
-                          child: Stack(
-                            children: [
-                              ColoredBox(
-                                color: Colors.red.withValues(alpha: 0.35),
-                                child: const SizedBox.expand(),
-                              ),
-                              Center(
-                                child: Container(
-                                  height: 4,
-                                  color: Colors.red,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    if (image.styles?.contains('suggestion_addition') == true)
-                      Positioned.fill(
-                        child: IgnorePointer(
-                          child: Container(
-                            decoration: BoxDecoration(
-                              color: Colors.green.withValues(alpha: 0.15),
-                              border: Border.all(color: Colors.green, width: 3),
-                            ),
-                          ),
-                        ),
+                    for (final hook in widget.document.allStyleHooks)
+                      ...hook.buildNodeOverlayWidgets(
+                        image,
+                        context: context,
+                        document: widget.document,
                       ),
                     if (isSelected)
                       Positioned.fill(

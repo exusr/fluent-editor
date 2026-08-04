@@ -439,7 +439,8 @@ class DocxExporter {
               _body.write(_run(child, pStyle,
                   forceLink: true,
                   text: sub.text,
-                  isCommented: sub.comment != null));
+                  isCommented: sub.comment != null,
+                  containerId: paragraphId));
             }
             linkOffset += child.text.length;
           }
@@ -469,7 +470,9 @@ class DocxExporter {
             _emitCommentStarts(sub.comment!, cid, replies);
           }
           _body.write(_run(frag, pStyle,
-              text: sub.text, isCommented: sub.comment != null));
+              text: sub.text,
+              isCommented: sub.comment != null,
+              containerId: paragraphId));
         }
 
         for (final seg in segs) {
@@ -491,8 +494,10 @@ class DocxExporter {
     }
   }
 
+  int _revisionIdCounter = 1;
+
   String _run(Fragment f, ParagraphStyle pStyle,
-      {bool forceLink = false, String? text, bool isCommented = false}) {
+      {bool forceLink = false, String? text, bool isCommented = false, String? containerId}) {
     final fs = f.styles ?? [];
     final ps = pStyle.styles ?? [];
     final bold = fs.contains('bold') || ps.contains('bold');
@@ -502,6 +507,8 @@ class DocxExporter {
     final sup = fs.contains('superscript');
     final sub = fs.contains('subscript');
     final smallcaps = fs.contains('smallcaps');
+    final isAddition = fs.contains(document.suggestionStyleHook.additionTag);
+    final isDeletion = fs.contains(document.suggestionStyleHook.deletionTag);
 
     double fontSize = f.fontSize;
     if (fontSize == 14.0 && pStyle.fontSize != null) {
@@ -547,7 +554,38 @@ class DocxExporter {
     rpr.write('</w:rPr>');
 
     final runText = text ?? f.text;
-    return '<w:r>${rpr.toString()}<w:t xml:space="preserve">${_esc(runText)}</w:t></w:r>';
+    final textXml = isDeletion
+        ? '<w:delText xml:space="preserve">${_esc(runText)}</w:delText>'
+        : '<w:t xml:space="preserve">${_esc(runText)}</w:t>';
+    final runXml = '<w:r>${rpr.toString()}$textXml</w:r>';
+
+    if (isAddition || isDeletion) {
+      Map<String, dynamic>? matchingSug;
+      final suggestionProvider = document.suggestionProvider;
+      if (suggestionProvider != null && containerId != null) {
+        final sugs = suggestionProvider.suggestionsForNode(containerId);
+        final targetType = isAddition ? 'addition' : 'deletion';
+        for (final s in sugs) {
+          if (s['type'] == targetType) {
+            matchingSug = s;
+            break;
+          }
+        }
+      }
+      final author = matchingSug?['authorName'] as String? ?? document.authorName;
+      final dateStr = matchingSug?['createdAt'] != null
+          ? matchingSug!['createdAt'].toString()
+          : DateTime.now().toIso8601String();
+      final revId = _revisionIdCounter++;
+
+      if (isAddition) {
+        return '<w:ins w:id="$revId" w:author="${_esc(author)}" w:date="${_esc(dateStr)}">$runXml</w:ins>';
+      } else {
+        return '<w:del w:id="$revId" w:author="${_esc(author)}" w:date="${_esc(dateStr)}">$runXml</w:del>';
+      }
+    }
+
+    return runXml;
   }
 
   String _pPr(Paragraph p, ParagraphStyle pStyle, {int extraIndent = 0, String? paraId}) {

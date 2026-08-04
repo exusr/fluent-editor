@@ -5,6 +5,9 @@ import 'package:fluent_editor/plugins/builtin_plugin.dart';
 import 'package:fluent_editor/plugins/plugin_api.dart';
 import 'package:flutter/material.dart';
 
+export 'package:fluent_editor/widgets/editor/fluent_positioned_sidebar.dart';
+export 'package:fluent_editor/widgets/editor/fluent_unified_sidebar.dart';
+
 class FluentEditor extends StatefulWidget {
   final FluentDocument? document;
   final FluentEditorLabels? labels;
@@ -47,19 +50,12 @@ class _FluentEditorState extends State<FluentEditor> {
           registry: createDefaultFluentPluginRegistry(widget.plugins),
         );
     _document.labels = widget.labels;
-    _document.addListener(_onDocumentChanged);
     _document.registry.attach(_document);
-  }
-
-  void _onDocumentChanged() {
-    if (_document.cursorOnlyChange) return;
-    setState(() {});
   }
 
   @override
   void dispose() {
     _document.registry.detach(_document);
-    _document.removeListener(_onDocumentChanged);
     _document.dispose();
     super.dispose();
   }

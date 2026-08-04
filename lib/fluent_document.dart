@@ -3,6 +3,11 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:fluent_editor/controllers/document_language_controller.dart';
 import 'package:fluent_editor/comments/comment_provider.dart';
+import 'package:fluent_editor/suggestions/suggestion_provider.dart';
+import 'package:fluent_editor/suggestions/suggestion_style_hook.dart';
+export 'package:fluent_editor/suggestions/suggestion_style_hook.dart';
+import 'package:fluent_editor/renderers/style_hook.dart';
+export 'package:fluent_editor/renderers/style_hook.dart';
 import 'package:fluent_editor/cursor.dart';
 import 'package:fluent_editor/selection_manager.dart';
 import 'package:fluent_editor/styles.dart';
@@ -14,6 +19,7 @@ import 'package:fluent_editor/handlers/event_handler.dart';
 import 'package:fluent_editor/handlers/dialog_presenter.dart';
 import 'package:fluent_editor/core/paragraph_registry.dart';
 import 'package:fluent_editor/undo_redo/undo_redo_manager.dart';
+export 'package:fluent_editor/undo_redo/undo_redo_manager.dart';
 import 'package:fluent_editor/input/ime_handler.dart';
 import 'package:fluent_editor/localization/fluent_editor_labels.dart';
 import 'package:fluent_editor/plugins/builtin_plugin.dart';
@@ -72,6 +78,78 @@ class FluentDocument extends ChangeNotifier {
   /// Optional comment plugin. When set, the editor will display
   /// comment highlights, a sidebar, and allow adding / managing comments.
   CommentProvider? commentProvider;
+
+  /// Optional suggestion plugin / tracked changes provider.
+  SuggestionProvider? suggestionProvider;
+
+  /// Author name for comments, suggestions, and tracked changes export.
+  String _authorName = '';
+
+  String get authorName {
+    if (commentProvider != null && commentProvider!.currentAuthor.isNotEmpty) {
+      return commentProvider!.currentAuthor;
+    }
+    if (_authorName.isNotEmpty) {
+      return _authorName;
+    }
+    if (labels?.defaultAuthorName != null && labels!.defaultAuthorName.isNotEmpty) {
+      return labels!.defaultAuthorName;
+    }
+    return 'Author';
+  }
+
+  set authorName(String value) {
+    _authorName = value;
+    if (commentProvider != null) {
+      commentProvider!.currentAuthor = value;
+    }
+    notifyListeners();
+  }
+
+  final List<RenderStyleHook> _styleHooks = [];
+
+  /// Cached merged list of all active style hooks. Invalidated on mutation.
+  List<RenderStyleHook>? _cachedAllStyleHooks;
+
+  void _invalidateStyleHooksCache() {
+    _cachedAllStyleHooks = null;
+  }
+
+  /// Active document-level rendering style hooks.
+  List<RenderStyleHook> get styleHooks => List.unmodifiable(_styleHooks);
+
+  /// Registers a rendering [styleHook] on this document.
+  void addStyleHook(RenderStyleHook hook) {
+    if (!_styleHooks.contains(hook)) {
+      _styleHooks.add(hook);
+      _invalidateStyleHooksCache();
+      notifyListeners();
+    }
+  }
+
+  /// Unregisters a rendering [styleHook] from this document.
+  void removeStyleHook(RenderStyleHook hook) {
+    if (_styleHooks.remove(hook)) {
+      _invalidateStyleHooksCache();
+      notifyListeners();
+    }
+  }
+
+  /// All rendering style hooks active on this document, combining document-level
+  /// [styleHooks] and registered plugin hooks (including suggestion rendering
+  /// provided by [FluentSuggestionPlugin] via its [styleHook] override).
+  ///
+  /// The result is cached and reused across frames; invalidated automatically
+  /// when hooks are added or removed.
+  List<RenderStyleHook> get allStyleHooks {
+    return _cachedAllStyleHooks ??= [
+      ..._styleHooks,
+      ...registry.styleHooks,
+    ];
+  }
+
+  /// Hook configuration for suggestion addition and deletion styles.
+  SuggestionStyleHook suggestionStyleHook = const SuggestionStyleHook();
 
   /// Localization labels for the user interface.
   FluentEditorLabels? labels;
@@ -585,12 +663,35 @@ class FluentDocument extends ChangeNotifier {
     return _selectionManager.getRangeForNode(nodeId);
   }
 
-  void updateContent() {
+  void updateContent({Set<String>? affectedIds, String? targetNodeId}) {
     _contentVersion++;
     invalidateNodeIndex();
-    _undoRedoManager.commitSaveState(this);
-    registry.dispatchCommitSaveState(this);
+    final saveResult = _undoRedoManager.commitSaveState(this);
+    registry.dispatchCommitSaveState(this, result: saveResult);
+
+    if (affectedIds != null) {
+      _dirtyNodeIds = affectedIds;
+    } else if (targetNodeId != null) {
+      _dirtyNodeIds = {targetNodeId};
+    } else {
+      final focusId = cursor.focusId;
+      if (focusId.isNotEmpty) {
+        final cid = cachedCursorContainerId;
+        if (cid != null) {
+          _dirtyNodeIds = {cid};
+        }
+      }
+    }
     notifyListeners();
+    if (_dirtyNodeIds.isNotEmpty) {
+      try {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _dirtyNodeIds.clear();
+        });
+      } catch (_) {
+        _dirtyNodeIds.clear();
+      }
+    }
   }
 
   /// Notifies document listeners that the content changed.
@@ -615,10 +716,13 @@ class FluentDocument extends ChangeNotifier {
   }
 
   /// Returns true if [nodeId] was marked dirty by the last
-  /// [notifyDocumentChanged] call. If no specific dirty nodes were set,
+  /// [notifyDocumentChanged] or [updateContent] call. If no specific dirty nodes were set,
   /// returns true for all IDs (backward-compatible behaviour).
   bool isNodeDirty(String nodeId) =>
       _dirtyNodeIds.isEmpty || _dirtyNodeIds.contains(nodeId);
+
+  /// Returns true if all nodes are considered dirty (e.g. full document refresh).
+  bool get isFullDocumentDirty => _dirtyNodeIds.isEmpty;
 
   /// True while listeners are being notified for a cursor-only change.
   /// Widgets that do expensive work on every document change can check this

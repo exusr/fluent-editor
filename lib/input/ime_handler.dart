@@ -162,11 +162,7 @@ class FluentTextInputHandler implements DeltaTextInputClient {
     final fragId = cursor.focusId.isNotEmpty ? cursor.focusId : cursor.anchorId;
     final currentText = _getCurrentFragmentText() ?? '';
 
-    // ignore: avoid_print
-    print(
-      '[IME_DEBUG] updateEditingValue text="${value.text}" '
-      'selection=${value.selection} composing=${value.composing}',
-    );
+
 
     // -------------------------------------------------------------------------
     // 1. Preedit Active / Updating
@@ -427,11 +423,7 @@ class FluentTextInputHandler implements DeltaTextInputClient {
     }
 
     for (final delta in deltas) {
-      // ignore: avoid_print
-      print(
-        '[IME_DEBUG] delta: ${delta.runtimeType} oldText="${delta.oldText}" '
-        'selection=${delta.selection} composing=${delta.composing}',
-      );
+
 
       if (delta is TextEditingDeltaDeletion ||
           (delta is TextEditingDeltaReplacement &&
@@ -569,11 +561,7 @@ class FluentTextInputHandler implements DeltaTextInputClient {
       doc.cursor.moveTo(targetFragId, targetOffset);
     }
 
-    // ignore: avoid_print
-    print(
-      '[IME_DEBUG] _commitPreedit text="$text" targetFragId="$targetFragId" '
-      'targetOffset=$targetOffset preeditText="${state.preeditText}"',
-    );
+
 
     if (!doc.registry.dispatchImeCompositionCommit(text, doc)) {
       _insertTextOrReplaceSelection(text, doc);
@@ -610,7 +598,6 @@ class FluentTextInputHandler implements DeltaTextInputClient {
               : doc.cursor.anchorId);
     if (targetFragId.isEmpty) return ('', '');
 
-    doc.invalidateNodeIndex();
     final parentId = doc.findParentCached(targetFragId);
     if (parentId == null) {
       final node = doc.nodeById(targetFragId);
@@ -641,7 +628,6 @@ class FluentTextInputHandler implements DeltaTextInputClient {
       return ('', '');
     }
 
-    doc.invalidateNodeIndex();
     doc.flattenContainer(paragraphNode);
     final paragraphText = paragraphNode.text;
     final targetFrag = doc.nodeById(targetFragId);

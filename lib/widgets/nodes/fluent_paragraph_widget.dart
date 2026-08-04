@@ -120,13 +120,7 @@ class FluentParagraphWidgetState<T extends FluentParagraphWidget> extends State<
     final preeditText = hasPreedit ? doc.imeHandler.preeditText : '';
     final preeditFragId = hasPreedit ? doc.imeHandler.preeditFragmentId : '';
 
-    final isSuggestionMode = doc.registry.plugins.any((p) {
-      try {
-        return (p as dynamic).controller?.mode?.name == 'suggesting';
-      } catch (_) {
-        return false;
-      }
-    });
+    final isSuggestionMode = doc.registry.isSuggestionMode;
 
     if (hasCursor != _lastHadCursor ||
         hasSelection != _lastHadSelection ||
@@ -302,6 +296,8 @@ class FluentParagraphWidgetState<T extends FluentParagraphWidget> extends State<
               key: _renderWidgetKey,
               node: container,
               registry: widget.document.paragraphRegistry,
+              styleHooks: widget.document.allStyleHooks,
+              suggestionStyleHook: widget.document.suggestionStyleHook,
               lineHeight: style?.lineHeight ?? widget.document.pendingLineHeight,
               textAlign: parseTextAlign((widget.node as Paragraph).textAlign),
               shrinkWrap: widget.shrinkWrap,
@@ -647,6 +643,8 @@ class FParagraphRenderWidget extends MultiChildRenderObjectWidget {
     super.key,
     required this.node,
     required this.registry,
+    this.styleHooks = const [],
+    this.suggestionStyleHook = const SuggestionStyleHook(),
     this.lineHeight = 1.15,
     this.textAlign = TextAlign.left,
     this.shrinkWrap = false,
@@ -675,6 +673,8 @@ class FParagraphRenderWidget extends MultiChildRenderObjectWidget {
 
   final InlineContainerNode node;
   final ParagraphRegistry registry;
+  final List<RenderStyleHook> styleHooks;
+  final SuggestionStyleHook suggestionStyleHook;
   final double lineHeight;
   final TextAlign textAlign;
   final bool shrinkWrap;
@@ -715,6 +715,8 @@ class FParagraphRenderWidget extends MultiChildRenderObjectWidget {
         linkColor: linkColor ?? Theme.of(context).colorScheme.primary,
         imeCompositionColor: imeCompositionColor ?? Theme.of(context).colorScheme.primary,
       )
+      ..styleHooks = styleHooks
+      ..suggestionStyleHook = suggestionStyleHook
       ..setCursorOffsets(
         anchorFragmentId,
         anchorLocalOffset,
@@ -738,6 +740,8 @@ class FParagraphRenderWidget extends MultiChildRenderObjectWidget {
   @override
   void updateRenderObject(BuildContext context, RenderFluentParagraph renderObject) {
     renderObject.container = node;
+    renderObject.styleHooks = styleHooks;
+    renderObject.suggestionStyleHook = suggestionStyleHook;
     renderObject.lineHeight = lineHeight;
     renderObject.textAlign = textAlign;
     renderObject.shrinkWrap = shrinkWrap;
@@ -929,7 +933,7 @@ class _InlineImageWidgetState extends State<InlineImageWidget> {
                       ),
                     ),
                   ),
-                if (widget.node.styles?.contains('suggestion_addition') == true)
+                if (widget.node.styles?.contains(widget.document.suggestionStyleHook.additionTag) == true)
                   Positioned.fill(
                     child: IgnorePointer(
                       child: Container(

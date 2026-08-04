@@ -202,8 +202,12 @@ class EventHandler {
         return false;
       }
       final character = event.character!;
+      final isSpace = character == ' ' || character == '\n' || character == '\r';
 
-      document.saveState(description: 'Type character: $character');
+      document.saveState(
+        description: 'Type',
+        forceNewAction: isSpace,
+      );
 
       if (document.cursor.isCollapsed) {
         executeHandleInsertCharacter(character, document);
@@ -227,7 +231,7 @@ class EventHandler {
 
   bool handleBackspaceKey(KeyEvent event) {
     if (event.logicalKey == LogicalKeyboardKey.backspace) {
-      document.saveState(description: 'Delete', forceNewAction: true);
+      document.saveState(description: 'Delete', forceNewAction: false);
       final isApple = !kIsWeb && (Platform.isMacOS || Platform.isIOS);
       final lineStart = isApple && isCtrlPressed;
       final wordDelete = isApple ? isMetaPressed : isCtrlPressed;
@@ -239,7 +243,7 @@ class EventHandler {
 
   bool handleDeleteKey(KeyEvent event) {
     if (event.logicalKey == LogicalKeyboardKey.delete) {
-      document.saveState(description: 'Delete', forceNewAction: true);
+      document.saveState(description: 'Delete', forceNewAction: false);
       executeHandleDelete(document, ctrl: isCtrlPressed);
       return true;
     }

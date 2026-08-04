@@ -52,17 +52,25 @@ const presetHighlightColors = [
 
 /// Utility functions for color operations.
 class ColorUtils {
+  static final Map<String, Color> _parseCache = {};
+
   /// Parses a hex color string to a Color object.
   /// Supports 7-character hex (#RRGGBB) and 9-character hex (#AARRGGBB).
   /// Returns null if the hex string is invalid.
   static Color? parseColor(String? hex) {
     if (hex == null || hex.isEmpty) return null;
+    final cached = _parseCache[hex];
+    if (cached != null) return cached;
     try {
       if (hex.length == 7 && hex.startsWith('#')) {
-        return Color(int.parse(hex.substring(1), radix: 16) + 0xFF000000);
+        final color = Color(int.parse(hex.substring(1), radix: 16) + 0xFF000000);
+        _parseCache[hex] = color;
+        return color;
       }
       if (hex.length == 9 && hex.startsWith('#')) {
-        return Color(int.parse(hex.substring(1), radix: 16));
+        final color = Color(int.parse(hex.substring(1), radix: 16));
+        _parseCache[hex] = color;
+        return color;
       }
     } catch (_) {}
     return null;

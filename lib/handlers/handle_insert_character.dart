@@ -128,9 +128,7 @@ void executeHandleInsertCharacter(String character, FluentDocument document) {
       }
       inserted = FragmentOperations.insertTextInFragment(frag, offset, character);
     }
-  }
-
-  if (node is Fragment && node is! FluentImage && node is! HorizontalRule) {
+  } else if (node is Fragment && node is! FluentImage && node is! HorizontalRule) {
     final frag = node;
     final offset = document.cursor.anchorOffset;
     if (_shouldApplyPendingFont(document, frag)) {

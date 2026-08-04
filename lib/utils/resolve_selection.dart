@@ -180,15 +180,17 @@ ResolvedSelection? resolveSelection(
   final selectedNodes = <SelectedNode>[];
 
   for (final line in lines) {
-    bool hasStopInRange = false;
-    for (final stop in line.stops) {
-      final i = findStopIndex(stops, stop.fragmentId, stop.offset);
-      if (i >= baseIdx && i <= extentIdx) {
-        hasStopInRange = true;
-        break;
-      }
-    }
-    if (!hasStopInRange) continue;
+    if (line.stops.isEmpty) continue;
+    final firstStop = line.stops.first;
+    final lastStop = line.stops.last;
+    final firstIdx = findStopIndex(stops, firstStop.fragmentId, firstStop.offset);
+    final lastIdx = findStopIndex(stops, lastStop.fragmentId, lastStop.offset);
+
+    if (firstIdx < 0 || lastIdx < 0) continue;
+    final lineMinIdx = firstIdx <= lastIdx ? firstIdx : lastIdx;
+    final lineMaxIdx = firstIdx >= lastIdx ? firstIdx : lastIdx;
+
+    if (lineMaxIdx < baseIdx || lineMinIdx > extentIdx) continue;
 
     final Fragment startFrag;
     final int startOff;

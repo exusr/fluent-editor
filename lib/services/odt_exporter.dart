@@ -518,6 +518,7 @@ class OdtExporter {
                   forceLink: true,
                   text: sub.text,
                   isCommented: sub.comment != null,
+                  paragraphId: paragraphId,
                 ),
               );
             }
@@ -549,6 +550,7 @@ class OdtExporter {
               pStyle,
               text: sub.text,
               isCommented: sub.comment != null,
+              paragraphId: paragraphId,
             ),
           );
         }
@@ -603,13 +605,67 @@ class OdtExporter {
     return buf.toString();
   }
 
+  int _changeCounter = 1;
+  final Map<String, String> _changeRegionXmls = {};
+  final Map<String, String> _fragToChangeId = {};
+
+  String _ensureTrackedChange(Fragment frag, {String? paragraphId}) {
+    final key = frag.id;
+    if (_fragToChangeId.containsKey(key)) {
+      return _fragToChangeId[key]!;
+    }
+    final changeId = 'ct-${_changeCounter++}';
+    _fragToChangeId[key] = changeId;
+
+    final fs = frag.styles ?? [];
+    final isAddition = fs.contains(document.suggestionStyleHook.additionTag);
+    final isDeletion = fs.contains(document.suggestionStyleHook.deletionTag);
+
+    Map<String, dynamic>? matchingSug;
+    final suggestionProvider = document.suggestionProvider;
+    if (suggestionProvider != null && paragraphId != null) {
+      final sugs = suggestionProvider.suggestionsForNode(paragraphId);
+      final targetType = isAddition ? 'addition' : 'deletion';
+      for (final s in sugs) {
+        if (s['type'] == targetType) {
+          matchingSug = s;
+          break;
+        }
+      }
+    }
+
+    final author = _esc(matchingSug?['authorName'] as String? ?? document.authorName);
+    final dateStr = _formatDateOdt(matchingSug?['createdAt'] ?? DateTime.now());
+
+    final buf = StringBuffer();
+    buf.write('<text:changed-region xml:id="$changeId" text:id="$changeId">');
+    if (isAddition) {
+      buf.write('<text:insertion><office:change-info><dc:creator>$author</dc:creator>');
+      if (dateStr.isNotEmpty) buf.write('<dc:date>$dateStr</dc:date>');
+      buf.write('</office:change-info></text:insertion>');
+    } else {
+      buf.write('<text:deletion><office:change-info><dc:creator>$author</dc:creator>');
+      if (dateStr.isNotEmpty) buf.write('<dc:date>$dateStr</dc:date>');
+      buf.write('</office:change-info></text:deletion>');
+    }
+    buf.write('</text:changed-region>');
+
+    _changeRegionXmls[changeId] = buf.toString();
+    return changeId;
+  }
+
   String _span(
     Fragment frag,
     ParagraphStyle pStyle, {
     bool forceLink = false,
     String? text,
     bool isCommented = false,
+    String? paragraphId,
   }) {
+    final fs = frag.styles ?? [];
+    final isAddition = fs.contains(document.suggestionStyleHook.additionTag);
+    final isDeletion = fs.contains(document.suggestionStyleHook.deletionTag);
+
     final styleName = _registerTextStyle(
       frag,
       pStyle,
@@ -618,7 +674,14 @@ class OdtExporter {
     );
     final spanText = text ?? frag.text;
     final escaped = _escWithSpaces(spanText);
-    return '<text:span text:style-name="$styleName">$escaped</text:span>';
+    final spanXml = '<text:span text:style-name="$styleName">$escaped</text:span>';
+
+    if (isAddition || isDeletion) {
+      final changeId = _ensureTrackedChange(frag, paragraphId: paragraphId);
+      return '<text:change-start text:change-id="$changeId"/>$spanXml<text:change-end text:change-id="$changeId"/>';
+    }
+
+    return spanXml;
   }
 
   String _registerTextStyle(
@@ -1038,6 +1101,15 @@ class OdtExporter {
 
     final fontFaceDecls = _buildFontFaceDecls();
 
+    final trackedXml = StringBuffer();
+    if (_changeRegionXmls.isNotEmpty) {
+      trackedXml.write('<text:tracked-changes text:track-changes="true">');
+      for (final xml in _changeRegionXmls.values) {
+        trackedXml.write(xml);
+      }
+      trackedXml.write('</text:tracked-changes>');
+    }
+
     return '<?xml version="1.0" encoding="UTF-8"?>\n'
         '<office:document-content '
         'xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" '
@@ -1054,7 +1126,7 @@ class OdtExporter {
         'office:version="1.2">'
         '$fontFaceDecls'
         '<office:automatic-styles>${styles.toString()}</office:automatic-styles>'
-        '<office:body><office:text>${_body.toString()}</office:text></office:body>'
+        '<office:body><office:text>${trackedXml.toString()}${_body.toString()}</office:text></office:body>'
         '</office:document-content>';
   }
 

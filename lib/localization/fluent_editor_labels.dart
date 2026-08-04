@@ -130,6 +130,7 @@ class FluentEditorLabels {
   final String commentHint;
   final String commentOverlapWarning;
   final String sidebarTitle;
+  final String emptySidebarMessage;
   final String showResolvedLabel;
   final String showCommentsLabel;
   final String hideCommentsLabel;
@@ -257,7 +258,8 @@ class FluentEditorLabels {
     this.commentDialogTitle = 'Add comment',
     this.commentHint = 'Write a comment...',
     this.commentOverlapWarning = 'Warning: the comment overlaps an existing comment.',
-    this.sidebarTitle = 'Comments',
+    this.sidebarTitle = 'Activities & Reviews',
+    this.emptySidebarMessage = 'No comments or suggestions in the document.',
     this.showResolvedLabel = 'Show resolved',
     this.showCommentsLabel = 'Show comments',
     this.hideCommentsLabel = 'Hide comments',
@@ -380,6 +382,7 @@ class FluentEditorLabels {
     String? commentHint,
     String? commentOverlapWarning,
     String? sidebarTitle,
+    String? emptySidebarMessage,
     String? showResolvedLabel,
     String? showCommentsLabel,
     String? hideCommentsLabel,
@@ -500,6 +503,7 @@ class FluentEditorLabels {
       commentHint: commentHint ?? this.commentHint,
       commentOverlapWarning: commentOverlapWarning ?? this.commentOverlapWarning,
       sidebarTitle: sidebarTitle ?? this.sidebarTitle,
+      emptySidebarMessage: emptySidebarMessage ?? this.emptySidebarMessage,
       showResolvedLabel: showResolvedLabel ?? this.showResolvedLabel,
       showCommentsLabel: showCommentsLabel ?? this.showCommentsLabel,
       hideCommentsLabel: hideCommentsLabel ?? this.hideCommentsLabel,

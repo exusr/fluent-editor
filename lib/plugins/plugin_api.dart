@@ -3,6 +3,10 @@ import 'dart:typed_data';
 
 import 'package:fluent_editor/factories.dart';
 import 'package:fluent_editor/fluent_document.dart';
+import 'package:fluent_editor/renderers/style_hook.dart';
+import 'package:fluent_editor/undo_redo/undo_redo_manager.dart';
+export 'package:fluent_editor/undo_redo/undo_redo_manager.dart';
+import 'package:fluent_editor/widgets/editor/fluent_positioned_sidebar.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 
@@ -31,6 +35,7 @@ enum FluentPluginUiLocation {
   insertMenu,
   formatMenu,
   contextMenu,
+  sidebar,
 }
 
 enum FluentPluginFormatKind { text, binary }
@@ -191,6 +196,16 @@ abstract class FluentEditorPlugin {
   List<FluentCommand> get commands => const [];
   List<FluentUiContribution> get ui => const [];
   List<FluentFormatContribution> get formats => const [];
+  RenderStyleHook? get styleHook => null;
+
+  /// Returns sidebar item entries (cards) contributed by this plugin.
+  /// Libraries define how their cards appear by returning [FluentSidebarItem]s.
+  List<FluentSidebarItem> buildSidebarItems(
+    BuildContext context,
+    FluentDocument document,
+  ) =>
+      const [];
+
   void attach(FluentPluginContext context) {}
   void detach(FluentPluginContext context) {}
 
@@ -234,6 +249,30 @@ abstract class FluentEditorPlugin {
   /// Intercepts replacing active selection with text. Return true if handled.
   bool onReplaceSelection(String character, FluentDocument document) => false;
 
+  /// Intercepts inserting a table row. Return true if handled.
+  bool onInsertTableRow(FluentDocument document, FluentTable table, int index) => false;
+
+  /// Intercepts deleting a table row. Return true if handled.
+  bool onDeleteTableRow(FluentDocument document, FluentTable table, int index) => false;
+
+  /// Intercepts inserting a table column. Return true if handled.
+  bool onInsertTableColumn(FluentDocument document, FluentTable table, int index) => false;
+
+  /// Intercepts deleting a table column. Return true if handled.
+  bool onDeleteTableColumn(FluentDocument document, FluentTable table, int index) => false;
+
+  /// Intercepts increasing table cell rowspan. Return true if handled.
+  bool onIncreaseTableRowspan(FluentDocument document, FluentTable table, FluentCell cell) => false;
+
+  /// Intercepts decreasing table cell rowspan. Return true if handled.
+  bool onDecreaseTableRowspan(FluentDocument document, FluentTable table, FluentCell cell) => false;
+
+  /// Intercepts increasing table cell colspan. Return true if handled.
+  bool onIncreaseTableColspan(FluentDocument document, FluentTable table, FluentCell cell) => false;
+
+  /// Intercepts decreasing table cell colspan. Return true if handled.
+  bool onDecreaseTableColspan(FluentDocument document, FluentTable table, FluentCell cell) => false;
+
   /// Called whenever document text is mutated.
   void onTextMutation(String paragraphId, int fromOffset, int delta) {}
 
@@ -241,7 +280,10 @@ abstract class FluentEditorPlugin {
   void onSaveState(FluentDocument document, String description) {}
 
   /// Called when a saveState operation is committed for the document.
-  void onCommitSaveState(FluentDocument document) {}
+  void onCommitSaveState(
+    FluentDocument document, {
+    SaveStateResult result = SaveStateResult.created,
+  }) {}
 
   /// Called after an undo operation restores the document state.
   void onUndo(FluentDocument document) {}
@@ -249,9 +291,38 @@ abstract class FluentEditorPlugin {
   /// Called after a redo operation restores the document state.
   void onRedo(FluentDocument document) {}
 
+  /// Called when a table column is resized. Return true if handled.
+  bool onColumnResize(
+    FluentDocument document,
+    FluentTable table,
+    int colIdx,
+    double oldWidth,
+    double newWidth,
+  ) =>
+      false;
+
+  /// Called when a table row is resized. Return true if handled.
+  bool onRowResize(
+    FluentDocument document,
+    FluentTable table,
+    FluentRow row,
+    double oldHeight,
+    double newHeight,
+  ) =>
+      false;
+
+  /// Returns true if the column at [colIdx] in [table] has a pending resize suggestion.
+  bool isColumnResized(FluentDocument document, FluentTable table, int colIdx) => false;
+
+  /// Returns true if the row [row] in [table] has a pending resize suggestion.
+  bool isRowResized(FluentDocument document, FluentTable table, FluentRow row) => false;
+
   /// Returns true if style formatting actions (bold, italic, color, font size, etc.)
-  /// should be disabled for the current document selection or cursor position.
+  /// should be disabled on [document].
   bool isFormattingDisabled(FluentDocument document) => false;
+
+  /// Returns true if this plugin is currently operating in suggestion/review mode.
+  bool get isSuggestionMode => false;
 }
 
 class FluentPluginContext {
@@ -268,6 +339,7 @@ class FluentPluginRegistry {
   final Map<String, FluentCommand> _commands;
   final Map<String, FluentFormatContribution> _formats;
   final List<FluentUiContribution> _ui;
+  late final List<RenderStyleHook> _styleHooksCache;
 
   FluentPluginRegistry(Iterable<FluentEditorPlugin> source)
       : plugins = _sortAndValidatePlugins(source.toList()),
@@ -306,6 +378,7 @@ class FluentPluginRegistry {
       final location = a.location.index.compareTo(b.location.index);
       return location != 0 ? location : a.order.compareTo(b.order);
     });
+    _styleHooksCache = plugins.map((p) => p.styleHook).whereType<RenderStyleHook>().toList();
   }
 
   FluentNodeDefinition<FNode>? nodeForType(String type) => _nodes[type];
@@ -316,6 +389,8 @@ class FluentPluginRegistry {
   FluentCommand? command(String id) => _commands[id];
 
   FluentFormatContribution? format(String id) => _formats[id];
+
+  List<RenderStyleHook> get styleHooks => _styleHooksCache;
 
   FluentFormatContribution? formatForExtension(String ext) {
     final lower = ext.toLowerCase();
@@ -331,6 +406,18 @@ class FluentPluginRegistry {
 
   Iterable<FluentUiContribution> uiAt(FluentPluginUiLocation location) =>
       _ui.where((item) => item.location == location);
+
+  /// Collects all sidebar items contributed across registered plugins.
+  List<FluentSidebarItem> buildSidebarItems(
+    BuildContext context,
+    FluentDocument document,
+  ) {
+    final items = <FluentSidebarItem>[];
+    for (final plugin in plugins) {
+      items.addAll(plugin.buildSidebarItems(context, document));
+    }
+    return items;
+  }
 
   FNode decodeNode(Map<String, dynamic> json) {
     final type = json['type'] as String?;
@@ -447,10 +534,62 @@ class FluentPluginRegistry {
     return false;
   }
 
+  bool dispatchColumnResize(
+    FluentDocument document,
+    FluentTable table,
+    int colIdx,
+    double oldWidth,
+    double newWidth,
+  ) {
+    for (final plugin in plugins) {
+      if (plugin.onColumnResize(document, table, colIdx, oldWidth, newWidth)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  bool dispatchRowResize(
+    FluentDocument document,
+    FluentTable table,
+    FluentRow row,
+    double oldHeight,
+    double newHeight,
+  ) {
+    for (final plugin in plugins) {
+      if (plugin.onRowResize(document, table, row, oldHeight, newHeight)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  bool isColumnResized(FluentDocument document, FluentTable table, int colIdx) {
+    for (final plugin in plugins) {
+      if (plugin.isColumnResized(document, table, colIdx)) return true;
+    }
+    return false;
+  }
+
+  bool isRowResized(FluentDocument document, FluentTable table, FluentRow row) {
+    for (final plugin in plugins) {
+      if (plugin.isRowResized(document, table, row)) return true;
+    }
+    return false;
+  }
+
   /// Returns true if any registered plugin requires formatting/style actions to be disabled.
   bool isFormattingDisabled(FluentDocument document) {
     for (final plugin in plugins) {
       if (plugin.isFormattingDisabled(document)) return true;
+    }
+    return false;
+  }
+
+  /// Returns true if any registered plugin is currently in suggestion/review mode.
+  bool get isSuggestionMode {
+    for (final plugin in plugins) {
+      if (plugin.isSuggestionMode) return true;
     }
     return false;
   }
@@ -501,9 +640,12 @@ class FluentPluginRegistry {
     }
   }
 
-  void dispatchCommitSaveState(FluentDocument document) {
+  void dispatchCommitSaveState(
+    FluentDocument document, {
+    SaveStateResult result = SaveStateResult.created,
+  }) {
     for (final plugin in plugins) {
-      plugin.onCommitSaveState(document);
+      plugin.onCommitSaveState(document, result: result);
     }
   }
 

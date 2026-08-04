@@ -73,31 +73,26 @@ class _FluentTableWidgetState extends State<FluentTableWidget> {
   }
 
   void _onTableDragUpdate(DragUpdateDetails details, double availableWidth) {
-    final current = widget.node.tableWidth ?? availableWidth;
-    final newWidth = math.max(current + details.delta.dx, _kMinColWidth * _numCols);
-    widget.node.tableWidth = math.min(newWidth, availableWidth);
-    widget.document.updateContent();
-    if (mounted) {
-      setState(() {});
-      final ro = _tableKey.currentContext?.findRenderObject();
-      if (ro is RenderFluentTable) {
-        ro.markNeedsLayout();
-      }
-      final parentContext = _tableKey.currentContext;
-      parentContext?.findRenderObject()?.markNeedsLayout();
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) {
-          setState(() {});
-          parentContext?.findRenderObject()?.markNeedsLayout();
-        }
-      });
-    }
+    final colIdx = math.max(_numCols - 1, 0);
+    _onColDragUpdate(colIdx, details, availableWidth);
   }
 
   void _onColDragUpdate(int colIdx, DragUpdateDetails details, double tableWidth) {
     final widths = _colWidths(tableWidth);
+    final oldWidth = widths[colIdx];
     final delta = details.delta.dx;
-    final newWidth = math.max(widths[colIdx] + delta, _kMinColWidth);
+    final newWidth = math.max(oldWidth + delta, _kMinColWidth);
+
+    if (widget.document.registry.dispatchColumnResize(
+      widget.document,
+      widget.node,
+      colIdx,
+      oldWidth,
+      newWidth,
+    )) {
+      return;
+    }
+
     widths[colIdx] = newWidth;
     widget.node.columnWidths = widths;
     widget.document.updateContent();
@@ -107,7 +102,19 @@ class _FluentTableWidgetState extends State<FluentTableWidget> {
     final row = widget.node.rows[rowIdx];
     final delta = details.delta.dy;
     final current = row.rowHeight ?? _kMinRowHeight;
-    row.rowHeight = math.max(current + delta, _kMinRowHeight);
+    final newHeight = math.max(current + delta, _kMinRowHeight);
+
+    if (widget.document.registry.dispatchRowResize(
+      widget.document,
+      widget.node,
+      row,
+      current,
+      newHeight,
+    )) {
+      return;
+    }
+
+    row.rowHeight = newHeight;
     widget.document.updateContent();
   }
 
@@ -627,12 +634,33 @@ class _TableWithHandlesState extends State<_TableWithHandles> {
   }
 
   int _logicalColOf(int rowIdx, int physicalColIdx) {
-    int logical = 0;
-    final row = widget.node.rows[rowIdx];
-    for (int c = 0; c < physicalColIdx; c++) {
-      logical += row.cells[c].colSpan;
+    final numRows = widget.node.rows.length;
+    final List<List<bool>> occ = List.generate(numRows, (_) => []);
+    for (int r = 0; r <= rowIdx && r < numRows; r++) {
+      int logCol = 0;
+      int cellIdx = 0;
+      for (final cell in widget.node.rows[r].cells) {
+        while (logCol < occ[r].length && occ[r][logCol]) {
+          logCol++;
+        }
+        if (r == rowIdx && cellIdx == physicalColIdx) {
+          return logCol;
+        }
+        final endCol = logCol + cell.colSpan;
+        final endRow = math.min(r + cell.rowSpan, numRows);
+        for (int rr = r; rr < endRow; rr++) {
+          while (occ[rr].length < endCol) {
+            occ[rr].add(false);
+          }
+          for (int cc = logCol; cc < endCol; cc++) {
+            occ[rr][cc] = true;
+          }
+        }
+        logCol = endCol;
+        cellIdx++;
+      }
     }
-    return logical;
+    return 0;
   }
 
   bool _canIncreaseColspan(FluentCell cell) {
@@ -685,9 +713,39 @@ class _TableWithHandlesState extends State<_TableWithHandles> {
     return n;
   }
 
+  bool _notifyInsertRow(int index) {
+    for (final plugin in widget.document.registry.plugins) {
+      if (plugin.onInsertTableRow(widget.document, widget.node, index)) return true;
+    }
+    return false;
+  }
+
+  bool _notifyDeleteRow(int index) {
+    for (final plugin in widget.document.registry.plugins) {
+      if (plugin.onDeleteTableRow(widget.document, widget.node, index)) return true;
+    }
+    return false;
+  }
+
+  bool _notifyInsertColumn(int index) {
+    for (final plugin in widget.document.registry.plugins) {
+      if (plugin.onInsertTableColumn(widget.document, widget.node, index)) return true;
+    }
+    return false;
+  }
+
+  bool _notifyDeleteColumn(int index) {
+    for (final plugin in widget.document.registry.plugins) {
+      if (plugin.onDeleteTableColumn(widget.document, widget.node, index)) return true;
+    }
+    return false;
+  }
+
   void _insertRowAbove() {
     final position = _clickedCell != null ? _findCellPosition(_clickedCell!) : null;
     final insertAtRow = position != null ? position.$1 : widget.node.rows.length;
+
+    if (_notifyInsertRow(insertAtRow)) return;
 
     final newRow = FluentRow();
     final numCols = _getNumCols();
@@ -702,6 +760,8 @@ class _TableWithHandlesState extends State<_TableWithHandles> {
   void _insertRowBelow() {
     final position = _clickedCell != null ? _findCellPosition(_clickedCell!) : null;
     final insertAfterRow = position != null ? position.$1 + 1 : widget.node.rows.length;
+
+    if (_notifyInsertRow(insertAfterRow)) return;
 
     final newRow = FluentRow();
     final numCols = _getNumCols();
@@ -723,6 +783,8 @@ class _TableWithHandlesState extends State<_TableWithHandles> {
     } else {
       insertAfterLogicalCol = _getNumCols();
     }
+
+    if (_notifyInsertColumn(insertAfterLogicalCol)) return;
 
     for (int r = 0; r < widget.node.rows.length; r++) {
       final row = widget.node.rows[r];
@@ -749,6 +811,8 @@ class _TableWithHandlesState extends State<_TableWithHandles> {
     final position = _clickedCell != null ? _findCellPosition(_clickedCell!) : null;
     final removeIdx = position != null ? position.$1 : widget.node.rows.length - 1;
 
+    if (_notifyDeleteRow(removeIdx)) return;
+
     widget.node.rows.removeAt(removeIdx);
     widget.document.updateContent();
   }
@@ -764,6 +828,8 @@ class _TableWithHandlesState extends State<_TableWithHandles> {
     } else {
       removeLogicalCol = _getNumCols() - 1;
     }
+
+    if (_notifyDeleteColumn(removeLogicalCol)) return;
 
     for (final row in widget.node.rows) {
       int logicalCol = 0;
@@ -785,8 +851,38 @@ class _TableWithHandlesState extends State<_TableWithHandles> {
     widget.document.updateContent();
   }
 
+  bool _notifyIncreaseColspan(FluentCell cell) {
+    for (final plugin in widget.document.registry.plugins) {
+      if (plugin.onIncreaseTableColspan(widget.document, widget.node, cell)) return true;
+    }
+    return false;
+  }
+
+  bool _notifyDecreaseColspan(FluentCell cell) {
+    for (final plugin in widget.document.registry.plugins) {
+      if (plugin.onDecreaseTableColspan(widget.document, widget.node, cell)) return true;
+    }
+    return false;
+  }
+
+  bool _notifyIncreaseRowspan(FluentCell cell) {
+    for (final plugin in widget.document.registry.plugins) {
+      if (plugin.onIncreaseTableRowspan(widget.document, widget.node, cell)) return true;
+    }
+    return false;
+  }
+
+  bool _notifyDecreaseRowspan(FluentCell cell) {
+    for (final plugin in widget.document.registry.plugins) {
+      if (plugin.onDecreaseTableRowspan(widget.document, widget.node, cell)) return true;
+    }
+    return false;
+  }
+
   void _increaseColspan() {
     if (_clickedCell == null) return;
+    if (_notifyIncreaseColspan(_clickedCell!)) return;
+
     final cell = _clickedCell!;
     final position = _findCellPosition(cell);
     if (position == null) return;
@@ -827,6 +923,8 @@ class _TableWithHandlesState extends State<_TableWithHandles> {
 
   void _decreaseColspan() {
     if (_clickedCell == null) return;
+    if (_notifyDecreaseColspan(_clickedCell!)) return;
+
     final cell = _clickedCell!;
     if (cell.colSpan <= 1) return;
 
@@ -847,6 +945,8 @@ class _TableWithHandlesState extends State<_TableWithHandles> {
 
   void _increaseRowspan() {
     if (_clickedCell == null) return;
+    if (_notifyIncreaseRowspan(_clickedCell!)) return;
+
     final cell = _clickedCell!;
     final position = _findCellPosition(cell);
     if (position == null) return;
@@ -890,6 +990,8 @@ class _TableWithHandlesState extends State<_TableWithHandles> {
 
   void _decreaseRowspan() {
     if (_clickedCell == null) return;
+    if (_notifyDecreaseRowspan(_clickedCell!)) return;
+
     final cell = _clickedCell!;
     if (cell.rowSpan <= 1) return;
 
@@ -1045,13 +1147,14 @@ class FluentTableCellParentData extends ContainerBoxParentData<RenderBox> {
 
 class FluentTableWidgetRenderer extends MultiChildRenderObjectWidget {
   final FluentTable node;
+  final FluentDocument document;
   final List<double> colWidths;
   final double availableWidth;
-  
+
   FluentTableWidgetRenderer({
     super.key,
     required this.node,
-    required FluentDocument document,
+    required this.document,
     required this.colWidths,
     required this.availableWidth,
   }) : super(children: _flattenCells(node, document));
@@ -1077,12 +1180,13 @@ class FluentTableWidgetRenderer extends MultiChildRenderObjectWidget {
 
   @override
   RenderObject createRenderObject(BuildContext context) {
-    return RenderFluentTable(node: node, colWidths: colWidths);
+    return RenderFluentTable(node: node, document: document, colWidths: colWidths);
   }
 
   @override
   void updateRenderObject(BuildContext context, covariant RenderFluentTable renderObject) {
     renderObject.node = node;
+    renderObject.document = document;
     renderObject.colWidths = colWidths;
     renderObject.markNeedsLayout();
   }
@@ -1148,13 +1252,14 @@ class RenderFluentTable extends RenderFluentNode
   static const double minCellHeight = 20.0;
   static const double borderWidth = 1.0;
 
+  FluentDocument document;
   List<double> _colWidths;
   List<double> _computedRowHeights = [];
 
   /// Row heights calculated in the last layout (in logical pixels).
   List<double> get computedRowHeights => _computedRowHeights;
 
-  RenderFluentTable({required FluentTable node, required List<double> colWidths})
+  RenderFluentTable({required FluentTable node, required this.document, required List<double> colWidths})
       : _colWidths = colWidths,
         super(node: node);
 
@@ -1334,26 +1439,92 @@ class RenderFluentTable extends RenderFluentNode
     size = constraints.constrain(Size(cx, ry));
   }
   
+  static final Paint _borderPaint = Paint()
+    ..color = const Color(0xFFCCCCCC)
+    ..style = PaintingStyle.stroke
+    ..strokeWidth = 1.0;
+
+  static final Paint _greenBorderPaint = Paint()
+    ..color = const Color(0xFF4CAF50)
+    ..style = PaintingStyle.stroke
+    ..strokeWidth = 2.5;
+
+  static final Paint _cellBgPaint = Paint()
+    ..style = PaintingStyle.fill;
+
   @override
   void paint(PaintingContext context, Offset offset) {
+    final resizedCols = <int, bool>{};
+    final resizedRows = <int, bool>{};
+
+    bool checkIsResized(int col, int row) {
+      final colResized = resizedCols.putIfAbsent(
+          col, () => document.registry.isColumnResized(document, node, col));
+      final rowResized = resizedRows.putIfAbsent(
+          row,
+          () =>
+              row < node.rows.length &&
+              document.registry.isRowResized(document, node, node.rows[row]));
+      return colResized || rowResized;
+    }
+
+    _drawCellBackgrounds(context, offset, checkIsResized);
     defaultPaint(context, offset);
 
-    _drawGridLines(context, offset);
-
-    final borderPaint = Paint()
-      ..color = const Color(0xFFCCCCCC)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 2.0;
-    context.canvas.drawRect(offset & size, borderPaint);
-    
+    _drawGridLines(context, offset, checkIsResized);
   }
-  
-  void _drawGridLines(PaintingContext context, Offset offset) {
-    final borderPaint = Paint()
-      ..color = const Color(0xFFCCCCCC)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.0;
 
+  void _drawCellBackgrounds(
+    PaintingContext context,
+    Offset offset,
+    bool Function(int col, int row) checkIsResized,
+  ) {
+    RenderBox? child = firstChild;
+    while (child != null) {
+      final pd = child.parentData as FluentTableCellParentData;
+      if (pd.offset.dx > -9000 && pd.row < node.rows.length) {
+        final row = node.rows[pd.row];
+        if (pd.col < row.cells.length) {
+          final cell = row.cells[pd.col];
+
+          final logCol = pd.col;
+          final rowIdx = pd.row;
+          final isResized = checkIsResized(logCol, rowIdx);
+
+          Color? bgColor;
+          for (final hook in document.allStyleHooks) {
+            final color = hook.resolveCellBackgroundColor(
+              cell,
+              context: null,
+              document: document,
+              isResized: isResized,
+            );
+            if (color != null) {
+              bgColor = color;
+            }
+          }
+
+          if (bgColor != null) {
+            final rect = Rect.fromLTWH(
+              offset.dx + pd.offset.dx,
+              offset.dy + pd.offset.dy,
+              pd.width,
+              pd.height,
+            );
+            _cellBgPaint.color = bgColor;
+            context.canvas.drawRect(rect, _cellBgPaint);
+          }
+        }
+      }
+      child = pd.nextSibling;
+    }
+  }
+
+  void _drawGridLines(
+    PaintingContext context,
+    Offset offset,
+    bool Function(int col, int row) checkIsResized,
+  ) {
     RenderBox? child = firstChild;
     while (child != null) {
       final parentData = child.parentData as FluentTableCellParentData;
@@ -1364,7 +1535,12 @@ class RenderFluentTable extends RenderFluentNode
           parentData.width,
           parentData.height,
         );
-        context.canvas.drawRect(rect, borderPaint);
+
+        final logCol = parentData.col;
+        final rowIdx = parentData.row;
+        final isResized = checkIsResized(logCol, rowIdx);
+
+        context.canvas.drawRect(rect, isResized ? _greenBorderPaint : _borderPaint);
       }
       child = parentData.nextSibling;
     }

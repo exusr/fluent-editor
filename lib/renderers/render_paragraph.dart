@@ -4,6 +4,8 @@ import 'package:fluent_editor/core/paragraph_registry.dart';
 import 'package:fluent_editor/factories.dart';
 import 'package:fluent_editor/renderers/render_fluent_node.dart';
 import 'package:fluent_editor/styles.dart';
+import 'package:fluent_editor/suggestions/suggestion_style_hook.dart';
+import 'package:fluent_editor/renderers/style_hook.dart';
 import 'package:fluent_editor/utils/color_utils.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
@@ -99,8 +101,9 @@ class RenderFluentParagraph extends RenderFluentNode
 
   final List<_FragmentPosition> _fragmentPositions = [];
   final Map<String, _FragmentPosition> _fragmentPositionMap = {};
-  final List<PlaceholderDimensions> _placeholderDimensions = [];
+  List<PlaceholderDimensions> _placeholderDimensions = [];
   final List<_ScriptSpanInfo> _scriptSpans = [];
+  int _totalTextLength = 0;
 
   String _anchorFragmentId = '';
   int _anchorLocalOffset = -1;
@@ -180,6 +183,24 @@ class RenderFluentParagraph extends RenderFluentNode
       node = value as FNode;
     }
     markNeedsLayout();
+  }
+
+  List<RenderStyleHook> _styleHooks = const [];
+  List<RenderStyleHook> get styleHooks => _styleHooks;
+  set styleHooks(List<RenderStyleHook> value) {
+    if (_styleHooks != value) {
+      _styleHooks = value;
+      markNeedsLayout();
+    }
+  }
+
+  SuggestionStyleHook get suggestionStyleHook =>
+      _styleHooks.whereType<SuggestionStyleHook>().firstOrNull ?? const SuggestionStyleHook();
+  set suggestionStyleHook(SuggestionStyleHook value) {
+    final list = List<RenderStyleHook>.from(_styleHooks);
+    list.removeWhere((h) => h is SuggestionStyleHook);
+    list.add(value);
+    styleHooks = list;
   }
 
   double _lineHeight = 1.15;
@@ -307,6 +328,12 @@ class RenderFluentParagraph extends RenderFluentNode
   // Cleared at the start of each performLayout.
   final Map<String, Color?> _colorParseCache = {};
 
+  /// Cache for computeLuminance() results within a layout pass.
+  // isDark flips very rarely (e.g. white text on dark background) so the
+  // hit rate is extremely high on typical documents.
+  // Cleared together with _colorParseCache at the start of each performLayout.
+  final Map<Color, bool> _luminanceCache = {};
+
   /// Cached Picture of the pure text layer. Invalidated on layout changes;
   /// the overlay layer (selection, caret, comments) is painted on top every frame.
   Picture? _cachedTextPicture;
@@ -378,14 +405,19 @@ class RenderFluentParagraph extends RenderFluentNode
     return fragment.fontSize;
   }
 
-  /// Returns the effective inline styles for a fragment,
-  /// using the paragraph style as base.
-  List<String> _getEffectiveStyles(Fragment fragment) {
+  /// Returns the effective inline styles for a fragment as a [Set] for O(1) lookups.
+  Set<String> _getEffectiveStyles(Fragment fragment) {
     if (_paragraphStyle?.styles != null &&
         (fragment.styles == null || fragment.styles!.isEmpty)) {
-      return _paragraphStyle!.styles!;
+      return _paragraphStyle!.styles!.toSet();
     }
-    return fragment.styles ?? [];
+    return fragment.styles?.toSet() ?? const {};
+  }
+
+  /// Returns whether [color] is perceived as dark, using a per-layout cache
+  /// to avoid repeated [Color.computeLuminance] calls for the same color.
+  bool _cachedIsDark(Color color) {
+    return _luminanceCache.putIfAbsent(color, () => color.computeLuminance() > 0.5);
   }
 
   Color? _cachedParseColor(String? hex) {
@@ -555,6 +587,7 @@ class RenderFluentParagraph extends RenderFluentNode
     _placeholderDimensions.clear();
     _scriptSpans.clear();
     _colorParseCache.clear();
+    _luminanceCache.clear();
 
     final childSizes = <Size>[];
     if (!identical(_cachedInlineImagesContainer, _container)) {
@@ -619,6 +652,12 @@ class RenderFluentParagraph extends RenderFluentNode
         ? _painter.height
         : _painter.preferredLineHeight;
     size = constraints.constrain(Size(width, height));
+
+    var totalLen = 0;
+    for (final pos in _fragmentPositions) {
+      totalLen += pos.end - pos.start;
+    }
+    _totalTextLength = totalLen;
   }
 
   /// Builds a TextSpan for the IME preedit text, styled with rich preview visuals.
@@ -742,68 +781,49 @@ class RenderFluentParagraph extends RenderFluentNode
               final fp = _FragmentPosition(id: child.id, start: start, end: end);
               _fragmentPositions.add(fp);
               _fragmentPositionMap[child.id] = fp;
-              var effectiveStyle = linkStyle;
-              final childStyles = child.styles;
-              if (childStyles != null && childStyles.isNotEmpty) {
-                if (childStyles.contains('bold')) {
-                  effectiveStyle = effectiveStyle.copyWith(fontWeight: FontWeight.bold);
-                }
-                if (childStyles.contains('italic')) {
-                  effectiveStyle = effectiveStyle.copyWith(fontStyle: FontStyle.italic);
-                }
-                if (childStyles.contains('underline')) {
-                  effectiveStyle = effectiveStyle.copyWith(
-                    decoration: TextDecoration.combine([
-                      effectiveStyle.decoration ?? TextDecoration.none,
-                      TextDecoration.underline,
-                    ]),
-                  );
-                }
-                if (childStyles.contains('strikethrough')) {
-                  effectiveStyle = effectiveStyle.copyWith(
-                    decoration: TextDecoration.combine([
-                      effectiveStyle.decoration ?? TextDecoration.none,
-                      TextDecoration.lineThrough,
-                    ]),
-                  );
-                }
-                if (childStyles.contains('smallcaps')) {
-                  effectiveStyle = effectiveStyle.copyWith(
-                    fontFeatures: [...(effectiveStyle.fontFeatures ?? []), const FontFeature.enable('smcp')],
-                  );
-                }
-              }
-              effectiveStyle = effectiveStyle.copyWith(
+              final childStyles = child.styles?.toSet() ?? const <String>{};
+              // Collect decoration flags in one pass.
+              final hasBold = childStyles.contains('bold');
+              final hasItalic = childStyles.contains('italic');
+              final hasUnderline = childStyles.contains('underline');
+              final hasStrike = childStyles.contains('strikethrough');
+              final hasSmallcaps = childStyles.contains('smallcaps');
+              final TextDecoration? decoration = (hasUnderline || hasStrike)
+                  ? TextDecoration.combine([
+                      linkStyle.decoration ?? TextDecoration.none,
+                      if (hasUnderline) TextDecoration.underline,
+                      if (hasStrike) TextDecoration.lineThrough,
+                    ])
+                  : null;
+              var effectiveStyle = linkStyle.copyWith(
+                fontWeight: hasBold ? FontWeight.bold : null,
+                fontStyle: hasItalic ? FontStyle.italic : null,
+                decoration: decoration,
+                fontFeatures: hasSmallcaps
+                    ? [...(linkStyle.fontFeatures ?? []), const FontFeature.enable('smcp')]
+                    : null,
                 fontFamily: _getEffectiveFontFamily(child),
                 fontFamilyFallback: const ['NotoColorEmoji', 'Roboto'],
                 fontSize: _getEffectiveFontSize(child),
-                color: _cachedParseColor(child.color) ?? effectiveStyle.color,
+                color: _cachedParseColor(child.color) ?? linkStyle.color,
                 backgroundColor: _cachedParseColor(child.highlightColor),
               );
 
-              if (childStyles != null && childStyles.contains('suggestion_addition')) {
-                final isDark = (effectiveStyle.color ?? defaultTextColor).computeLuminance() > 0.5;
-                final addBg = isDark
-                    ? const Color(0x3581C784)
-                    : const Color(0x354CAF50);
-                effectiveStyle = effectiveStyle.copyWith(
-                  backgroundColor: addBg,
-                );
-              } else if (childStyles != null && childStyles.contains('suggestion_deletion')) {
-                final isDark = (effectiveStyle.color ?? defaultTextColor).computeLuminance() > 0.5;
-                final delBg = isDark
-                    ? const Color(0x35EF9A9A)
-                    : const Color(0x35F44336);
-                final delLineColor = isDark ? const Color(0xFFEF5350) : const Color(0xFFE53935);
-                effectiveStyle = effectiveStyle.copyWith(
-                  backgroundColor: delBg,
-                  decoration: TextDecoration.combine([
-                    effectiveStyle.decoration ?? TextDecoration.none,
-                    TextDecoration.lineThrough,
-                  ]),
-                  decorationColor: delLineColor,
-                );
+              TextStyle activeChildStyle = effectiveStyle;
+              final isDark = _cachedIsDark(activeChildStyle.color ?? defaultTextColor);
+              final activeHooks = _styleHooks;
+              for (final hook in activeHooks) {
+                if (hook.appliesTo(child.styles, child)) {
+                  activeChildStyle = hook.resolveStyle(
+                    activeChildStyle,
+                    isDark: isDark,
+                    fragment: child,
+                    styles: child.styles ?? const [],
+                    document: null,
+                  );
+                }
               }
+              effectiveStyle = activeChildStyle;
               
               if (childStyles != null && (childStyles.contains('superscript') || childStyles.contains('subscript'))) {
                 final fontSize = effectiveStyle.fontSize ?? 14;
@@ -872,34 +892,29 @@ class RenderFluentParagraph extends RenderFluentNode
           final fp = _FragmentPosition(id: fragment.id, start: start, end: end);
           _fragmentPositions.add(fp);
           _fragmentPositionMap[fragment.id] = fp;
-          TextStyle? effectiveStyle = style;
+          // Use Set for O(1) style lookups.
           final styles = _getEffectiveStyles(fragment);
-          if (styles.isNotEmpty) {
-            effectiveStyle = effectiveStyle ?? const TextStyle();
-            if (styles.contains('bold')) {
-              effectiveStyle = effectiveStyle.copyWith(fontWeight: FontWeight.bold);
-            }
-            if (styles.contains('italic')) {
-              effectiveStyle = effectiveStyle.copyWith(fontStyle: FontStyle.italic);
-            }
-            if (styles.contains('underline')) {
-              effectiveStyle = effectiveStyle.copyWith(decoration: TextDecoration.underline);
-            }
-            if (styles.contains('strikethrough')) {
-              effectiveStyle = effectiveStyle.copyWith(
-                decoration: TextDecoration.combine([
-                  effectiveStyle.decoration ?? TextDecoration.none,
-                  TextDecoration.lineThrough,
-                ]),
-              );
-            }
-            if (styles.contains('smallcaps')) {
-              effectiveStyle = effectiveStyle.copyWith(
-                fontFeatures: [...(effectiveStyle.fontFeatures ?? []), const FontFeature.enable('smcp')],
-              );
-            }
-          }
-          effectiveStyle = (effectiveStyle ?? const TextStyle()).copyWith(
+          // Collect decoration flags in one pass.
+          final hasBold = styles.contains('bold');
+          final hasItalic = styles.contains('italic');
+          final hasUnderline = styles.contains('underline');
+          final hasStrike = styles.contains('strikethrough');
+          final hasSmallcaps = styles.contains('smallcaps');
+          final baseStyle = style ?? const TextStyle();
+          final TextDecoration? decoration = (hasUnderline || hasStrike)
+              ? TextDecoration.combine([
+                  baseStyle.decoration ?? TextDecoration.none,
+                  if (hasUnderline) TextDecoration.underline,
+                  if (hasStrike) TextDecoration.lineThrough,
+                ])
+              : null;
+          TextStyle effectiveStyle = baseStyle.copyWith(
+            fontWeight: hasBold ? FontWeight.bold : null,
+            fontStyle: hasItalic ? FontStyle.italic : null,
+            decoration: decoration,
+            fontFeatures: hasSmallcaps
+                ? [...(baseStyle.fontFeatures ?? []), const FontFeature.enable('smcp')]
+                : null,
             fontFamily: _getEffectiveFontFamily(fragment),
             fontFamilyFallback: const ['NotoColorEmoji', 'Roboto'],
             fontSize: _getEffectiveFontSize(fragment),
@@ -907,29 +922,21 @@ class RenderFluentParagraph extends RenderFluentNode
             backgroundColor: _cachedParseColor(fragment.highlightColor),
           );
 
-          if (styles.contains('suggestion_addition')) {
-            final isDark = (effectiveStyle.color ?? defaultTextColor).computeLuminance() > 0.5;
-            final addBg = isDark
-                ? const Color(0x3581C784)
-                : const Color(0x354CAF50);
-            effectiveStyle = effectiveStyle.copyWith(
-              backgroundColor: addBg,
-            );
-          } else if (styles.contains('suggestion_deletion')) {
-            final isDark = (effectiveStyle.color ?? defaultTextColor).computeLuminance() > 0.5;
-            final delBg = isDark
-                ? const Color(0x35EF9A9A)
-                : const Color(0x35F44336);
-            final delLineColor = isDark ? const Color(0xFFEF5350) : const Color(0xFFE53935);
-            effectiveStyle = effectiveStyle.copyWith(
-              backgroundColor: delBg,
-              decoration: TextDecoration.combine([
-                effectiveStyle.decoration ?? TextDecoration.none,
-                TextDecoration.lineThrough,
-              ]),
-              decorationColor: delLineColor,
-            );
+          TextStyle activeStyle = effectiveStyle;
+          final isDark = _cachedIsDark(activeStyle.color ?? defaultTextColor);
+          final activeHooks = _styleHooks;
+          for (final hook in activeHooks) {
+            if (hook.appliesTo(fragment.styles, fragment)) {
+              activeStyle = hook.resolveStyle(
+                activeStyle,
+                isDark: isDark,
+                fragment: fragment,
+                styles: fragment.styles ?? const [],
+                document: null,
+              );
+            }
           }
+          effectiveStyle = activeStyle;
 
           if (effectiveStyle.decoration != null &&
               effectiveStyle.decoration != TextDecoration.none &&
@@ -1201,11 +1208,14 @@ class RenderFluentParagraph extends RenderFluentNode
           };
     final alignedOffset = offset + Offset(xOffset, 0);
 
-    _cachedTextPicture ??= _buildTextPicture(alignedOffset);
+    _cachedTextPicture ??= _buildTextPicture();
 
     _paintSelection(context.canvas, alignedOffset);
     _paintCommentHighlights(context.canvas, alignedOffset);
+    context.canvas.save();
+    context.canvas.translate(alignedOffset.dx, alignedOffset.dy);
     context.canvas.drawPicture(_cachedTextPicture!);
+    context.canvas.restore();
     var child = firstChild;
     while (child != null) {
       final parentData = child.parentData as FluentInlineParentData;
@@ -1218,11 +1228,11 @@ class RenderFluentParagraph extends RenderFluentNode
 
   /// Records the pure text + script spans into a [Picture] so they are
   /// rasterised once per layout instead of on every paint frame.
-  Picture _buildTextPicture(Offset offset) {
+  Picture _buildTextPicture() {
     final recorder = PictureRecorder();
     final canvas = Canvas(recorder);
-    _painter.paint(canvas, offset);
-    _paintScriptSpans(canvas, offset);
+    _painter.paint(canvas, Offset.zero);
+    _paintScriptSpans(canvas, Offset.zero);
     return recorder.endRecording();
   }
 
@@ -1387,13 +1397,7 @@ class RenderFluentParagraph extends RenderFluentNode
     }
   }
 
-  int _getTotalTextLength() {
-    var length = 0;
-    for (final pos in _fragmentPositions) {
-      length += pos.end - pos.start;
-    }
-    return length;
-  }
+  int _getTotalTextLength() => _totalTextLength;
 
   void _paintCursor(Canvas canvas, Offset offset) {
     String fragmentId;

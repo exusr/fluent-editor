@@ -452,5 +452,62 @@ void main() {
 
       expect(document.content.nodes.length, 2);
     });
+
+    test('changing list marker type and undoing restores original marker type', () {
+      final item1 = ListItem(bulletType: 'bullet', indexList: [1], children: [Paragraph(text: 'Item 1')]);
+      final list = FluentList(listType: 'bullet')..items.add(item1);
+      document.content.nodes = [list];
+      document.updateContent();
+
+      expect(item1.bulletType, equals('bullet'));
+
+      document.saveState(description: 'Change list marker', forceNewAction: true);
+      item1.bulletType = 'ordered';
+      list.listType = 'ordered';
+      document.updateContent();
+
+      final listAfterChange = document.content.nodes.first as FluentList;
+      expect(listAfterChange.items.first.bulletType, equals('ordered'));
+
+      expect(document.canUndo, isTrue);
+      document.undo();
+
+      final listAfterUndo = document.content.nodes.first as FluentList;
+      expect(listAfterUndo.items.first.bulletType, equals('bullet'));
+
+      expect(document.canRedo, isTrue);
+      document.redo();
+
+      final listAfterRedo = document.content.nodes.first as FluentList;
+      expect(listAfterRedo.items.first.bulletType, equals('ordered'));
+    });
+
+    test('toggling checkbox state and undoing restores previous checkbox state', () {
+      final item1 = ListItem(bulletType: 'checkbox', indexList: [1], children: [Paragraph(text: 'Task 1')]);
+      final list = FluentList(listType: 'bullet')..items.add(item1);
+      document.content.nodes = [list];
+      document.updateContent();
+
+      expect(item1.bulletType, equals('checkbox'));
+
+      document.saveState(description: 'Toggle checkbox state', forceNewAction: true);
+      item1.bulletType = 'checkbox-checked';
+      document.updateContent();
+
+      final listAfterToggle = document.content.nodes.first as FluentList;
+      expect(listAfterToggle.items.first.bulletType, equals('checkbox-checked'));
+
+      expect(document.canUndo, isTrue);
+      document.undo();
+
+      final listAfterUndo = document.content.nodes.first as FluentList;
+      expect(listAfterUndo.items.first.bulletType, equals('checkbox'));
+
+      expect(document.canRedo, isTrue);
+      document.redo();
+
+      final listAfterRedo = document.content.nodes.first as FluentList;
+      expect(listAfterRedo.items.first.bulletType, equals('checkbox-checked'));
+    });
   });
 }
