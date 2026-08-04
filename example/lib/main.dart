@@ -181,9 +181,6 @@ class _MyHomePageState extends State<MyHomePage> {
   final FluentCommentProvider _commentProvider = FluentCommentProvider();
   final FluentSuggestionController _suggestionController =
       FluentSuggestionController();
-  late final FluentSuggestionPlugin _suggestionPlugin =
-      FluentSuggestionPlugin(controller: _suggestionController);
-  bool _showSuggestionsSidebar = false;
 
   @override
   void initState() {
@@ -245,21 +242,6 @@ class _MyHomePageState extends State<MyHomePage> {
         actions: [
           IconButton(
             icon: Icon(
-              _showSuggestionsSidebar
-                  ? Icons.chat_bubble_outline
-                  : Icons.rule,
-            ),
-            tooltip: _showSuggestionsSidebar
-                ? 'Show Comments Sidebar'
-                : 'Show Suggestions Sidebar',
-            onPressed: () {
-              setState(() {
-                _showSuggestionsSidebar = !_showSuggestionsSidebar;
-              });
-            },
-          ),
-          IconButton(
-            icon: Icon(
               _toolbarMode == FluentToolbarMode.bubble
                   ? Icons.view_headline
                   : Icons.bubble_chart,
@@ -290,18 +272,13 @@ class _MyHomePageState extends State<MyHomePage> {
           document: _document,
           plugins: [
             FluentCharacterMapPlugin(),
-            _suggestionPlugin,
+            FluentCommentPlugin(provider: _commentProvider),
+            FluentSuggestionPlugin(controller: _suggestionController),
           ],
           toolbarMode: _toolbarMode,
-          sidebar: _showSuggestionsSidebar
-              ? FluentSuggestionSidebar(
-                  controller: _suggestionController,
-                  document: _document!,
-                )
-              : FluentCommentSidebar(
-                  provider: _commentProvider,
-                  document: _document!,
-                ),
+          // Sidebar is automatically resolved from plugins:
+          // comments and suggestions are merged into a single unified sidebar
+          // with scroll synchronization to document positions.
           bubbleActions: [
             CommentBubbleAction(
               document: _document!,

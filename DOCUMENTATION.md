@@ -21,10 +21,17 @@
    - [Export Formats (DOCX, ODT, PDF, HTML, TXT)](#export-formats)
    - [Import Formats (DOCX, ODT, HTML, Markdown)](#import-formats)
 6. [Plugin System & Extensions](#6-plugin-system--extensions)
+   - [Plugin Architecture](#plugin-architecture)
+   - [FluentEditorPlugin API](#fluenteditorplugin-api)
+   - [Plugin Hooks Reference](#plugin-hooks-reference)
+   - [Sidebar Items](#sidebar-items)
    - [Creating a Custom Plugin](#creating-a-custom-plugin)
-   - [Ecosystem Plugins (Comments, Character Map)](#ecosystem-plugins)
-7. [Code Examples](#7-code-examples)
-8. [Testing & Code Quality](#8-testing--code-quality)
+7. [Ecosystem Plugins](#7-ecosystem-plugins)
+   - [Comments Plugin](#comments-plugin)
+   - [Review Plugin (Track Changes)](#review-plugin-track-changes)
+   - [Character Map Plugin](#character-map-plugin)
+8. [Full Integration Example](#8-full-integration-example)
+9. [Testing & Code Quality](#9-testing--code-quality)
 
 ---
 
@@ -33,15 +40,16 @@
 Fluent Editor provides a comprehensive document editing engine similar to modern word processors (such as Microsoft Word, LibreOffice Writer, or Google Docs), while retaining the performance and customizability of a native Flutter component.
 
 ### Key Features
-- **Rich Text Formatting**: Bold, italic, underline, strikethrough, highlight, text color, and custom fonts.
-- **Paragraph Styles & Headings**: Headings (H1-H6), normal text, block formatting, and alignment (left, center, right, justify).
-- **Nested Lists**: Ordered and unordered lists with support for nesting levels.
-- **Advanced Tables**: Create and edit tables with custom cell formatting, cell spanning (colspan/rowspan), and border styling.
+- **Rich Text Formatting**: Bold, italic, underline, strikethrough, highlight, text color, custom fonts, superscript, subscript, small caps.
+- **Paragraph Styles & Headings**: Headings (H1–H6), normal text, block formatting, and alignment (left, center, right, justify).
+- **Nested Lists**: Ordered and unordered lists with support for nesting levels and checkboxes.
+- **Advanced Tables**: Create and edit tables with custom cell formatting, cell spanning (colspan/rowspan), column/row resize, and border styling.
 - **Image Support**: Insert, resize, and align inline or block images.
 - **Hyperlinks**: Insert and manage interactive URLs.
 - **Real-Time Word Count**: Live word and character counter.
 - **Clipboard Integration**: Cut, copy, and paste with full rich-text formatting preservation.
 - **Revision History**: Intelligent Undo/Redo system based on atomic actions with automatic coalescing.
+- **Plugin System**: Decoupled, extensible architecture where external libraries register through abstract hooks with zero compile-time coupling to the core.
 
 ---
 
@@ -92,17 +100,22 @@ Fluent Editor strictly separates the document state (`FluentDocument`), model mu
 
 ### FluentDocument & Node Structure
 
-A `FluentDocument` represents the Abstract Syntax Tree (AST) of a document. It consists of a hierarchy of `Node` objects, each representing a block or inline element.
+A `FluentDocument` represents the Abstract Syntax Tree (AST) of a document. It consists of a hierarchy of `FNode` objects, each representing a block or inline element.
 
 ### Supported Content Nodes
 
-1. **`Paragraph`**: Represents a paragraph of text. Contains a list of `Fragment` instances or inline elements like `Link`.
-2. **`Fragment`**: Represents a contiguous sequence of characters sharing identical style attributes (bold, color, font, etc.).
-3. **`FluentTable`**: A table composed of `FluentRow` nodes, which contain `FluentCell` nodes.
-4. **`FluentList` & `ListItem`**: Ordered (numbered) or unordered (bulleted) list structures.
-5. **`FluentImage`**: Image element with attributes for width, height, source URL/base64, and alignment.
-6. **`HorizontalRule`**: Block-level horizontal line divider.
-7. **`Link`**: Inline container wrapping text fragments with a target URL.
+| Node | Description | Children |
+|------|-------------|----------|
+| `Paragraph` | Block of text containing styled fragments | `List<Fragment>` |
+| `Fragment` | Contiguous character sequence with identical styles | — (leaf) |
+| `Link` | Inline container wrapping text with a URL | `List<Fragment>` |
+| `FluentTable` | Table structure | `List<FluentRow>` |
+| `FluentRow` | Table row | `List<FluentCell>` |
+| `FluentCell` | Table cell with optional colspan/rowspan | `List<Paragraph>` |
+| `FluentList` | Ordered or unordered list | `List<ListItem>` |
+| `ListItem` | List entry with bullet type and nesting level | `List<Paragraph>` |
+| `FluentImage` | Image element (URL or base64) | — (atomic) |
+| `HorizontalRule` | Block-level horizontal line divider | — (atomic) |
 
 ### Cursor & Selection Management
 
@@ -115,9 +128,10 @@ Text selection is managed via the `Cursor` class:
 final cursor = document.cursor;
 
 if (cursor.isCollapsed) {
-  print('Cursor positioned at fragment ${cursor.anchorId}:${cursor.anchorOffset}');
+  print('Cursor at ${cursor.anchorId}:${cursor.anchorOffset}');
 } else {
-  print('Selection from ${cursor.anchorId}:${cursor.anchorOffset} to ${cursor.focusId}:${cursor.focusOffset}');
+  print('Selection from ${cursor.anchorId}:${cursor.anchorOffset} '
+      'to ${cursor.focusId}:${cursor.focusOffset}');
 }
 ```
 
@@ -175,19 +189,23 @@ The `toolbarMode` property supports multiple layouts:
 
 ### Localization & Translations
 
-`FluentEditorLabels` enables complete UI localization:
+`FluentEditorLabels` enables complete UI localization. All default values are in **English**.
 
 ```dart
 FluentEditor(
   document: _document,
   labels: FluentEditorLabels(
-    file: 'File',
-    edit: 'Edit',
-    insert: 'Insert',
-    format: 'Format',
+    file: 'Archivo',
+    edit: 'Editar',
+    insert: 'Insertar',
+    format: 'Formato',
+    sidebarTitle: 'Actividades y Revisiones',
+    emptySidebarMessage: 'No hay comentarios ni sugerencias en el documento.',
   ),
 )
 ```
+
+Plugin libraries inherit labels from `FluentEditorLabels` via the document but also accept their own dedicated labels classes (`FluentCommentLabels`, `SuggestionLabels`) for more granular control.
 
 ---
 
@@ -221,76 +239,283 @@ final docxBytes = await ExportService.exportToDocx(document);
 
 ## 6. Plugin System & Extensions
 
-### Creating a Custom Plugin
+### Plugin Architecture
 
-Extend `FluentEditorPlugin` to register keyboard handlers, toolbar items, or custom node renderers:
+Fluent Editor's plugin system is designed around **complete decoupling**: the core editor has **zero compile-time dependencies** on any plugin library. Plugins communicate with the editor exclusively through:
+
+1. **Abstract hooks** defined in `FluentEditorPlugin` (intercepting operations)
+2. **Plugin registry** (`FluentPluginRegistry`) for registration and discovery
+3. **Sidebar items** (`FluentSidebarItem`) for contributing UI cards
+
+```
+┌──────────────────────┐     ┌──────────────────────┐     ┌───────────────────────┐
+│  fluent_editor       │     │ fluent_editor_       │     │ fluent_editor_        │
+│  (core)              │     │ comments             │     │ review                │
+│                      │     │                      │     │                       │
+│  FluentEditorPlugin  │◄────│ FluentCommentPlugin  │     │ FluentSuggestionPlugin│
+│  (abstract)          │     │ (implements)         │     │ (implements)          │
+│                      │     │                      │     │                       │
+│  FluentPluginRegistry│     │ FluentCommentProvider│     │ FluentSuggestion-     │
+│                      │     │                      │     │ Controller            │
+│  FluentUnifiedSidebar│     │ FluentCommentCard    │     │ FluentSuggestionCard  │
+└──────────────────────┘     └──────────────────────┘     └───────────────────────┘
+```
+
+### FluentEditorPlugin API
+
+Every plugin extends the `FluentEditorPlugin` abstract class:
+
+```dart
+abstract class FluentEditorPlugin {
+  String get id;
+  String get version;
+  int get apiVersion => fluentPluginApiVersion;
+
+  // Registration
+  List<FluentPluginDependency> get dependencies => const [];
+  List<FluentNodeDefinition<FNode>> get nodes => const [];
+  List<FluentCommand> get commands => const [];
+  List<FluentUiContribution> get ui => const [];
+  List<FluentFormatContribution> get formats => const [];
+  RenderStyleHook? get styleHook => null;
+
+  // Sidebar
+  List<FluentSidebarItem> buildSidebarItems(BuildContext context, FluentDocument document) => const [];
+
+  // Lifecycle
+  void attach(FluentPluginContext context) {}
+  void detach(FluentPluginContext context) {}
+
+  // Operation hooks (return true = handled, core editor skips default behavior)
+  bool onInsertCharacter(String character, FluentDocument document) => false;
+  bool onInsertText(String text, FluentDocument document) => false;
+  bool onInsertNode(FluentDocument document, String nodeType, Map<String, dynamic> options) => false;
+  bool onImeCompositionCommit(String text, FluentDocument document) => false;
+  bool onBackspace(FluentDocument document, {bool ctrl = false, bool lineStart = false}) => false;
+  bool onDelete(FluentDocument document, {bool ctrl = false}) => false;
+  bool onDeleteNode(FluentDocument document, FNode node) => false;
+  bool onEnter(FluentDocument document) => false;
+  bool onTab(FluentDocument document, {required bool isShiftPressed}) => false;
+  bool onReplaceSelection(String character, FluentDocument document) => false;
+
+  // Table operation hooks
+  bool onInsertTableRow(FluentDocument document, FluentTable table, int index) => false;
+  bool onDeleteTableRow(FluentDocument document, FluentTable table, int index) => false;
+  bool onInsertTableColumn(FluentDocument document, FluentTable table, int index) => false;
+  bool onDeleteTableColumn(FluentDocument document, FluentTable table, int index) => false;
+  bool onIncreaseTableRowspan(FluentDocument document, FluentTable table, FluentCell cell) => false;
+  bool onDecreaseTableRowspan(FluentDocument document, FluentTable table, FluentCell cell) => false;
+  bool onIncreaseTableColspan(FluentDocument document, FluentTable table, FluentCell cell) => false;
+  bool onDecreaseTableColspan(FluentDocument document, FluentTable table, FluentCell cell) => false;
+  bool onColumnResize(FluentDocument document, FluentTable table, int colIdx, double oldWidth, double newWidth) => false;
+  bool onRowResize(FluentDocument document, FluentTable table, FluentRow row, double oldHeight, double newHeight) => false;
+
+  // Notification hooks
+  void onTextMutation(String paragraphId, int fromOffset, int delta) {}
+  void onSaveState(FluentDocument document, String description) {}
+  void onCommitSaveState(FluentDocument document, {SaveStateResult result = SaveStateResult.created}) {}
+  void onUndo(FluentDocument document) {}
+  void onRedo(FluentDocument document) {}
+
+  // Query hooks
+  bool isColumnResized(FluentDocument document, FluentTable table, int colIdx) => false;
+  bool isRowResized(FluentDocument document, FluentTable table, FluentRow row) => false;
+  bool isFormattingDisabled(FluentDocument document) => false;
+  bool get isSuggestionMode => false;
+}
+```
+
+### Plugin Hooks Reference
+
+| Hook Category | Hooks | Return Semantics |
+|---|---|---|
+| **Text Operations** | `onInsertCharacter`, `onInsertText`, `onImeCompositionCommit`, `onReplaceSelection` | `true` = handled, skip default |
+| **Deletion** | `onBackspace`, `onDelete`, `onDeleteNode` | `true` = handled, skip default |
+| **Structure** | `onEnter`, `onTab`, `onInsertNode` | `true` = handled, skip default |
+| **Table Operations** | `onInsertTableRow`, `onDeleteTableRow`, `onInsertTableColumn`, `onDeleteTableColumn` | `true` = handled, skip default |
+| **Cell Spanning** | `onIncreaseTableRowspan`, `onDecreaseTableRowspan`, `onIncreaseTableColspan`, `onDecreaseTableColspan` | `true` = handled, skip default |
+| **Resize** | `onColumnResize`, `onRowResize` | `true` = handled, skip default |
+| **Notifications** | `onTextMutation`, `onSaveState`, `onCommitSaveState`, `onUndo`, `onRedo` | `void` — observation only |
+| **Queries** | `isColumnResized`, `isRowResized`, `isFormattingDisabled`, `isSuggestionMode` | Boolean state query |
+
+### Sidebar Items
+
+Plugins contribute sidebar cards by returning `FluentSidebarItem` from `buildSidebarItems()`:
+
+```dart
+class FluentSidebarItem {
+  final String id;            // Unique identifier
+  final String nodeId;        // Document node this item is anchored to
+  final DateTime createdAt;   // Creation timestamp (for ordering)
+  final FluentSidebarItemCategory category;  // comment, suggestion, other
+  final double estimatedHeight;
+  final Widget widget;        // The card widget to render
+}
+```
+
+Items from all registered plugins are merged into a single `FluentUnifiedSidebar` that displays comments and suggestions together in document order, with 1:1 scroll synchronization with the editor.
+
+### Creating a Custom Plugin
 
 ```dart
 import 'package:fluent_editor/plugins/plugin_api.dart';
 
-class MyCustomPlugin extends FluentEditorPlugin {
-  @override
-  String get id => 'my_custom_plugin';
+class WordCountPlugin extends FluentEditorPlugin {
+  int _wordCount = 0;
 
   @override
-  String get name => 'My Custom Plugin';
+  String get id => 'com.example.word_count';
 
   @override
-  void initialize(FluentPluginRegistry registry) {
-    // Register custom handlers or commands
+  String get version => '1.0.0';
+
+  @override
+  List<FluentUiContribution> get ui => [
+    FluentUiContribution(
+      id: 'word_count.status',
+      location: FluentPluginUiLocation.toolbar,
+      order: 99,
+      builder: (context, document) => Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        child: Text('$_wordCount words'),
+      ),
+    ),
+  ];
+
+  @override
+  void onTextMutation(String paragraphId, int fromOffset, int delta) {
+    // Recalculate word count on every text change
   }
 }
 ```
 
-### Ecosystem Plugins
-- **`fluent_editor_comments`**: Margins annotations, inline comments, and discussion threads.
-- **`fluent_editor_character_map`**: Special character grid, math symbols, and emoji picker.
-
 ---
 
-## 7. Code Examples
+## 7. Ecosystem Plugins
 
-### Constructing Complex Documents Programmatically
+### Comments Plugin
+
+**Package**: `fluent_editor_comments`
+
+Provides inline comments anchored to text ranges with threaded replies and resolve/unresolve workflow.
+
+See [`fluent_editor_comments/README.md`](../fluent-editor-comments/README.md) for full documentation.
 
 ```dart
-final doc = FluentDocument();
+FluentEditor(
+  document: document,
+  plugins: [
+    FluentCommentPlugin(provider: commentProvider),
+  ],
+  bubbleActions: [
+    CommentBubbleAction(document: document, provider: commentProvider),
+  ],
+);
+```
 
-// Add Heading
-final heading = Paragraph()
-  ..styleName = 'heading1'
-  ..fragments = [Fragment('Annual Report')];
-doc.content.nodes.add(heading);
+### Review Plugin (Track Changes)
 
-// Add Formatted Paragraph
-final p = Paragraph()
-  ..fragments = [
-    Fragment('This is '),
-    Fragment('bold text')..bold = true,
-    Fragment(' and '),
-    Fragment('italic text.')..italic = true,
-  ];
-doc.content.nodes.add(p);
+**Package**: `fluent_editor_review`
 
-// Add 2x2 Table
-final table = FluentTable()
-  ..rows = [
-    FluentRow()
-      ..cells = [
-        FluentCell()..fragments = [Fragment('Header 1')],
-        FluentCell()..fragments = [Fragment('Header 2')],
-      ],
-    FluentRow()
-      ..cells = [
-        FluentCell()..fragments = [Fragment('Data 1')],
-        FluentCell()..fragments = [Fragment('Data 2')],
-      ],
-  ];
-doc.content.nodes.add(table);
+Provides a complete Track Changes workflow with Editing/Review mode toggle, visual markers for additions (green) and deletions (red strikethrough), and accept/reject actions.
+
+See [`fluent_editor_review/README.md`](../fluent-editor-review/README.md) for full documentation.
+
+```dart
+FluentEditor(
+  document: document,
+  plugins: [
+    FluentSuggestionPlugin(controller: suggestionController),
+  ],
+);
+```
+
+### Character Map Plugin
+
+**Package**: `fluent_editor_character_map`
+
+Adds a special character grid, math symbols, and emoji picker to the toolbar.
+
+```dart
+FluentEditor(
+  document: document,
+  plugins: [
+    FluentCharacterMapPlugin(),
+  ],
+);
 ```
 
 ---
 
-## 8. Testing & Code Quality
+## 8. Full Integration Example
+
+```dart
+import 'dart:convert';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:fluent_editor/fluent_editor.dart';
+import 'package:fluent_editor/fluent_document.dart';
+import 'package:fluent_editor_comments/fluent_editor_comments.dart';
+import 'package:fluent_editor_review/fluent_editor_review.dart';
+import 'package:fluent_editor_character_map/fluent_editor_character_map.dart';
+
+class FullEditorPage extends StatefulWidget {
+  @override
+  State<FullEditorPage> createState() => _FullEditorPageState();
+}
+
+class _FullEditorPageState extends State<FullEditorPage> {
+  late final FluentDocument _document;
+  final _commentProvider = FluentCommentProvider();
+  final _suggestionController = FluentSuggestionController();
+
+  @override
+  void initState() {
+    super.initState();
+    _document = FluentDocument();
+    _document.commentProvider = _commentProvider;
+  }
+
+  @override
+  void dispose() {
+    _commentProvider.dispose();
+    _suggestionController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Fluent Editor')),
+      body: FluentEditor(
+        document: _document,
+        toolbarMode: FluentToolbarMode.fixed,
+        labels: const FluentEditorLabels(), // English defaults
+        plugins: [
+          // Character map: special characters and emoji
+          FluentCharacterMapPlugin(),
+          // Comments: inline annotations with replies
+          FluentCommentPlugin(provider: _commentProvider),
+          // Review: track changes with accept/reject
+          FluentSuggestionPlugin(controller: _suggestionController),
+        ],
+        bubbleActions: [
+          CommentBubbleAction(
+            document: _document,
+            provider: _commentProvider,
+          ),
+        ],
+        // Sidebar is auto-resolved from plugins — shows comments + suggestions
+        // in a single unified view, scroll-synced with the document.
+      ),
+    );
+  }
+}
+```
+
+---
+
+## 9. Testing & Code Quality
 
 Execute unit tests and static analysis:
 
@@ -301,6 +526,14 @@ flutter analyze
 # Run test suite
 flutter test
 ```
+
+### Test Coverage
+
+| Package | Tests | Status |
+|---------|-------|--------|
+| `fluent_editor` | 379 | ✅ All passing |
+| `fluent_editor_review` | 83 | ✅ All passing |
+| `fluent_editor_comments` | — | ✅ Static analysis clean |
 
 ---
 
