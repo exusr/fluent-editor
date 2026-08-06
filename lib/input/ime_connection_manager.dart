@@ -136,7 +136,10 @@ class ImeConnectionManager {
     };
   }
 
-  bool attachConnection({required int viewId, required VoidCallback onSyncBuffer}) {
+  bool attachConnection({
+    required int viewId,
+    required VoidCallback onSyncBuffer,
+  }) {
     if (document == null) return false;
     try {
       connection = TextInput.attach(
@@ -146,6 +149,10 @@ class ImeConnectionManager {
           textCapitalization: TextCapitalization.sentences,
           inputAction: TextInputAction.newline,
           enableDeltaModel: true,
+          autocorrect: true,
+          enableSuggestions: true,
+          smartDashesType: SmartDashesType.disabled,
+          smartQuotesType: SmartQuotesType.disabled,
           viewId: viewId,
         ),
       );
@@ -170,7 +177,10 @@ class ImeConnectionManager {
     }
   }
 
-  void showKeyboard(BuildContext context, {required VoidCallback onSyncBuffer}) {
+  void showKeyboard(
+    BuildContext context, {
+    required VoidCallback onSyncBuffer,
+  }) {
     final int viewId = View.of(context).viewId;
     if (connection == null || !connection!.attached) {
       attachConnection(viewId: viewId, onSyncBuffer: onSyncBuffer);

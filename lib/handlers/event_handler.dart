@@ -2,7 +2,6 @@ import 'dart:io';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:fluent_editor/fluent_document.dart';
 import 'package:fluent_editor/factories.dart';
-import 'package:fluent_editor/handlers/arrow_key_repeater.dart';
 import 'package:fluent_editor/handlers/handle_arrow_key.dart';
 import 'package:fluent_editor/handlers/handle_backspace.dart';
 import 'package:fluent_editor/handlers/handle_delete.dart';
@@ -35,10 +34,6 @@ class EventHandler {
   bool isMetaPressed = false;
 
   late FluentDocument document;
-
-  late final ArrowKeyRepeater _arrowRepeater = ArrowKeyRepeater(
-    (event) => handleKeyDown(event, document),
-  );
 
   void onTapDown(TapDownDetails details, BuildContext context, Widget widget) {
     final localOffset = resolvePositionGestureDetails(details, context, widget);
@@ -153,29 +148,9 @@ class EventHandler {
 
   void handle(dynamic event, FluentDocument document) {
     if (event is KeyEvent) {
-      if (event is KeyDownEvent) {
-        updateModifiers(event);
-      }
-      if (event is KeyUpEvent) {
-        updateModifiers(event);
-        if (_arrowRepeater.isActive && _arrowRepeater.supportsRepeat(event.logicalKey)) {
-          _arrowRepeater.stop();
-        }
-      }
-      if (event is KeyRepeatEvent) {
-        updateModifiers(event);
-        if (_arrowRepeater.isActive && _arrowRepeater.supportsRepeat(event.logicalKey)) {
-          return;
-        }
-      }
+      updateModifiers(event);
       if (event is KeyDownEvent || event is KeyRepeatEvent) {
         handleKeyDown(event, document);
-      }
-      if (event is KeyDownEvent &&
-          _arrowRepeater.isActive &&
-          _arrowRepeater.supportsRepeat(event.logicalKey)) {
-        this.document = document;
-        _arrowRepeater.start(event, fast: isShiftPressed);
       }
     }
   }

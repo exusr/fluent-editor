@@ -438,6 +438,28 @@ void main() {
       expect(frag.text, 'hello世');
     });
 
+    test('commitIfComposing does not duplicate preedit when fragment already contains preedit text', () {
+      debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+      addTearDown(() => debugDefaultTargetPlatformOverride = null);
+
+      final doc = _docWithText('hello');
+      final frag = _firstFrag(doc);
+      doc.cursor.moveTo(frag.id, 5);
+
+      doc.imeHandler.updateEditingValue(TextEditingValue(
+        text: 'hello世',
+        selection: const TextSelection.collapsed(offset: 6),
+        composing: const TextRange(start: 5, end: 6),
+      ));
+
+      frag.text = 'hello世';
+      doc.imeHandler.commitIfComposing();
+
+      expect(doc.imeHandler.isComposing, isFalse);
+      expect(frag.text, 'hello世');
+      expect(doc.content.text, 'hello世');
+    });
+
     test('commitIfComposing is safe when not composing', () {
       final doc = _docWithText('hello');
       doc.imeHandler.commitIfComposing(); // should not throw

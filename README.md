@@ -175,8 +175,6 @@ FluentEditor(
     FluentSuggestionPlugin(controller: _suggestionController),
   ],
   // The sidebar is automatically resolved from registered plugins.
-  // You can also pass an explicit sidebar widget:
-  // sidebar: FluentCommentSidebar(provider: _commentProvider, document: _document),
 );
 ```
 

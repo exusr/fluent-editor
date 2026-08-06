@@ -162,8 +162,6 @@ class FluentTextInputHandler implements DeltaTextInputClient {
     final fragId = cursor.focusId.isNotEmpty ? cursor.focusId : cursor.anchorId;
     final currentText = _getCurrentFragmentText() ?? '';
 
-
-
     // -------------------------------------------------------------------------
     // 1. Preedit Active / Updating
     // -------------------------------------------------------------------------
@@ -324,7 +322,7 @@ class FluentTextInputHandler implements DeltaTextInputClient {
             cursorOffset: value.selection.extentOffset,
           );
         }
-        _resetPlatformBuffer();
+        syncImeBufferToFragment();
         return;
       }
     }
@@ -374,7 +372,7 @@ class FluentTextInputHandler implements DeltaTextInputClient {
           prefixLen + oldReplaced.length,
         );
         _insertFinalizedText(newInserted);
-        _resetPlatformBuffer();
+        syncImeBufferToFragment();
         return;
       } else {
         final inserted = _computeInsertedText(oldText, newText);
@@ -405,17 +403,7 @@ class FluentTextInputHandler implements DeltaTextInputClient {
     if (doc == null) return;
     if (state.updatingSelf) return;
 
-    if (state.isComposing) {
-      final last = deltas.last;
-      updateEditingValue(
-        TextEditingValue(
-          text: last.oldText,
-          selection: last.selection,
-          composing: last.composing,
-        ),
-      );
-      return;
-    }
+    // (Nota: rimosso il blocco isComposing difettoso che causava il blocco dei suggerimenti originali)
 
     if (state.justCommittedComposition) {
       state.justCommittedComposition = false;
@@ -423,52 +411,65 @@ class FluentTextInputHandler implements DeltaTextInputClient {
     }
 
     for (final delta in deltas) {
+      final fragId = doc.cursor.focusId.isNotEmpty
+          ? doc.cursor.focusId
+          : doc.cursor.anchorId;
+      final node = doc.nodeById(fragId);
 
-
+      // -----------------------------------------------------------------------
+      // 1. GESTIONE CANCELLAZIONE
+      // -----------------------------------------------------------------------
       if (delta is TextEditingDeltaDeletion ||
           (delta is TextEditingDeltaReplacement &&
               delta.replacementText.isEmpty)) {
         doc.saveState(description: 'Delete', forceNewAction: false);
-        if (!doc.cursor.isCollapsed) {
-          executeHandleBackspace(doc);
-          _resetPlatformBuffer();
-          return;
-        }
+
         final deletionRange = delta is TextEditingDeltaDeletion
             ? delta.deletedRange
             : (delta as TextEditingDeltaReplacement).replacedRange;
+
+        if (node is Fragment && deletionRange.isValid) {
+          // Sincronizza il cursore per permettere ai backspace di cancellare nel punto giusto
+          final safeEnd = deletionRange.end.clamp(0, node.text.length);
+          doc.cursor.moveTo(fragId, safeEnd);
+        }
+
+        if (!doc.cursor.isCollapsed) {
+          executeHandleBackspace(doc);
+          syncImeBufferToFragment();
+          return;
+        }
+
         if (deletionRange.isValid && deletionRange.start < deletionRange.end) {
-          final oldText = delta.oldText;
-          final deleteStart = deletionRange.start.clamp(0, oldText.length);
-          final deleteEnd = deletionRange.end.clamp(0, oldText.length);
-          final deletedText = oldText.substring(deleteStart, deleteEnd);
-          final count = deletedText.characters.length;
+          final count = deletionRange.end - deletionRange.start;
           for (var i = 0; i < count; i++) {
             executeHandleBackspace(doc);
           }
         } else {
           executeHandleBackspace(doc);
         }
-        _resetPlatformBuffer();
+        syncImeBufferToFragment();
         return;
       }
 
+      // -----------------------------------------------------------------------
+      // 2. GESTIONE INSERIMENTO
+      // -----------------------------------------------------------------------
       if (delta is TextEditingDeltaInsertion) {
         doc.saveState(description: 'Type', forceNewAction: false);
-        if (delta.textInserted.contains('\n')) {
-          _insertFinalizedText(delta.textInserted);
-          _resetPlatformBuffer();
-          return;
+
+        if (node is Fragment) {
+          // FIX: Riposizionamento chirurgico del cursore richiesto dall'IME
+          final safeOffset = delta.insertionOffset.clamp(0, node.text.length);
+          doc.cursor.moveTo(fragId, safeOffset);
         }
+
         if (delta.composing.isValid &&
             delta.composing.start < delta.composing.end) {
           state.isComposing = true;
           state.preeditText = delta.textInserted;
           state.composingRange = delta.composing;
           state.preeditLocalOffset = doc.cursor.focusOffset;
-          final fragId = doc.cursor.focusId.isNotEmpty
-              ? doc.cursor.focusId
-              : doc.cursor.anchorId;
           final parentId = doc.findParentCached(fragId);
           state.preeditContainerId = parentId ?? '';
           doc.cursor.imeComposing = true;
@@ -476,53 +477,61 @@ class FluentTextInputHandler implements DeltaTextInputClient {
           _invalidatePreeditRender();
           return;
         }
+
+        // HOOK RIPRISTINATO: Inseriamo il testo passando per il registry dei plugin
         _insertFinalizedText(delta.textInserted);
-        _resetPlatformBuffer();
+        syncImeBufferToFragment();
         return;
       }
 
+      // -----------------------------------------------------------------------
+      // 3. GESTIONE SOSTITUZIONE (Ottimizzata con Diffing)
+      // -----------------------------------------------------------------------
       if (delta is TextEditingDeltaReplacement) {
         doc.saveState(description: 'Replace', forceNewAction: false);
-        final replacementText = delta.replacementText;
-        final oldText = delta.oldText;
 
-        if (delta.replacedRange.isValid &&
-            delta.replacedRange.start <= delta.replacedRange.end &&
-            delta.replacedRange.end <= oldText.length) {
-          final start = delta.replacedRange.start;
-          final end = delta.replacedRange.end;
-          final oldSlice = oldText.substring(start, end);
-          final inserted = _computeInsertedText(oldSlice, replacementText);
+        if (node is Fragment && delta.replacedRange.isValid) {
+          final currentText = node.text;
+          final safeStart = delta.replacedRange.start.clamp(
+            0,
+            currentText.length,
+          );
+          final safeEnd = delta.replacedRange.end.clamp(0, currentText.length);
 
-          final fragId = doc.cursor.focusId.isNotEmpty
-              ? doc.cursor.focusId
-              : doc.cursor.anchorId;
-          final node = doc.nodeById(fragId);
+          final oldSlice = currentText.substring(safeStart, safeEnd);
+          final newSlice = delta.replacementText;
 
-          if (inserted.isNotEmpty) {
-            final targetOffset =
-                start +
-                (replacementText.length - inserted.length).clamp(
-                  0,
-                  replacementText.length,
-                );
-            if (node is Fragment) {
-              final localOffset = targetOffset.clamp(0, node.text.length);
-              doc.cursor.moveTo(fragId, localOffset);
-            }
-            _insertFinalizedText(inserted);
-            _resetPlatformBuffer();
-            return;
+          // Calcoliamo quanto testo all'inizio e alla fine è rimasto invariato
+          final prefixLen = _commonPrefixLength(oldSlice, newSlice);
+          final suffixLen = _commonSuffixLength(
+            oldSlice.substring(prefixLen),
+            newSlice.substring(prefixLen),
+          );
+
+          // Isogliamo i caratteri da rimuovere e la stringa da inserire
+          final charsToDelete = oldSlice.length - prefixLen - suffixLen;
+          final stringToInsert = newSlice.substring(
+            prefixLen,
+            newSlice.length - suffixLen,
+          );
+
+          // 1. Spostiamo il cursore alla fine della sotto-porzione *effettivamente* da cancellare
+          final targetCursorPos = safeStart + prefixLen + charsToDelete;
+          doc.cursor.moveTo(fragId, targetCursorPos);
+
+          // 2. Simuliamo il backspace SOLO per le lettere cambiate (scatta l'Hook rosso)
+          for (var i = 0; i < charsToDelete; i++) {
+            executeHandleBackspace(doc);
           }
-        }
 
-        final inserted = _computeInsertedText(oldText, replacementText);
-        if (inserted.isNotEmpty) {
-          _insertFinalizedText(inserted);
+          // 3. Inseriamo SOLO la porzione nuova (scatta l'Hook verde)
+          if (stringToInsert.isNotEmpty) {
+            _insertFinalizedText(stringToInsert);
+          }
         } else {
-          _replaceFragmentText(replacementText);
+          _replaceFragmentText(delta.replacementText);
         }
-        _resetPlatformBuffer();
+        syncImeBufferToFragment();
         return;
       }
     }
@@ -560,8 +569,6 @@ class FluentTextInputHandler implements DeltaTextInputClient {
     if (doc.cursor.isCollapsed) {
       doc.cursor.moveTo(targetFragId, targetOffset);
     }
-
-
 
     if (!doc.registry.dispatchImeCompositionCommit(text, doc)) {
       _insertTextOrReplaceSelection(text, doc);

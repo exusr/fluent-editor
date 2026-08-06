@@ -14,7 +14,6 @@ import 'package:fluent_editor/utils/node_operations.dart';
 import 'package:fluent_editor/widgets/editor/fluent_toolbar_widget.dart';
 import 'package:fluent_editor/widgets/editor/fluent_bubble_toolbar.dart';
 import 'package:fluent_editor/widgets/nodes/virtualized_selectable_area.dart';
-import 'package:fluent_editor/widgets/editor/fluent_positioned_sidebar.dart';
 import 'package:fluent_editor/widgets/editor/fluent_unified_sidebar.dart';
 import 'package:fluent_editor/plugins/plugin_api.dart';
 
@@ -181,15 +180,21 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
     });
   }
 
-  Widget _buildVirtualizedContent() {
+   Widget _buildVirtualizedContent(bool hasActiveSidebar) {
     return Focus(
       focusNode: widget.document.editorFocusNode,
       autofocus: true,
       onKeyEvent: (node, event) {
-        if (event is KeyUpEvent) {
-          widget.document.manageEvent(event);
-          return KeyEventResult.ignored;
+        if (widget.document.editorFocusNode.hasFocus &&
+            event is KeyDownEvent &&
+            event.logicalKey == LogicalKeyboardKey.tab) {
+          final isShift = HardwareKeyboard.instance.isShiftPressed;
+          final handled = widget.document.registry.plugins.any(
+            (p) => p.onTab(widget.document, isShiftPressed: isShift),
+          );
+          if (handled) return KeyEventResult.handled;
         }
+
         if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
           return KeyEventResult.ignored;
         }
@@ -204,42 +209,23 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
           final isCtrl = HardwareKeyboard.instance.isControlPressed;
           final isMeta = HardwareKeyboard.instance.isMetaPressed;
           if (isCtrl || isMeta) {
-            widget.document.manageEvent(event);
-            return KeyEventResult.handled;
+            return KeyEventResult.ignored;
           }
-          return KeyEventResult.ignored;
-        }
 
-        final _shouldRouteToIME =
-            kIsWeb ||
-            (defaultTargetPlatform == TargetPlatform.macOS ||
-                defaultTargetPlatform == TargetPlatform.windows ||
-                defaultTargetPlatform == TargetPlatform.linux);
-        if (_shouldRouteToIME &&
-            widget.document.imeHandler.isComposing) {
-          final _isCtrl = HardwareKeyboard.instance.isControlPressed;
-          final _isMeta = HardwareKeyboard.instance.isMetaPressed;
-          if (!_isCtrl && !_isMeta) {
-            final _ch = event.character;
-            final _isPrintable =
-                _ch != null &&
-                _ch.isNotEmpty &&
-                _ch.runes.every((r) => r >= 32 && r != 127);
-            if (_isPrintable) return KeyEventResult.ignored;
+          // On Android/iOS, backspace and delete during IME composing must be
+          // left to the IME delta pipeline.  Previously this guard checked
+          // `!isComposing` (always false here) so it was dead code, causing
+          // the key event to reach executeHandleBackspace which operated on
+          // the already-stripped fragment text instead of the composing text.
+          if (widget.document.imeHandler.shouldUseBufferSync &&
+              widget.document.imeHandler.isConnectionActive &&
+              (event.logicalKey == LogicalKeyboardKey.backspace ||
+                  event.logicalKey == LogicalKeyboardKey.delete)) {
+            return KeyEventResult.ignored;
           }
-        }
 
-        final _isIOSOrAndroid =
-            !kIsWeb &&
-            (defaultTargetPlatform == TargetPlatform.iOS ||
-                defaultTargetPlatform == TargetPlatform.android);
-        if (_isIOSOrAndroid &&
-            widget.document.imeHandler.shouldUseBufferSync &&
-            widget.document.cursor.isCollapsed &&
-            !widget.document.imeHandler.isComposing &&
-            (event.logicalKey == LogicalKeyboardKey.backspace ||
-                event.logicalKey == LogicalKeyboardKey.delete)) {
-          return KeyEventResult.ignored;
+          widget.document.manageEvent(event);
+          return KeyEventResult.handled;
         }
 
         widget.document.manageEvent(event);
@@ -248,7 +234,7 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
       child: Padding(
         padding: const EdgeInsets.all(24.0).copyWith(
           right:
-              24.0 + (widget.sidebar == null || _isSidebarCollapsed ? 0 : 280),
+              24.0 + (!hasActiveSidebar || _isSidebarCollapsed ? 0 : 300),
         ),
         child: Center(
           child: ConstrainedBox(
@@ -564,8 +550,8 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
 
   Widget? _resolveSidebar(BuildContext context) {
     if (widget.sidebar != null) return widget.sidebar;
+    if (!widget.document.registry.hasSidebarPlugins) return null;
     final items = widget.document.registry.buildSidebarItems(context, widget.document);
-    if (items.isEmpty) return null;
     return FluentUnifiedSidebar(
       document: widget.document,
       items: items,
@@ -588,7 +574,7 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
               children: [
                 Stack(
                   children: [
-                    _buildVirtualizedContent(),
+                    _buildVirtualizedContent(activeSidebar != null),
                     if (activeSidebar != null && !_isSidebarCollapsed)
                       Positioned(
                         top: 0,

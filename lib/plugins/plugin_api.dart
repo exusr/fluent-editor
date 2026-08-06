@@ -206,6 +206,9 @@ abstract class FluentEditorPlugin {
   ) =>
       const [];
 
+  /// Returns true if this plugin contributes to the document sidebar.
+  bool get hasSidebar => false;
+
   void attach(FluentPluginContext context) {}
   void detach(FluentPluginContext context) {}
 
@@ -391,6 +394,9 @@ class FluentPluginRegistry {
   FluentFormatContribution? format(String id) => _formats[id];
 
   List<RenderStyleHook> get styleHooks => _styleHooksCache;
+
+  /// Returns true if any registered plugin supports sidebar items.
+  bool get hasSidebarPlugins => plugins.any((p) => p.hasSidebar);
 
   FluentFormatContribution? formatForExtension(String ext) {
     final lower = ext.toLowerCase();
