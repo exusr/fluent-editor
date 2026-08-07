@@ -53,8 +53,7 @@ class FluentTextInputHandler implements DeltaTextInputClient {
 
   bool get _isIOS => defaultTargetPlatform == TargetPlatform.iOS;
 
-  bool get _shouldSyncBuffer =>
-      kIsWeb || defaultTargetPlatform == TargetPlatform.android;
+  bool get _shouldSyncBuffer => true;
 
   // ===========================================================================
   // Input Lifecycle
@@ -407,7 +406,9 @@ class FluentTextInputHandler implements DeltaTextInputClient {
 
     if (state.justCommittedComposition) {
       state.justCommittedComposition = false;
-      return;
+      if (!kIsWeb) {
+        return;
+      }
     }
 
     for (final delta in deltas) {
@@ -539,6 +540,23 @@ class FluentTextInputHandler implements DeltaTextInputClient {
           }
         } else {
           _replaceFragmentText(delta.replacementText);
+        }
+        syncImeBufferToFragment();
+        return;
+      }
+      // -----------------------------------------------------------------------
+      // 4. GESTIONE NON-TEXT UPDATE (Commit IME Desktop/Linux/MacOS)
+      // -----------------------------------------------------------------------
+      final isDesktopOrWeb =
+          kIsWeb ||
+          defaultTargetPlatform == TargetPlatform.windows ||
+          defaultTargetPlatform == TargetPlatform.linux ||
+          defaultTargetPlatform == TargetPlatform.macOS;
+      if (isDesktopOrWeb && delta is TextEditingDeltaNonTextUpdate) {
+        if (state.isComposing &&
+            (!delta.composing.isValid ||
+                delta.composing.start >= delta.composing.end)) {
+          commitIfComposing(); // <- Inietta il testo nel documento!
         }
         syncImeBufferToFragment();
         return;
