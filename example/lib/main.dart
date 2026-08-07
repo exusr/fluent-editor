@@ -137,6 +137,30 @@ class MyApp extends StatefulWidget {
 class _MyAppState extends State<MyApp> {
   ThemeMode _themeMode = ThemeMode.light;
 
+  @override
+  void initState() {
+    super.initState();
+    // Inizializza il tema in base alla modalità del sistema
+    // Usa WidgetsBinding.instance.platformDispatcher per evitare errori di context
+    final platformBrightness =
+        WidgetsBinding.instance.platformDispatcher.platformBrightness;
+    _themeMode = platformBrightness == Brightness.dark
+        ? ThemeMode.dark
+        : ThemeMode.light;
+
+    // Ascolta i cambiamenti di tema del sistema
+    WidgetsBinding.instance.platformDispatcher.onPlatformBrightnessChanged =
+        () {
+      setState(() {
+        final platformBrightness =
+            WidgetsBinding.instance.platformDispatcher.platformBrightness;
+        _themeMode = platformBrightness == Brightness.dark
+            ? ThemeMode.dark
+            : ThemeMode.light;
+      });
+    };
+  }
+
   void _toggleTheme() {
     setState(() {
       _themeMode =
@@ -159,8 +183,10 @@ class _MyAppState extends State<MyApp> {
         brightness: Brightness.dark,
       ),
       themeMode: _themeMode,
-      home:
-          MyHomePage(title: 'Fluent Editor Demo', onToggleTheme: _toggleTheme),
+      home: MyHomePage(
+        title: 'Fluent Editor Demo',
+        onToggleTheme: _toggleTheme,
+      ),
     );
   }
 }
