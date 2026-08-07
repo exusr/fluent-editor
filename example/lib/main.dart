@@ -140,15 +140,12 @@ class _MyAppState extends State<MyApp> {
   @override
   void initState() {
     super.initState();
-    // Inizializza il tema in base alla modalità del sistema
-    // Usa WidgetsBinding.instance.platformDispatcher per evitare errori di context
     final platformBrightness =
         WidgetsBinding.instance.platformDispatcher.platformBrightness;
     _themeMode = platformBrightness == Brightness.dark
         ? ThemeMode.dark
         : ThemeMode.light;
 
-    // Ascolta i cambiamenti di tema del sistema
     WidgetsBinding.instance.platformDispatcher.onPlatformBrightnessChanged =
         () {
       setState(() {
