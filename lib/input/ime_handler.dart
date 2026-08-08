@@ -198,12 +198,6 @@ class FluentTextInputHandler implements DeltaTextInputClient {
     final doc = _document;
     if (doc == null) return;
     if (state.updatingSelf) return;
-    if (kDebugMode) {
-      debugPrint(
-        '[IME][${defaultTargetPlatform.name}] updateEditingValue text="${value.text}" '
-        'composing=${value.composing} selection=${value.selection} isComposing(state)=${state.isComposing}',
-      );
-    }
     final cursor = doc.cursor;
     final fragId = cursor.focusId.isNotEmpty ? cursor.focusId : cursor.anchorId;
     final currentText = _getCurrentFragmentText() ?? '';
@@ -445,14 +439,6 @@ class FluentTextInputHandler implements DeltaTextInputClient {
 
   @override
   void updateEditingValueWithDeltas(List<TextEditingDelta> deltas) {
-    if (kDebugMode) {
-      for (var d in deltas) {
-        print(
-          '[IME][macOS Debug] Received delta: ${d.runtimeType} text="${d.oldText}" -> new? sel=${d.selection} comp=${d.composing}',
-        );
-      }
-    }
-
     final doc = _document;
     if (doc == null) return;
     if (state.updatingSelf) return;
@@ -463,45 +449,12 @@ class FluentTextInputHandler implements DeltaTextInputClient {
       }
     }
 
-    if (kDebugMode) {
-      for (final d in deltas) {
-        final text = switch (d) {
-          TextEditingDeltaInsertion x => x.textInserted,
-          TextEditingDeltaReplacement x => x.replacementText,
-          _ => '',
-        };
-        final composing = switch (d) {
-          TextEditingDeltaInsertion x => x.composing,
-          TextEditingDeltaReplacement x => x.composing,
-          TextEditingDeltaNonTextUpdate x => x.composing,
-          _ => const TextRange(start: -1, end: -1),
-        };
-        final range = switch (d) {
-          TextEditingDeltaDeletion x => x.deletedRange,
-          TextEditingDeltaReplacement x => x.replacedRange,
-          _ => const TextRange(start: -1, end: -1),
-        };
-        debugPrint(
-          '[IME][${defaultTargetPlatform.name}] delta=${d.runtimeType} '
-          'text="$text" range=$range composing=$composing selection=${d.selection} '
-          'cursor=${doc.cursor.focusId}:${doc.cursor.focusOffset} '
-          'state.composingRange=${state.composingRange} isComposing(state)=${state.isComposing}',
-        );
-      }
-    }
-
     final bool batchEndsComposing =
         (kIsWeb || defaultTargetPlatform != TargetPlatform.macOS) &&
         deltas.length > 1 &&
         deltas.last is TextEditingDeltaNonTextUpdate &&
         !(deltas.last as TextEditingDeltaNonTextUpdate).composing.isValid;
 
-    if (kDebugMode) {
-      debugPrint(
-        '[IME][iOS][backspace-check] justCommittedComposition=${state.justCommittedComposition} '
-        'deltas=${deltas.map((d) => d.runtimeType).toList()}',
-      );
-    }
     if (state.justCommittedComposition) {
       state.justCommittedComposition = false;
       final hasRealEdits = deltas.any(
@@ -520,21 +473,19 @@ class FluentTextInputHandler implements DeltaTextInputClient {
       final node = doc.nodeById(fragId);
 
       // -----------------------------------------------------------------------
-      // 1. GESTIONE CANCELLAZIONE
+      // 1. DELETION HANDLING
       // -----------------------------------------------------------------------
       if (delta is TextEditingDeltaDeletion ||
           (delta is TextEditingDeltaReplacement &&
               delta.replacementText.isEmpty)) {
-        if (kDebugMode)
-          debugPrint('[IME][iOS][backspace-check] ENTERED deletion branch');
         doc.saveState(description: 'Delete', forceNewAction: false);
 
         final deletionRange = delta is TextEditingDeltaDeletion
             ? delta.deletedRange
             : (delta as TextEditingDeltaReplacement).replacedRange;
 
-        // Eseguiamo il riposizionamento SOLO se la tastiera ci fornisce un range
-        // matematicamente valido (es. seleziona e cancella una parola intera).
+        // We reposition ONLY if the keyboard provides a mathematically
+        // valid range (e.g., selecting and deleting a whole word).
         if (node is Fragment &&
             deletionRange.isValid &&
             deletionRange.start < deletionRange.end) {
@@ -546,8 +497,8 @@ class FluentTextInputHandler implements DeltaTextInputClient {
             executeHandleBackspace(doc);
           }
         } else {
-          // Fallback per tastiere fisiche: un normale colpo di backspace
-          // a partire dalla posizione attuale del cursore.
+          // Fallback for physical keyboards: a normal backspace stroke
+          // starting from the current cursor position.
           executeHandleBackspace(doc);
         }
         syncImeBufferToFragment();
@@ -555,7 +506,7 @@ class FluentTextInputHandler implements DeltaTextInputClient {
       }
 
       // -----------------------------------------------------------------------
-      // 2. GESTIONE INSERIMENTO
+      // 2. INSERTION HANDLING
       // -----------------------------------------------------------------------
       if (delta is TextEditingDeltaInsertion) {
         doc.saveState(description: 'Type', forceNewAction: false);
@@ -600,7 +551,6 @@ class FluentTextInputHandler implements DeltaTextInputClient {
           return;
         }
 
-        // Sblocco del cursore a fine composizione
         if (state.isComposing) {
           _resetComposition();
           _invalidatePreeditRender();
@@ -641,7 +591,7 @@ class FluentTextInputHandler implements DeltaTextInputClient {
       }
 
       // -----------------------------------------------------------------------
-      // 3. GESTIONE SOSTITUZIONE (Ottimizzata con Diffing)
+      // 3. REPLACEMENT HANDLING (Optimized with Diffing)
       // -----------------------------------------------------------------------
       if (delta is TextEditingDeltaReplacement) {
         doc.saveState(description: 'Replace', forceNewAction: false);
@@ -662,7 +612,7 @@ class FluentTextInputHandler implements DeltaTextInputClient {
           return;
         }
 
-        // Sblocco del cursore a fine composizione
+        // Unlock cursor at the end of composition
         if (state.isComposing) {
           _resetComposition();
           _invalidatePreeditRender();
@@ -728,7 +678,7 @@ class FluentTextInputHandler implements DeltaTextInputClient {
         return;
       }
       // -----------------------------------------------------------------------
-      // 4. GESTIONE NON-TEXT UPDATE (Commit IME Desktop/Linux/MacOS)
+      // 4. NON-TEXT UPDATE HANDLING (Commit IME Desktop/Linux/MacOS)
       // -----------------------------------------------------------------------
       final isDesktopOrWeb =
           kIsWeb ||
@@ -1037,23 +987,12 @@ class FluentTextInputHandler implements DeltaTextInputClient {
               ? state.composingRange
               : TextRange.empty,
         );
-
-        if (kDebugMode) {
-          print(
-            '[IME][macOS Debug] Calculated state: text="${newValue.text}" composing=${newValue.composing}',
-          );
-        }
         final isDifferent =
             _currentPlatformValue.text != newValue.text ||
             _currentPlatformValue.composing != newValue.composing;
 
         if (isDifferent) {
-          if (kDebugMode) {
-            print(
-              '[IME][macOS Debug] DIFFERENT! Updating OS IME with: text="${newValue.text}" composing=${newValue.composing} vs old_text="${_currentPlatformValue.text}" old_comp=${_currentPlatformValue.composing}',
-            );
-          }
-          _currentPlatformValue = newValue; // Aggiorna la cache!
+          _currentPlatformValue = newValue; // Update cache!
           connectionManager.connection!.setEditingState(newValue);
         }
       } else {
@@ -1244,7 +1183,6 @@ class FluentTextInputHandler implements DeltaTextInputClient {
   void setViewSize(Size size) => connectionManager.setViewSize(size);
 
   void updateCaretRect(Rect rect) {
-    if (kDebugMode) print('[IME] Sending Rect to macOS: $rect');
     connectionManager.updateCaretRect(rect);
 
     if (state.isComposing &&
