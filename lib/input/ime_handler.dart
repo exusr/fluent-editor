@@ -566,6 +566,7 @@ class FluentTextInputHandler implements DeltaTextInputClient {
           if (defaultTargetPlatform == TargetPlatform.iOS ||
               defaultTargetPlatform == TargetPlatform.macOS ||
               defaultTargetPlatform == TargetPlatform.linux ||
+              defaultTargetPlatform == TargetPlatform.windows ||
               defaultTargetPlatform == TargetPlatform.android) {
             final fullText = delta.oldText.replaceRange(
               delta.insertionOffset,
