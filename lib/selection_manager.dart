@@ -106,8 +106,14 @@ class SelectionState {
       if (nodeCompare != 0) return nodeCompare < 0;
     }
 
-    final fragCompare = anchor!.fragmentId.compareTo(focus!.fragmentId);
-    if (fragCompare != 0) return fragCompare < 0;
+    final aFragPos = positionIndex?[anchor!.fragmentId];
+    final fFragPos = positionIndex?[focus!.fragmentId];
+    if (aFragPos != null && fFragPos != null) {
+      if (aFragPos != fFragPos) return aFragPos < fFragPos;
+    } else {
+      final fragCompare = anchor!.fragmentId.compareTo(focus!.fragmentId);
+      if (fragCompare != 0) return fragCompare < 0;
+    }
 
     return anchor!.offset <= focus!.offset;
   }

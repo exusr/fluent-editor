@@ -655,11 +655,13 @@ class FluentDocument extends ChangeNotifier {
   }
 
   bool isNodeSelected(String nodeId) {
+    if (_nodeIndexDirty) _rebuildNodeIndex();
     return _selectionManager.isNodeSelected(nodeId);
   }
 
   ({String startFrag, int startOff, String endFrag, int endOff})?
   getSelectionRangeForNode(String nodeId) {
+    if (_nodeIndexDirty) _rebuildNodeIndex();
     return _selectionManager.getRangeForNode(nodeId);
   }
 

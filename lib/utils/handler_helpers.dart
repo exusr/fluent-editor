@@ -145,17 +145,33 @@ void saveAndDeleteNode(FluentDocument document, FNode node, {required String des
     }
 
     final leaves = FragmentOperations.collectLeafFragments(container as FNode);
-    bool inRange = false;
-    for (final leaf in leaves) {
-      if (leaf.id == actualStartFrag.id) inRange = true;
-      if (inRange && leaf is! FluentImage) {
-        if (leaf.styles?.contains(document.suggestionStyleHook.deletionTag) != true) {
-          modify(leaf);
-          firstModified ??= leaf;
-          lastModified = leaf;
+    int startIdx = leaves.indexWhere((l) => l.id == actualStartFrag.id);
+    int endIdx = leaves.indexWhere((l) => l.id == actualEndFrag.id);
+
+    if (node.startFragment.id != node.endFragment.id) {
+      final sOffset = node.startOffset.clamp(0, node.startFragment.text.length);
+      final eOffset = node.endOffset.clamp(0, node.endFragment.text.length);
+      // If we didn't split but the selection starts at the end of the start fragment, skip it.
+      if (sOffset >= node.startFragment.text.length && actualStartFrag.id == node.startFragment.id) {
+        startIdx++;
+      }
+      // If we didn't split but the selection ends at the start of the end fragment, skip it.
+      if (eOffset <= 0 && actualEndFrag.id == node.endFragment.id) {
+        endIdx--;
+      }
+    }
+
+    if (startIdx <= endIdx && startIdx >= 0 && endIdx < leaves.length) {
+      for (int i = startIdx; i <= endIdx; i++) {
+        final leaf = leaves[i];
+        if (leaf is! FluentImage) {
+          if (leaf.styles?.contains(document.suggestionStyleHook.deletionTag) != true) {
+            modify(leaf);
+            firstModified ??= leaf;
+            lastModified = leaf;
+          }
         }
       }
-      if (leaf.id == actualEndFrag.id) inRange = false;
     }
   }
 
