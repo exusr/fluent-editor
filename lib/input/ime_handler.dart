@@ -89,12 +89,17 @@ class FluentTextInputHandler implements DeltaTextInputClient {
     final text = _getCurrentFragmentText() ?? '';
     final doc = _document;
     if (doc == null) {
-      return TextEditingValue(text: text, selection: const TextSelection.collapsed(offset: 0));
+      return TextEditingValue(
+        text: text,
+        selection: const TextSelection.collapsed(offset: 0),
+      );
     }
-    
+
     final cursor = doc.cursor;
-    final isSingleFragSelection = !cursor.isCollapsed && cursor.anchorId == cursor.focusId;
-    final isMultiFragSelection = !cursor.isCollapsed && cursor.anchorId != cursor.focusId;
+    final isSingleFragSelection =
+        !cursor.isCollapsed && cursor.anchorId == cursor.focusId;
+    final isMultiFragSelection =
+        !cursor.isCollapsed && cursor.anchorId != cursor.focusId;
     final offset = _getCursorOffsetInFragment();
 
     final TextSelection selection;
@@ -104,10 +109,7 @@ class FluentTextInputHandler implements DeltaTextInputClient {
         extentOffset: cursor.focusOffset.clamp(0, text.length),
       );
     } else if (isMultiFragSelection) {
-      selection = TextSelection(
-        baseOffset: 0,
-        extentOffset: text.length,
-      );
+      selection = TextSelection(baseOffset: 0, extentOffset: text.length);
     } else {
       selection = TextSelection.collapsed(offset: offset);
     }
@@ -115,8 +117,8 @@ class FluentTextInputHandler implements DeltaTextInputClient {
     return TextEditingValue(
       text: text,
       selection: selection,
-      composing: state.isComposing && state.composingRange.isValid 
-          ? state.composingRange 
+      composing: state.isComposing && state.composingRange.isValid
+          ? state.composingRange
           : TextRange.empty,
     );
   }
@@ -445,7 +447,9 @@ class FluentTextInputHandler implements DeltaTextInputClient {
   void updateEditingValueWithDeltas(List<TextEditingDelta> deltas) {
     if (kDebugMode) {
       for (var d in deltas) {
-        print('[IME][macOS Debug] Received delta: ${d.runtimeType} text="${d.oldText}" -> new? sel=${d.selection} comp=${d.composing}');
+        print(
+          '[IME][macOS Debug] Received delta: ${d.runtimeType} text="${d.oldText}" -> new? sel=${d.selection} comp=${d.composing}',
+        );
       }
     }
 
@@ -487,10 +491,10 @@ class FluentTextInputHandler implements DeltaTextInputClient {
     }
 
     final bool batchEndsComposing =
-      !Platform.isMacOS &&
-      deltas.length > 1 &&
-      deltas.last is TextEditingDeltaNonTextUpdate &&
-      !(deltas.last as TextEditingDeltaNonTextUpdate).composing.isValid;
+        (kIsWeb || defaultTargetPlatform != TargetPlatform.macOS) &&
+        deltas.length > 1 &&
+        deltas.last is TextEditingDeltaNonTextUpdate &&
+        !(deltas.last as TextEditingDeltaNonTextUpdate).composing.isValid;
 
     if (kDebugMode) {
       debugPrint(
@@ -500,7 +504,9 @@ class FluentTextInputHandler implements DeltaTextInputClient {
     }
     if (state.justCommittedComposition) {
       state.justCommittedComposition = false;
-      final hasRealEdits = deltas.any((d) => d is! TextEditingDeltaNonTextUpdate);
+      final hasRealEdits = deltas.any(
+        (d) => d is! TextEditingDeltaNonTextUpdate,
+      );
 
       if (!kIsWeb && !hasRealEdits) {
         return;
@@ -519,7 +525,8 @@ class FluentTextInputHandler implements DeltaTextInputClient {
       if (delta is TextEditingDeltaDeletion ||
           (delta is TextEditingDeltaReplacement &&
               delta.replacementText.isEmpty)) {
-                if (kDebugMode) debugPrint('[IME][iOS][backspace-check] ENTERED deletion branch');
+        if (kDebugMode)
+          debugPrint('[IME][iOS][backspace-check] ENTERED deletion branch');
         doc.saveState(description: 'Delete', forceNewAction: false);
 
         final deletionRange = delta is TextEditingDeltaDeletion
@@ -556,15 +563,24 @@ class FluentTextInputHandler implements DeltaTextInputClient {
         if (delta.composing.isValid &&
             delta.composing.start < delta.composing.end) {
           state.isComposing = true;
-          if (defaultTargetPlatform == TargetPlatform.iOS || defaultTargetPlatform == TargetPlatform.macOS) {
+          if (defaultTargetPlatform == TargetPlatform.iOS ||
+              defaultTargetPlatform == TargetPlatform.macOS ||
+              defaultTargetPlatform == TargetPlatform.linux ||
+              defaultTargetPlatform == TargetPlatform.android) {
             final fullText = delta.oldText.replaceRange(
               delta.insertionOffset,
               delta.insertionOffset,
               delta.textInserted,
             );
-            final composingStart = delta.composing.start.clamp(0, fullText.length);
+            final composingStart = delta.composing.start.clamp(
+              0,
+              fullText.length,
+            );
             final composingEnd = delta.composing.end.clamp(0, fullText.length);
-            state.preeditText = fullText.substring(composingStart, composingEnd);
+            state.preeditText = fullText.substring(
+              composingStart,
+              composingEnd,
+            );
             state.composingRange = delta.composing;
           } else {
             state.preeditText = delta.textInserted;
@@ -596,13 +612,14 @@ class FluentTextInputHandler implements DeltaTextInputClient {
             delta.textInserted.length > 1) {
           final currentText = node is Fragment ? node.text : '';
           final offset = delta.insertionOffset.clamp(0, currentText.length);
-          
+
           if (offset > 0 && offset < currentText.length) {
             bool isWordChar(String s) => RegExp(r'[a-zA-Z0-9_À-ÿ]').hasMatch(s);
-            
+
             if (isWordChar(currentText[offset - 1])) {
               int wordEnd = offset;
-              while (wordEnd < currentText.length && isWordChar(currentText[wordEnd])) {
+              while (wordEnd < currentText.length &&
+                  isWordChar(currentText[wordEnd])) {
                 wordEnd++;
               }
               final charsToDelete = wordEnd - offset;
@@ -652,7 +669,10 @@ class FluentTextInputHandler implements DeltaTextInputClient {
 
         if (node is Fragment && delta.replacedRange.isValid) {
           final currentText = node.text;
-          final safeStart = delta.replacedRange.start.clamp(0, currentText.length);
+          final safeStart = delta.replacedRange.start.clamp(
+            0,
+            currentText.length,
+          );
           var safeEnd = delta.replacedRange.end.clamp(0, currentText.length);
 
           // iOS Predictive Text Bug Fix:
@@ -663,12 +683,12 @@ class FluentTextInputHandler implements DeltaTextInputClient {
               delta.replacementText.length > 1 &&
               safeStart < safeEnd &&
               safeEnd < currentText.length) {
-            
             bool isWordChar(String s) => RegExp(r'[a-zA-Z0-9_À-ÿ]').hasMatch(s);
-            
+
             if (isWordChar(currentText[safeEnd - 1])) {
               int wordEnd = safeEnd;
-              while (wordEnd < currentText.length && isWordChar(currentText[wordEnd])) {
+              while (wordEnd < currentText.length &&
+                  isWordChar(currentText[wordEnd])) {
                 wordEnd++;
               }
               safeEnd = wordEnd;
@@ -714,8 +734,11 @@ class FluentTextInputHandler implements DeltaTextInputClient {
           defaultTargetPlatform == TargetPlatform.windows ||
           defaultTargetPlatform == TargetPlatform.linux ||
           defaultTargetPlatform == TargetPlatform.macOS;
-      if ((isDesktopOrWeb || _isIOS) && delta is TextEditingDeltaNonTextUpdate) {
-        if (state.isComposing && (!delta.composing.isValid || delta.composing.start >= delta.composing.end)) {
+      if ((isDesktopOrWeb || _isIOS) &&
+          delta is TextEditingDeltaNonTextUpdate) {
+        if (state.isComposing &&
+            (!delta.composing.isValid ||
+                delta.composing.start >= delta.composing.end)) {
           commitIfComposing();
           syncImeBufferToFragment();
           return;
@@ -1004,25 +1027,30 @@ class FluentTextInputHandler implements DeltaTextInputClient {
       if (_isIOS && selectionChanged) {
         connectionManager.connection!.setEditingState(const TextEditingValue());
       }
-      if (Platform.isMacOS) {
+      if (!kIsWeb && defaultTargetPlatform == TargetPlatform.macOS) {
         // On macOS, we need to set the editing state to an empty value to clear the composition
         final newValue = TextEditingValue(
           text: syncedText,
           selection: syncedSelection,
-          composing: state.isComposing && state.composingRange.isValid 
-              ? state.composingRange 
+          composing: state.isComposing && state.composingRange.isValid
+              ? state.composingRange
               : TextRange.empty,
         );
 
         if (kDebugMode) {
-          print('[IME][macOS Debug] Calculated state: text="${newValue.text}" composing=${newValue.composing}');
+          print(
+            '[IME][macOS Debug] Calculated state: text="${newValue.text}" composing=${newValue.composing}',
+          );
         }
-        final isDifferent = _currentPlatformValue.text != newValue.text ||
+        final isDifferent =
+            _currentPlatformValue.text != newValue.text ||
             _currentPlatformValue.composing != newValue.composing;
 
         if (isDifferent) {
           if (kDebugMode) {
-            print('[IME][macOS Debug] DIFFERENT! Updating OS IME with: text="${newValue.text}" composing=${newValue.composing} vs old_text="${_currentPlatformValue.text}" old_comp=${_currentPlatformValue.composing}');
+            print(
+              '[IME][macOS Debug] DIFFERENT! Updating OS IME with: text="${newValue.text}" composing=${newValue.composing} vs old_text="${_currentPlatformValue.text}" old_comp=${_currentPlatformValue.composing}',
+            );
           }
           _currentPlatformValue = newValue; // Aggiorna la cache!
           connectionManager.connection!.setEditingState(newValue);
@@ -1217,9 +1245,9 @@ class FluentTextInputHandler implements DeltaTextInputClient {
   void updateCaretRect(Rect rect) {
     if (kDebugMode) print('[IME] Sending Rect to macOS: $rect');
     connectionManager.updateCaretRect(rect);
-    
-    if (state.isComposing && 
-        connectionManager.connection != null && 
+
+    if (state.isComposing &&
+        connectionManager.connection != null &&
         connectionManager.connection!.attached) {
       connectionManager.connection!.setComposingRect(rect);
     }
