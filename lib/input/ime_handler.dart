@@ -53,8 +53,6 @@ class FluentTextInputHandler implements DeltaTextInputClient {
     );
   }
 
-  bool get _isIOS => defaultTargetPlatform == TargetPlatform.iOS;
-
   bool get _shouldSyncBuffer => true;
 
   // ===========================================================================
@@ -685,7 +683,7 @@ class FluentTextInputHandler implements DeltaTextInputClient {
           defaultTargetPlatform == TargetPlatform.windows ||
           defaultTargetPlatform == TargetPlatform.linux ||
           defaultTargetPlatform == TargetPlatform.macOS;
-      if ((isDesktopOrWeb || _isIOS) &&
+      if ((isDesktopOrWeb || defaultTargetPlatform == TargetPlatform.iOS) &&
           delta is TextEditingDeltaNonTextUpdate) {
         if (state.isComposing &&
             (!delta.composing.isValid ||
@@ -938,7 +936,7 @@ class FluentTextInputHandler implements DeltaTextInputClient {
         !cursor.isCollapsed && cursor.anchorId != cursor.focusId;
     final offset = _getCursorOffsetInFragment();
     final bool usePlaceholder =
-        _isIOS &&
+        defaultTargetPlatform == TargetPlatform.iOS &&
         cursor.isCollapsed &&
         offset == 0 &&
         !text.startsWith(_emptyFragmentPlaceholder);
@@ -975,7 +973,7 @@ class FluentTextInputHandler implements DeltaTextInputClient {
       if (kIsWeb && syncedText.length < state.lastSyncedText.length) {
         connectionManager.connection!.setEditingState(const TextEditingValue());
       }
-      if (_isIOS && selectionChanged) {
+      if (defaultTargetPlatform == TargetPlatform.iOS && selectionChanged) {
         connectionManager.connection!.setEditingState(const TextEditingValue());
       }
       if (!kIsWeb && defaultTargetPlatform == TargetPlatform.macOS) {
