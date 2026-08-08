@@ -146,32 +146,30 @@ class EventHandler {
     handleInsertNodeExceution(nodeType, document, opts);
   }
 
-  void handle(dynamic event, FluentDocument document) {
-    if (event is KeyEvent) {
-      updateModifiers(event);
-      if (event is KeyDownEvent || event is KeyRepeatEvent) {
-        handleKeyDown(event, document);
-      }
-    }
-  }
-
-  void handleKeyDown(KeyEvent event, FluentDocument document) {
+  bool handle(dynamic event, FluentDocument document) {
+    if (event is! KeyEvent) return false;
     this.document = document;
-    if (document.registry.dispatchKeyEvent(event, document)) return;
-    if (handleBackspaceKey(event)) return;
-    if (handleDeleteKey(event)) return;
-    if (handleMetaActions(event)) return;
-    if (handleEnterKey(event)) return;
-    if (handleTabKey(event)) return;
-    if (handleArrowKeys(event)) return;
-    if (handleHomeKey(event)) return;
-    if (handleEndKey(event)) return;
-    if (handlePageUpKey(event)) return;
-    if (handlePageDownKey(event)) return;
-    handleCharacterInput(event);
+    updateModifiers(event);
+    if (document.registry.dispatchKeyEvent(event, document)) return true;
+    if (handleBackspaceKey(event)) return true;
+    if (handleDeleteKey(event)) return true;
+    if (handleMetaActions(event)) return true;
+    if (handleEnterKey(event)) return true;
+    if (handleTabKey(event)) return true;
+    if (handleArrowKeys(event)) return true;
+    if (handleHomeKey(event)) return true;
+    if (handleEndKey(event)) return true;
+    if (handlePageUpKey(event)) return true;
+    if (handlePageDownKey(event)) return true;
+    return handleCharacterInput(event);
   }
 
   bool handleCharacterInput(KeyEvent event) {
+    if (document.imeHandler.isConnectionActive) {
+      // Let the OS send a TextEditingDelta. Manual insertion kills the OS IME composing session.
+      return false;
+    }
+    
     if (event.character != null && event.character!.isNotEmpty) {
       if (document.imeHandler.isComposing) {
         return false;
@@ -196,6 +194,13 @@ class EventHandler {
 
   bool handleEnterKey(KeyEvent event) {
     if (event.logicalKey == LogicalKeyboardKey.enter) {
+      if (document.imeHandler.isComposing) {
+        return false;
+      }
+      if (document.imeHandler.state.justCommittedComposition) {
+        document.imeHandler.state.justCommittedComposition = false;
+        return false;
+      }
       if (document.registry.dispatchEnter(document)) return true;
       document.saveState(description: 'Enter', forceNewAction: true);
       executeHandleEnter(document);
@@ -206,6 +211,9 @@ class EventHandler {
 
   bool handleBackspaceKey(KeyEvent event) {
     if (event.logicalKey == LogicalKeyboardKey.backspace) {
+      if (document.imeHandler.isComposing) {
+        return false;
+      }
       document.saveState(description: 'Delete', forceNewAction: false);
       final isApple = !kIsWeb && (Platform.isMacOS || Platform.isIOS);
       final lineStart = isApple && isCtrlPressed;
@@ -344,6 +352,9 @@ class EventHandler {
         event.logicalKey == LogicalKeyboardKey.arrowRight ||
         event.logicalKey == LogicalKeyboardKey.arrowUp ||
         event.logicalKey == LogicalKeyboardKey.arrowDown) {
+      if (document.imeHandler.isComposing) {
+        return false;
+      }
       return executeHandleArrowKey(
         event.logicalKey,
         document,
@@ -356,6 +367,9 @@ class EventHandler {
 
   bool handleTabKey(KeyEvent event) {
     if (event.logicalKey == LogicalKeyboardKey.tab) {
+      if (document.imeHandler.isComposing) {
+        return false;
+      }
       if (document.registry.dispatchTab(document, isShiftPressed: isShiftPressed)) return true;
       document.saveState(description: isShiftPressed ? 'Outdent' : 'Indent', forceNewAction: true);
       return executeHandleTab(document, shift: isShiftPressed);

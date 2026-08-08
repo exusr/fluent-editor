@@ -646,12 +646,12 @@ class FluentDocument extends ChangeNotifier {
     return null;
   }
 
-  void manageEvent(KeyEvent event) {
+  bool manageEvent(KeyEvent event) {
     if (cursor.anchorId == '') {
       cursor.anchorId = content.id;
       cursor.focusId = content.id;
     }
-    _eventHandler.handle(event, this);
+    return _eventHandler.handle(event, this);
   }
 
   bool isNodeSelected(String nodeId) {

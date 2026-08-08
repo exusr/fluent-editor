@@ -188,11 +188,13 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
         if (widget.document.editorFocusNode.hasFocus &&
             event is KeyDownEvent &&
             event.logicalKey == LogicalKeyboardKey.tab) {
-          final isShift = HardwareKeyboard.instance.isShiftPressed;
-          final handled = widget.document.registry.plugins.any(
-            (p) => p.onTab(widget.document, isShiftPressed: isShift),
-          );
-          if (handled) return KeyEventResult.handled;
+          if (!widget.document.imeHandler.isComposing) {
+            final isShift = HardwareKeyboard.instance.isShiftPressed;
+            final handled = widget.document.registry.plugins.any(
+              (p) => p.onTab(widget.document, isShiftPressed: isShift),
+            );
+            if (handled) return KeyEventResult.handled;
+          }
         }
 
         if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
@@ -221,15 +223,19 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
               widget.document.imeHandler.isConnectionActive &&
               (event.logicalKey == LogicalKeyboardKey.backspace ||
                   event.logicalKey == LogicalKeyboardKey.delete)) {
-            return KeyEventResult.ignored;
+            return KeyEventResult.skipRemainingHandlers;
           }
 
-          widget.document.manageEvent(event);
-          return KeyEventResult.handled;
+          if (widget.document.manageEvent(event)) {
+            return KeyEventResult.handled;
+          }
+          return KeyEventResult.skipRemainingHandlers;
         }
 
-        widget.document.manageEvent(event);
-        return KeyEventResult.handled;
+        if (widget.document.manageEvent(event)) {
+          return KeyEventResult.handled;
+        }
+        return KeyEventResult.ignored;
       },
       child: Padding(
         padding: const EdgeInsets.all(24.0).copyWith(
@@ -290,7 +296,8 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
         if (rect != null && (rect.width > 0 || rect.height > 0)) {
           final view = View.of(context);
           final viewH = view.physicalSize.height / view.devicePixelRatio;
-          widget.document.imeHandler.setViewHeight(viewH);
+          final viewW = view.physicalSize.width / view.devicePixelRatio;
+          widget.document.imeHandler.setViewSize(Size(viewW, viewH));
           widget.document.imeHandler.updateCaretRect(rect);
         }
       });
@@ -424,8 +431,7 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
 
     if (doc.imeHandler.isComposing) {
       if (isCtrl || isMeta) {
-        doc.manageEvent(event);
-        return true;
+        return doc.manageEvent(event);
       }
       return false; // Let IME consume everything else (incl. arrows)
     }
@@ -444,18 +450,15 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
     }
 
     if (isCtrl || isMeta) {
-      doc.manageEvent(event);
-      return true;
+      return doc.manageEvent(event);
     }
 
     if (_navKeys.contains(key)) {
-      doc.manageEvent(event);
-      return true;
+      return doc.manageEvent(event);
     }
 
     if (doc.imeHandler.isConnectionActive) return false;
-    doc.manageEvent(event);
-    return true;
+    return doc.manageEvent(event);
   }
 
   void _ensureCursorVisible() {

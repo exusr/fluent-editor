@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -13,7 +14,7 @@ class ImeConnectionManager {
   FluentDocument? document;
 
   Rect? lastCaretRect;
-  double? lastViewHeight;
+  Size? lastViewSize;
 
   Timer? connectionRetryTimer;
   int connectionRetryCount = 0;
@@ -44,12 +45,13 @@ class ImeConnectionManager {
     document = null;
   }
 
-  void setViewHeight(double viewHeight) {
-    lastViewHeight = viewHeight;
+
+  void setViewSize(Size size) {
+    lastViewSize = size;
     if (connection == null || !connection!.attached) return;
     if (kIsWeb) return;
     connection!.setEditableSizeAndTransform(
-      const Size(9999, 9999),
+      size,
       Matrix4.identity(),
     );
   }
@@ -190,8 +192,8 @@ class ImeConnectionManager {
       updateWebImePosition();
       return;
     }
-    final h = lastViewHeight;
-    if (h != null) setViewHeight(h);
+    final s = lastViewSize;
+    if (s != null) setViewSize(s);
     final rect = lastCaretRect;
     if (rect != null) {
       connection?.setCaretRect(rect);

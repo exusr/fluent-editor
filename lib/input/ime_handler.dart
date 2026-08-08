@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -28,6 +29,7 @@ class FluentTextInputHandler implements DeltaTextInputClient {
 
   final ImeStateManager state = ImeStateManager();
   late final ImeConnectionManager connectionManager;
+  TextEditingValue _currentPlatformValue = const TextEditingValue();
 
   FluentTextInputHandler._internal() {
     connectionManager = ImeConnectionManager(this);
@@ -81,11 +83,41 @@ class FluentTextInputHandler implements DeltaTextInputClient {
 
   @override
   TextEditingValue? get currentTextEditingValue {
+    if (defaultTargetPlatform == TargetPlatform.macOS) {
+      return _currentPlatformValue;
+    }
     final text = _getCurrentFragmentText() ?? '';
+    final doc = _document;
+    if (doc == null) {
+      return TextEditingValue(text: text, selection: const TextSelection.collapsed(offset: 0));
+    }
+    
+    final cursor = doc.cursor;
+    final isSingleFragSelection = !cursor.isCollapsed && cursor.anchorId == cursor.focusId;
+    final isMultiFragSelection = !cursor.isCollapsed && cursor.anchorId != cursor.focusId;
     final offset = _getCursorOffsetInFragment();
+
+    final TextSelection selection;
+    if (isSingleFragSelection) {
+      selection = TextSelection(
+        baseOffset: cursor.anchorOffset.clamp(0, text.length),
+        extentOffset: cursor.focusOffset.clamp(0, text.length),
+      );
+    } else if (isMultiFragSelection) {
+      selection = TextSelection(
+        baseOffset: 0,
+        extentOffset: text.length,
+      );
+    } else {
+      selection = TextSelection.collapsed(offset: offset);
+    }
+
     return TextEditingValue(
       text: text,
-      selection: TextSelection.collapsed(offset: offset),
+      selection: selection,
+      composing: state.isComposing && state.composingRange.isValid 
+          ? state.composingRange 
+          : TextRange.empty,
     );
   }
 
@@ -99,7 +131,9 @@ class FluentTextInputHandler implements DeltaTextInputClient {
   void updateFloatingCursor(RawFloatingCursorPoint point) {}
 
   @override
-  void showAutocorrectionPromptRect(int start, int end) {}
+  void showAutocorrectionPromptRect(int start, int end) {
+    _invalidatePreeditRender();
+  }
 
   @override
   void connectionClosed() {
@@ -117,6 +151,9 @@ class FluentTextInputHandler implements DeltaTextInputClient {
 
   @override
   void insertContent(KeyboardInsertedContent content) {}
+
+  @override
+  bool onFocusReceived() => false;
 
   @override
   void performAction(TextInputAction action) {
@@ -153,10 +190,18 @@ class FluentTextInputHandler implements DeltaTextInputClient {
 
   @override
   void updateEditingValue(TextEditingValue value) {
+    if (defaultTargetPlatform == TargetPlatform.macOS) {
+      _currentPlatformValue = value;
+    }
     final doc = _document;
     if (doc == null) return;
     if (state.updatingSelf) return;
-
+    if (kDebugMode) {
+      debugPrint(
+        '[IME][${defaultTargetPlatform.name}] updateEditingValue text="${value.text}" '
+        'composing=${value.composing} selection=${value.selection} isComposing(state)=${state.isComposing}',
+      );
+    }
     final cursor = doc.cursor;
     final fragId = cursor.focusId.isNotEmpty ? cursor.focusId : cursor.anchorId;
     final currentText = _getCurrentFragmentText() ?? '';
@@ -200,7 +245,7 @@ class FluentTextInputHandler implements DeltaTextInputClient {
         final preeditText = _extractPreeditText(value);
         if (preeditText.isNotEmpty) {
           state.preeditText = preeditText;
-          state.composingRange = TextRange(start: 0, end: preeditText.length);
+          state.composingRange = value.composing;
           state.preeditCaretOffset = value.selection.isValid
               ? (value.selection.extentOffset - rawStart).clamp(
                   0,
@@ -398,15 +443,66 @@ class FluentTextInputHandler implements DeltaTextInputClient {
 
   @override
   void updateEditingValueWithDeltas(List<TextEditingDelta> deltas) {
+    if (kDebugMode) {
+      for (var d in deltas) {
+        print('[IME][macOS Debug] Received delta: ${d.runtimeType} text="${d.oldText}" -> new? sel=${d.selection} comp=${d.composing}');
+      }
+    }
+
     final doc = _document;
     if (doc == null) return;
     if (state.updatingSelf) return;
 
-    // (Nota: rimosso il blocco isComposing difettoso che causava il blocco dei suggerimenti originali)
+    if (defaultTargetPlatform == TargetPlatform.macOS) {
+      for (final delta in deltas) {
+        _currentPlatformValue = delta.apply(_currentPlatformValue);
+      }
+    }
 
+    if (kDebugMode) {
+      for (final d in deltas) {
+        final text = switch (d) {
+          TextEditingDeltaInsertion x => x.textInserted,
+          TextEditingDeltaReplacement x => x.replacementText,
+          _ => '',
+        };
+        final composing = switch (d) {
+          TextEditingDeltaInsertion x => x.composing,
+          TextEditingDeltaReplacement x => x.composing,
+          TextEditingDeltaNonTextUpdate x => x.composing,
+          _ => const TextRange(start: -1, end: -1),
+        };
+        final range = switch (d) {
+          TextEditingDeltaDeletion x => x.deletedRange,
+          TextEditingDeltaReplacement x => x.replacedRange,
+          _ => const TextRange(start: -1, end: -1),
+        };
+        debugPrint(
+          '[IME][${defaultTargetPlatform.name}] delta=${d.runtimeType} '
+          'text="$text" range=$range composing=$composing selection=${d.selection} '
+          'cursor=${doc.cursor.focusId}:${doc.cursor.focusOffset} '
+          'state.composingRange=${state.composingRange} isComposing(state)=${state.isComposing}',
+        );
+      }
+    }
+
+    final bool batchEndsComposing =
+      !Platform.isMacOS &&
+      deltas.length > 1 &&
+      deltas.last is TextEditingDeltaNonTextUpdate &&
+      !(deltas.last as TextEditingDeltaNonTextUpdate).composing.isValid;
+
+    if (kDebugMode) {
+      debugPrint(
+        '[IME][iOS][backspace-check] justCommittedComposition=${state.justCommittedComposition} '
+        'deltas=${deltas.map((d) => d.runtimeType).toList()}',
+      );
+    }
     if (state.justCommittedComposition) {
       state.justCommittedComposition = false;
-      if (!kIsWeb) {
+      final hasRealEdits = deltas.any((d) => d is! TextEditingDeltaNonTextUpdate);
+
+      if (!kIsWeb && !hasRealEdits) {
         return;
       }
     }
@@ -423,6 +519,7 @@ class FluentTextInputHandler implements DeltaTextInputClient {
       if (delta is TextEditingDeltaDeletion ||
           (delta is TextEditingDeltaReplacement &&
               delta.replacementText.isEmpty)) {
+                if (kDebugMode) debugPrint('[IME][iOS][backspace-check] ENTERED deletion branch');
         doc.saveState(description: 'Delete', forceNewAction: false);
 
         final deletionRange = delta is TextEditingDeltaDeletion
@@ -459,14 +556,30 @@ class FluentTextInputHandler implements DeltaTextInputClient {
         if (delta.composing.isValid &&
             delta.composing.start < delta.composing.end) {
           state.isComposing = true;
-          state.preeditText = delta.textInserted;
-          state.composingRange = delta.composing;
+          if (defaultTargetPlatform == TargetPlatform.iOS || defaultTargetPlatform == TargetPlatform.macOS) {
+            final fullText = delta.oldText.replaceRange(
+              delta.insertionOffset,
+              delta.insertionOffset,
+              delta.textInserted,
+            );
+            final composingStart = delta.composing.start.clamp(0, fullText.length);
+            final composingEnd = delta.composing.end.clamp(0, fullText.length);
+            state.preeditText = fullText.substring(composingStart, composingEnd);
+            state.composingRange = delta.composing;
+          } else {
+            state.preeditText = delta.textInserted;
+            state.composingRange = delta.composing;
+          }
           state.preeditLocalOffset = doc.cursor.focusOffset;
           final parentId = doc.findParentCached(fragId);
           state.preeditContainerId = parentId ?? '';
           doc.cursor.imeComposing = true;
           doc.cursor.imeComposingStart = state.preeditLocalOffset;
-          _invalidatePreeditRender();
+          if (batchEndsComposing) {
+            commitIfComposing();
+          } else {
+            _invalidatePreeditRender();
+          }
           return;
         }
 
@@ -474,6 +587,34 @@ class FluentTextInputHandler implements DeltaTextInputClient {
         if (state.isComposing) {
           _resetComposition();
           _invalidatePreeditRender();
+        }
+
+        // iOS Predictive Text Bug Fix for Insertions:
+        // Sometimes iOS sends an insertion for the suffix of a word (e.g. inserting "zione" after "documenta")
+        // leaving the old suffix ("tion") intact, resulting in "documentazione tion".
+        if (defaultTargetPlatform == TargetPlatform.iOS &&
+            delta.textInserted.length > 1) {
+          final currentText = node is Fragment ? node.text : '';
+          final offset = delta.insertionOffset.clamp(0, currentText.length);
+          
+          if (offset > 0 && offset < currentText.length) {
+            bool isWordChar(String s) => RegExp(r'[a-zA-Z0-9_À-ÿ]').hasMatch(s);
+            
+            if (isWordChar(currentText[offset - 1])) {
+              int wordEnd = offset;
+              while (wordEnd < currentText.length && isWordChar(currentText[wordEnd])) {
+                wordEnd++;
+              }
+              final charsToDelete = wordEnd - offset;
+              if (charsToDelete > 0) {
+                // Delete the remaining suffix before inserting the new one
+                doc.cursor.moveTo(fragId, wordEnd);
+                for (var i = 0; i < charsToDelete; i++) {
+                  executeHandleBackspace(doc);
+                }
+              }
+            }
+          }
         }
 
         _insertFinalizedText(delta.textInserted);
@@ -495,7 +636,11 @@ class FluentTextInputHandler implements DeltaTextInputClient {
           state.preeditLocalOffset = doc.cursor.focusOffset;
           doc.cursor.imeComposing = true;
           doc.cursor.imeComposingStart = state.preeditLocalOffset;
-          _invalidatePreeditRender();
+          if (batchEndsComposing) {
+            commitIfComposing();
+          } else {
+            _invalidatePreeditRender();
+          }
           return;
         }
 
@@ -507,11 +652,28 @@ class FluentTextInputHandler implements DeltaTextInputClient {
 
         if (node is Fragment && delta.replacedRange.isValid) {
           final currentText = node.text;
-          final safeStart = delta.replacedRange.start.clamp(
-            0,
-            currentText.length,
-          );
-          final safeEnd = delta.replacedRange.end.clamp(0, currentText.length);
+          final safeStart = delta.replacedRange.start.clamp(0, currentText.length);
+          var safeEnd = delta.replacedRange.end.clamp(0, currentText.length);
+
+          // iOS Predictive Text Bug Fix:
+          // iOS often replaces only the typed prefix of a word (e.g., replacing "documenta" with "documentazione")
+          // leaving the suffix ("tion") intact, resulting in "documentazione tion".
+          // We detect if we are in the middle of a word and expand safeEnd to consume the suffix.
+          if (defaultTargetPlatform == TargetPlatform.iOS &&
+              delta.replacementText.length > 1 &&
+              safeStart < safeEnd &&
+              safeEnd < currentText.length) {
+            
+            bool isWordChar(String s) => RegExp(r'[a-zA-Z0-9_À-ÿ]').hasMatch(s);
+            
+            if (isWordChar(currentText[safeEnd - 1])) {
+              int wordEnd = safeEnd;
+              while (wordEnd < currentText.length && isWordChar(currentText[wordEnd])) {
+                wordEnd++;
+              }
+              safeEnd = wordEnd;
+            }
+          }
 
           final oldSlice = currentText.substring(safeStart, safeEnd);
           final newSlice = delta.replacementText;
@@ -552,14 +714,17 @@ class FluentTextInputHandler implements DeltaTextInputClient {
           defaultTargetPlatform == TargetPlatform.windows ||
           defaultTargetPlatform == TargetPlatform.linux ||
           defaultTargetPlatform == TargetPlatform.macOS;
-      if (isDesktopOrWeb && delta is TextEditingDeltaNonTextUpdate) {
-        if (state.isComposing &&
-            (!delta.composing.isValid ||
-                delta.composing.start >= delta.composing.end)) {
-          commitIfComposing(); // <- Inietta il testo nel documento!
+      if ((isDesktopOrWeb || _isIOS) && delta is TextEditingDeltaNonTextUpdate) {
+        if (state.isComposing && (!delta.composing.isValid || delta.composing.start >= delta.composing.end)) {
+          commitIfComposing();
+          syncImeBufferToFragment();
+          return;
         }
-        syncImeBufferToFragment();
-        return;
+        if (doc.cursor.imeComposing && !state.isComposing) {
+          doc.cursor.imeComposing = false;
+          doc.cursor.imeComposingStart = 0;
+        }
+        continue;
       }
     }
   }
@@ -839,14 +1004,39 @@ class FluentTextInputHandler implements DeltaTextInputClient {
       if (_isIOS && selectionChanged) {
         connectionManager.connection!.setEditingState(const TextEditingValue());
       }
-      connectionManager.connection!.setEditingState(
-        TextEditingValue(
+      if (Platform.isMacOS) {
+        // On macOS, we need to set the editing state to an empty value to clear the composition
+        final newValue = TextEditingValue(
           text: syncedText,
           selection: syncedSelection,
-          composing: TextRange.empty,
-        ),
-      );
-      state.lastSyncedText = syncedText;
+          composing: state.isComposing && state.composingRange.isValid 
+              ? state.composingRange 
+              : TextRange.empty,
+        );
+
+        if (kDebugMode) {
+          print('[IME][macOS Debug] Calculated state: text="${newValue.text}" composing=${newValue.composing}');
+        }
+        final isDifferent = _currentPlatformValue.text != newValue.text ||
+            _currentPlatformValue.composing != newValue.composing;
+
+        if (isDifferent) {
+          if (kDebugMode) {
+            print('[IME][macOS Debug] DIFFERENT! Updating OS IME with: text="${newValue.text}" composing=${newValue.composing} vs old_text="${_currentPlatformValue.text}" old_comp=${_currentPlatformValue.composing}');
+          }
+          _currentPlatformValue = newValue; // Aggiorna la cache!
+          connectionManager.connection!.setEditingState(newValue);
+        }
+      } else {
+        connectionManager.connection!.setEditingState(
+          TextEditingValue(
+            text: syncedText,
+            selection: syncedSelection,
+            composing: TextRange.empty,
+          ),
+        );
+        state.lastSyncedText = syncedText;
+      }
     } finally {
       state.updatingSelf = wasUpdatingSelf;
     }
@@ -1022,9 +1212,18 @@ class FluentTextInputHandler implements DeltaTextInputClient {
   bool get shouldUseBufferSync =>
       kIsWeb || defaultTargetPlatform == TargetPlatform.android;
 
-  void setViewHeight(double height) => connectionManager.setViewHeight(height);
+  void setViewSize(Size size) => connectionManager.setViewSize(size);
 
-  void updateCaretRect(Rect rect) => connectionManager.updateCaretRect(rect);
+  void updateCaretRect(Rect rect) {
+    if (kDebugMode) print('[IME] Sending Rect to macOS: $rect');
+    connectionManager.updateCaretRect(rect);
+    
+    if (state.isComposing && 
+        connectionManager.connection != null && 
+        connectionManager.connection!.attached) {
+      connectionManager.connection!.setComposingRect(rect);
+    }
+  }
 
   int _commonPrefixLength(String a, String b) {
     int i = 0;
