@@ -1,10 +1,4 @@
-// GENERATED CODE - DO NOT MODIFY BY HAND
-
 part of 'styles.dart';
-
-// **************************************************************************
-// JsonSerializableGenerator
-// **************************************************************************
 
 ParagraphStyle _$ParagraphStyleFromJson(Map<String, dynamic> json) =>
     ParagraphStyle(

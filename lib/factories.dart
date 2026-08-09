@@ -4,6 +4,7 @@ import 'package:fluent_editor/core/constants.dart';
 import 'package:fluent_editor/styles.dart';
 import 'package:nanoid/nanoid.dart';
 import 'package:json_annotation/json_annotation.dart';
+import 'package:fluent_editor/plugins/plugin_api.dart';
 
 part 'factories.g.dart';
 
@@ -16,8 +17,15 @@ abstract class InlineContainerNode {
 class FNodeJsonConverter implements JsonConverter<FNode, Map<String, dynamic>> {
   const FNodeJsonConverter();
 
+  /// When set, fromJson delegates to registry.decodeNode for plugin-aware
+  /// deserialization. Set by FluentDocument.fromJson during loading.
+  static FluentPluginRegistry? activeRegistry;
+
   @override
   FNode fromJson(Map<String, dynamic> json) {
+    if (activeRegistry != null) {
+      return activeRegistry!.decodeNode(json);
+    }
     final type = json['type'] as String?;
     switch (type) {
       case 'paragraph':
@@ -67,7 +75,6 @@ class FNode {
   factory FNode.fromJson(Map<String, dynamic> json) => _$FNodeFromJson(json);
   Map<String, dynamic> toJson() => _$FNodeToJson(this);
 }
-
 
 @JsonSerializable()
 class Root extends FNode implements InlineContainerNode {
@@ -179,11 +186,18 @@ class HorizontalRule extends Fragment implements InlineContainerNode {
   factory HorizontalRule.fromJson(Map<String, dynamic> json) {
     final hr = HorizontalRule();
     hr.id = json['id'] as String? ?? hr.id;
+    if (json['styles'] is List) {
+      hr.styles = (json['styles'] as List).cast<String>();
+    }
     return hr;
   }
 
   @override
-  Map<String, dynamic> toJson() => {'type': 'hr', 'id': id};
+  Map<String, dynamic> toJson() => {
+        'type': 'hr',
+        'id': id,
+        if (styles != null && styles!.isNotEmpty) 'styles': List<String>.from(styles!),
+      };
 }
 
 @JsonSerializable()
@@ -292,10 +306,7 @@ class Paragraph extends FNode implements InlineContainerNode {
   /// If styleName is null or not found, returns the "normal" style.
   ParagraphStyle getStyle() {
     if (styleName == null) return ParagraphStyle.normal;
-    return ParagraphStyle.predefinedStyles.firstWhere(
-      (s) => s.name == styleName,
-      orElse: () => ParagraphStyle.normal,
-    );
+    return ParagraphStyle.styleByName[styleName] ?? ParagraphStyle.normal;
   }
 
   /// Applies a style to the paragraph, overriding the properties.
@@ -324,7 +335,6 @@ class Link extends Paragraph implements Fragment, InlineContainerNode {
   @override
   String get type => 'link';
 
-  // Link implements Fragment → override of new members
   @override
   List<String>? get styles => null;
   @override
@@ -376,30 +386,23 @@ class FluentList extends Paragraph implements InlineContainerNode {
   @JsonKey(name: 'items')
   List<ListItem> _items = [];
   
-  List<ListItem> get items => _items;// TrackedList(_items, () => applyListMarkers(_items));
+  List<ListItem> get items => _items;
   
   set items(List<ListItem> value) {
     _items = value;
-    //applyListMarkers(value);
   }
+  
+  @override
+  List<FNode> getChildren() => _items;
   
   FluentList({required this.listType}) : super();
   
-  @override
-  List<ListItem> getChildren() {
-    return _items;
-  }
 
   @override
   String get text {
-    //applyListMarkers(_items);
     return _items.map((item) => item.text).join();
   }
 
-  //@override
-  //@FNodeJsonConverter()
-  //List<FNode> get fragments => TrackedList(_items, () => applyListMarkers(_items));
-  
   factory FluentList.fromJson(Map<String, dynamic> json) => _$FluentListFromJson(json);
   
   @override
@@ -454,15 +457,10 @@ class ListItem extends FNode implements InlineContainerNode {
 
   /// Compatibility setter: allows assigning fragments (creates Paragraph wrapper)
   set fragments(List<FNode> value) {
-    // Replace children with Paragraph containing the fragments
     children = [Paragraph()..fragments = value];
   }
 
   factory ListItem.fromJson(Map<String, dynamic> json) {
-    // BUG WORKAROUND: _$ListItemFromJson first calls ..children = [...] then
-    // ..fragments = [...]. The `fragments` setter of ListItem overrides
-    // children with a single wrapper Paragraph, destroying the actual
-    // structure (e.g. nested sublists). Restore the real children from JSON.
     final item = _$ListItemFromJson(json);
     final rawChildren = json['children'] as List<dynamic>?;
     if (rawChildren != null) {
@@ -475,7 +473,7 @@ class ListItem extends FNode implements InlineContainerNode {
   }
 
   @override
-  Map<String, dynamic> toJson() => _$ListItemToJson(this);
+  Map<String, dynamic> toJson() => {..._$ListItemToJson(this), 'type': 'listItem'};
 }
 
 @JsonSerializable()
@@ -657,8 +655,6 @@ FNode makeNode(String nodeType, dynamic options) {
     case 'list':
       final listType = options['listType'] as String? ?? 'bullet';
       final list = FluentList(listType: listType);
-      // Create an initial ListItem with an empty Paragraph so the
-      // cursor has a fragment to land on.
       final initialItem = ListItem(
         bulletType: listType,
         indexList: [1],

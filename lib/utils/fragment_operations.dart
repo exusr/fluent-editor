@@ -1,19 +1,38 @@
 import 'package:characters/characters.dart';
 import 'package:fluent_editor/factories.dart';
 import 'package:fluent_editor/fluent_document.dart';
+import 'package:fluent_editor/utils/resolve_selection.dart';
 
 /// Utility functions for fragment operations.
 class FragmentOperations {
   /// Recursively collects all leaf fragments in order.
   /// A leaf fragment is a Fragment that is not an InlineContainerNode.
-  static List<Fragment> collectLeafFragments(FNode node) {
-    final result = <Fragment>[];
+  static void _collectLeafFragments(FNode node, List<Fragment> out) {
     if (node is Fragment && node is! InlineContainerNode) {
-      result.add(node);
+      out.add(node);
     } else if (node is InlineContainerNode) {
       for (final child in (node as InlineContainerNode).getChildren()) {
-        result.addAll(collectLeafFragments(child));
+        _collectLeafFragments(child, out);
       }
+    }
+  }
+
+  static List<Fragment> collectLeafFragments(FNode node) {
+    final result = <Fragment>[];
+    _collectLeafFragments(node, result);
+    return result;
+  }
+
+  /// Collects leaf fragments within the selection range of [node],
+  /// skipping FluentImage leaves.
+  static List<Fragment> collectLeavesInRange(SelectedNode node) {
+    final leaves = collectLeafFragments(node.container as FNode);
+    final result = <Fragment>[];
+    bool inRange = false;
+    for (final leaf in leaves) {
+      if (leaf.id == node.startFragment.id) inRange = true;
+      if (inRange && leaf is! FluentImage) result.add(leaf);
+      if (leaf.id == node.endFragment.id) inRange = false;
     }
     return result;
   }
@@ -36,6 +55,16 @@ class FragmentOperations {
       ..styles = List.from(document.pendingStyles)
       ..fontFamily = document.pendingFontFamily
       ..fontSize = document.pendingFontSize
+      ..color = document.pendingColor
+      ..highlightColor = document.pendingHighlightColor;
+  }
+
+  /// Applies the document's pending styles to an existing fragment in-place.
+  static void applyPendingStyles(FluentDocument document, Fragment frag) {
+    frag
+      ..fontFamily = document.pendingFontFamily
+      ..fontSize = document.pendingFontSize
+      ..styles = List.from(document.pendingStyles)
       ..color = document.pendingColor
       ..highlightColor = document.pendingHighlightColor;
   }
@@ -116,13 +145,11 @@ class FragmentOperations {
   /// back to the start of that cluster.
   static int adjustIndex(String s, int index) {
     if (index <= 0 || index >= s.length) return index;
-    // Fast path: check surrogate pair (most common case)
     final prev = s.codeUnitAt(index - 1);
     final curr = s.codeUnitAt(index);
     if (prev >= 0xD800 && prev <= 0xDBFF && curr >= 0xDC00 && curr <= 0xDFFF) {
       return index - 1;
     }
-    // General path: check if index falls inside any grapheme cluster
     return _snapToGraphemeStart(s, index);
   }
 
@@ -133,7 +160,6 @@ class FragmentOperations {
   static int getPreviousGraphemeOffset(String s, int currentOffset) {
     if (currentOffset <= 0) return 0;
     if (currentOffset > s.length) return s.length;
-    // Walk the grapheme clusters and find the one whose end == currentOffset
     int pos = 0;
     for (final grapheme in s.characters) {
       final nextPos = pos + grapheme.length;
@@ -151,7 +177,6 @@ class FragmentOperations {
   /// (e.g., CJK + variation selector, ZWJ sequences).
   static int getGraphemeLengthAt(String s, int offset) {
     if (offset < 0 || offset >= s.length) return 1;
-    // Walk the grapheme clusters to find the one starting at [offset]
     int pos = 0;
     for (final grapheme in s.characters) {
       if (pos == offset) {
@@ -159,7 +184,6 @@ class FragmentOperations {
       }
       pos += grapheme.length;
       if (pos > offset) {
-        // offset falls inside a grapheme cluster — return the remaining length
         return pos - offset;
       }
     }
@@ -176,10 +200,25 @@ class FragmentOperations {
         return pos;
       }
       if (index == nextPos) {
-        return index; // Already at a boundary
+        return index;
       }
       pos = nextPos;
     }
     return index;
+  }
+
+  /// Returns the grapheme offset before [offset], skipping a ZWS character
+  /// if the fragment has visible content (so backspace deletes the visible
+  /// character, not the invisible marker). If the fragment is all-ZWS,
+  /// the original offset is returned (preserve original behavior).
+  static int getPreviousGraphemeOffsetSkippingZWS(String text, int offset) {
+    int newOffset = getPreviousGraphemeOffset(text, offset);
+    if (newOffset >= 0 && newOffset < text.length &&
+        text.codeUnitAt(newOffset) == 0x200B &&
+        text.replaceAll('\u200B', '').isNotEmpty) {
+      final skipOffset = getPreviousGraphemeOffset(text, newOffset);
+      if (skipOffset < newOffset) newOffset = skipOffset;
+    }
+    return newOffset;
   }
 }

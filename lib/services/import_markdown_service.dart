@@ -17,14 +17,12 @@ class ImportMarkdownService {
         continue;
       }
 
-      // Horizontal rule
       if (RegExp(r'^(---|\*\*\*|___)\s*$').hasMatch(trimmed)) {
         nodes.add(HorizontalRule());
         i++;
         continue;
       }
 
-      // Heading
       if (trimmed.startsWith('#')) {
         final match = RegExp(r'^(#{1,6})\s+(.*)$').firstMatch(trimmed);
         if (match != null) {
@@ -39,7 +37,6 @@ class ImportMarkdownService {
         }
       }
 
-      // Blockquote
       if (trimmed.startsWith('>')) {
         final buffer = StringBuffer();
         while (i < lines.length && lines[i].trimLeft().startsWith('>')) {
@@ -53,7 +50,6 @@ class ImportMarkdownService {
         continue;
       }
 
-      // Code block
       if (trimmed.startsWith('```')) {
         i++;
         final buffer = StringBuffer();
@@ -69,7 +65,6 @@ class ImportMarkdownService {
         continue;
       }
 
-      // Table
       if (line.trim().startsWith('|')) {
         final table = _parseTable(lines, i);
         if (table != null) {
@@ -79,7 +74,6 @@ class ImportMarkdownService {
         }
       }
 
-      // Checkbox list
       if (RegExp(r'^(\s*)-\s\[[ x~]\]\s').hasMatch(line)) {
         final list = _parseCheckboxList(lines, i);
         nodes.add(list.node);
@@ -87,7 +81,6 @@ class ImportMarkdownService {
         continue;
       }
 
-      // Unordered list
       if (RegExp(r'^(\s*)[-*+]\s').hasMatch(line)) {
         final list = _parseList(lines, i, 'bullet');
         nodes.add(list.node);
@@ -95,7 +88,6 @@ class ImportMarkdownService {
         continue;
       }
 
-      // Ordered list
       if (RegExp(r'^(\s*)\d+\.\s').hasMatch(line)) {
         final list = _parseList(lines, i, 'ordered');
         nodes.add(list.node);
@@ -103,7 +95,6 @@ class ImportMarkdownService {
         continue;
       }
 
-      // Regular paragraph
       final buffer = StringBuffer();
       while (i < lines.length && lines[i].trim().isNotEmpty) {
         buffer.write(lines[i].trim());
@@ -117,7 +108,6 @@ class ImportMarkdownService {
 
       return Root(nodes: nodes.isEmpty ? [Paragraph(text: '')] : nodes);
     } catch (e) {
-      // Gracefully return a document with the error as a paragraph
       return Root(nodes: [Paragraph(text: 'Import error: $e')]);
     }
   }
@@ -130,7 +120,6 @@ class ImportMarkdownService {
       if (row != null) rows.add(row);
       i++;
     }
-    // Skip separator line if present
     if (rows.length >= 2) {
       final secondCells = rows[1].cells;
       final isSep = secondCells.every((c) {
@@ -178,7 +167,6 @@ class ImportMarkdownService {
       final bulletMatch = RegExp(r'^(\s*)(?:[-*+]|\d+\.)\s+(.*)$').firstMatch(line);
       if (bulletMatch == null) break;
 
-      // Verify bullet type matches expected list type (prevent cross-list consumption)
       final lineIsOrdered = RegExp(r'^(\s*)\d+\.(\s|$)').hasMatch(line);
       if ((listType == 'ordered' && !lineIsOrdered) || (listType == 'bullet' && lineIsOrdered)) {
         break;
@@ -188,7 +176,6 @@ class ImportMarkdownService {
       final children = <FNode>[Paragraph(text: '')..fragments = _parseInline(text)];
       i++;
 
-      // Check for sub-lists or continuation lines
       while (i < lines.length) {
         final nextLine = lines[i];
         if (nextLine.trim().isEmpty) {
@@ -277,7 +264,6 @@ class ImportMarkdownService {
     int i = 0;
 
     while (i < text.length) {
-      // Image ![alt](src)
       final imgMatch = RegExp(r'!\[([^\]]*)\]\(([^)]*)\)').matchAsPrefix(text, i);
       if (imgMatch != null) {
         fragments.add(FluentImage(imgMatch.group(2)!));
@@ -285,7 +271,6 @@ class ImportMarkdownService {
         continue;
       }
 
-      // Link [text](url)
       final linkMatch = RegExp(r'\[([^\]]*)\]\(([^)]*)\)').matchAsPrefix(text, i);
       if (linkMatch != null) {
         final linkText = linkMatch.group(1)!;
@@ -294,7 +279,6 @@ class ImportMarkdownService {
         continue;
       }
 
-      // Bold **text**
       if (text.startsWith('**', i)) {
         final end = text.indexOf('**', i + 2);
         if (end != -1) {
@@ -308,7 +292,6 @@ class ImportMarkdownService {
         }
       }
 
-      // Italic *text* (not **)
       if (text.startsWith('*', i) && (i + 1 >= text.length || text[i + 1] != '*')) {
         final end = text.indexOf('*', i + 1);
         if (end != -1) {
@@ -322,7 +305,6 @@ class ImportMarkdownService {
         }
       }
 
-      // Strikethrough ~~text~~
       if (text.startsWith('~~', i)) {
         final end = text.indexOf('~~', i + 2);
         if (end != -1) {
@@ -336,7 +318,6 @@ class ImportMarkdownService {
         }
       }
 
-      // Plain text — find next special char (*, ~, !, [)
       int nextSpecial = text.length;
       for (final ch in ['*', '~', '!', '[']) {
         final pos = text.indexOf(ch, i + 1);

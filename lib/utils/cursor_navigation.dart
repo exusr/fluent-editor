@@ -1,31 +1,7 @@
-// cursor_navigation.dart
-//
-// PURE AND TESTABLE module for cursor navigation with arrow keys.
-//
-// KEY CONCEPTS:
-//
-// 1. CaretStop: a position reachable by the cursor.
-//    Identified by (fragmentId, localOffset). The stream of stops is ordered
-//    according to the logical order (reading) of the document.
-//
-// 2. LogicalLine: a "logical line" of the document, i.e. the first ancestor
-//    Paragraph/ListItem/FluentCell (NOT Link, which is inline-transparent).
-//    Each stop belongs to only one LogicalLine.
-//
-// 3. preferredX: x coordinate in pixels of the caret, used for Up/Down.
-//    Replaces the old "preferredColumn" (stop index) which caused slippage
-//    on proportional fonts. It is -1.0 when it needs to be recalculated.
-//
-// DECIDED BEHAVIORS:
-// - FluentImage = atomic: 2 stops (before and after), never on the internal ZWS.
-// - Link = transparent: the cursor traverses it like normal text.
-// - Arrow Down on last paragraph: go to end of document.
-// - Arrow Up on first paragraph: go to start of document.
-
+import 'package:fluent_editor/cursor.dart';
 import 'package:fluent_editor/factories.dart';
 import 'package:fluent_editor/utils/fragment_operations.dart';
-
-// ─── Coordinate resolver type ─────────────────────────────────
+import 'package:fluent_editor/utils/node_operations.dart';
 
 /// Callback injected by the rendering layer.
 /// Translates a CaretStop into its global x coordinate (logical pixels).
@@ -34,7 +10,14 @@ typedef CaretXResolver = double Function(CaretStop stop);
 
 typedef CaretYResolver = double Function(CaretStop stop);
 
-// ─── Models ─────────────────────────────────────────────────────────
+/// Resolves a node id to its parent node id (O(1) when cached).
+typedef ParentResolver = String? Function(String childId);
+
+/// Resolves a fragment id to its logical container id (O(1) when cached).
+typedef ContainerResolver = String? Function(String fragmentId);
+
+/// Resolves a node/fragment id to its top-level index (O(1) when cached), or -1.
+typedef TopLevelIndexResolver = int Function(String id);
 
 /// A position reachable by the cursor in the document.
 class CaretStop {
@@ -67,8 +50,6 @@ class LogicalLine {
   int indexOf(CaretStop stop) => stops.indexOf(stop);
 }
 
-// ─── Navigation result ────────────────────────────────────
-
 /// Result of a cursor movement.
 /// [position] is the new position (null = no movement possible).
 /// [preferredX] is the x coordinate to preserve for subsequent Up/Down.
@@ -88,8 +69,6 @@ class NavigationResult {
     preferredX: 0.0,
   );
 }
-
-// ─── Building CaretStop ─────────────────────────────────────
 
 /// Generates the flat list of ALL CaretStop in the document, in reading
 /// order. This is the "rail" on which Left/Right move.
@@ -127,18 +106,19 @@ void _collectStopsRecursive(FNode node, List<CaretStop> out) {
   }
 
   if (node is ListItem) {
-    // ListItem is just a wrapper: delegates to children (Paragraph, FluentList, etc.)
-    // Each Paragraph child becomes a standalone line; sublists
-    // descend recursively. This way LogicalLine.node always coincides
-    // with a "leaf" InlineContainerNode (Paragraph/Cell), aligned with
-    // findLogicalContainer.
     for (final child in node.children) {
       _collectStopsRecursive(child, out);
     }
     return;
   }
 
-  // Paragraph, FluentCell: linear leaf
+  if (node is FluentCell) {
+    for (final child in node.getChildren()) {
+      _collectStopsRecursive(child, out);
+    }
+    return;
+  }
+
   _collectStopsInLine(node, out);
 }
 
@@ -153,10 +133,7 @@ List<LogicalLine> buildAllLogicalLines(Root root) {
 
 void _collectLogicalLines(FNode node, List<LogicalLine> out) {
   if (node is HorizontalRule) {
-    // HR is atomic: produces a LogicalLine with its own 2 stops.
-    // Does not implement InlineContainerNode, so we handle it explicitly.
     final stops = [CaretStop(node.id, 0), CaretStop(node.id, 1)];
-    // We use a fake wrapper — but HR implements InlineContainerNode.
     out.add(LogicalLine(node: node as InlineContainerNode, stops: stops));
     return;
   }
@@ -178,8 +155,14 @@ void _collectLogicalLines(FNode node, List<LogicalLine> out) {
   }
 
   if (node is ListItem) {
-    // ListItem does not produce its own LogicalLine: delegates to children.
     for (final child in node.children) {
+      _collectLogicalLines(child, out);
+    }
+    return;
+  }
+
+  if (node is FluentCell) {
+    for (final child in node.getChildren()) {
       _collectLogicalLines(child, out);
     }
     return;
@@ -209,16 +192,12 @@ List<FNode> _filterEmptyFragments(List<FNode> raw) {
 bool isZwsBetweenCjk(String text, int offset) {
   if (offset < 0 || offset >= text.length) return false;
   if (text.codeUnitAt(offset) != 0x200B) return false;
-  // Check the previous character (skip surrogate pairs)
   int prev = offset - 1;
   if (prev < 0) return false;
-  // If prev is a low surrogate, step back one more to the high surrogate
   if ((text.codeUnitAt(prev) & 0xFC00) == 0xDC00) prev--;
   if (prev < 0) return false;
-  // Check the next character (skip surrogate pairs)
   int next = offset + 1;
   if (next >= text.length) return false;
-  // If next is a high surrogate, step forward one more to include the pair
   if ((text.codeUnitAt(next) & 0xFC00) == 0xD800) next++;
   if (next >= text.length) return false;
   return isCjk(text.codeUnitAt(prev)) && isCjk(text.codeUnitAt(next));
@@ -227,17 +206,12 @@ bool isZwsBetweenCjk(String text, int offset) {
 /// Returns true if [codeUnit] belongs to a CJK script
 /// (Han, Hiragana, Katakana, Hangul).
 bool isCjk(int codeUnit) {
-  // CJK Unified Ideographs + Extensions A/B
   if (codeUnit >= 0x4E00 && codeUnit <= 0x9FFF) return true;
   if (codeUnit >= 0x3400 && codeUnit <= 0x4DBF) return true;
   if (codeUnit >= 0x20000 && codeUnit <= 0x2A6DF) return true;
-  // Hiragana
   if (codeUnit >= 0x3040 && codeUnit <= 0x309F) return true;
-  // Katakana
   if (codeUnit >= 0x30A0 && codeUnit <= 0x30FF) return true;
-  // Hangul Syllables
   if (codeUnit >= 0xAC00 && codeUnit <= 0xD7AF) return true;
-  // CJK Compatibility Ideographs
   if (codeUnit >= 0xF900 && codeUnit <= 0xFAFF) return true;
   return false;
 }
@@ -253,22 +227,16 @@ void _collectStopsInLine(FNode node, List<CaretStop> out) {
   if (node is Fragment && node is! InlineContainerNode) {
     final len = node.text.length;
     if (len == 0) {
-      // empty fragment: a single stop at the beginning (= end), so the cursor
-      // can enter a cell with a single empty fragment
       out.add(CaretStop(node.id, 0));
       return;
     }
-    // Create stops only at grapheme cluster boundaries to handle emoji correctly
-    // Skip positions inside surrogate pairs and ZWS between CJK characters
     int i = 0;
     while (i <= len) {
-      // Skip ZWS that sits between two CJK characters (e.g. "月\u200Bあ")
       if (i > 0 && i < len && isZwsBetweenCjk(node.text, i)) {
         i++;
         continue;
       }
       out.add(CaretStop(node.id, i));
-      // Skip to the next grapheme cluster boundary
       if (i < len) {
         final graphemeLen = FragmentOperations.getGraphemeLengthAt(node.text, i);
         i += graphemeLen;
@@ -301,7 +269,6 @@ void _collectStopsInLine(FNode node, List<CaretStop> out) {
         final len = child.text.length;
         final startI = afterImage ? 1 : 0;
         final endI   = (beforeImage || beforeFragment) ? len - 1 : len;
-        // Create stops only at grapheme cluster boundaries, skipping ZWS between CJK
         int i = startI;
         while (i <= endI) {
           if (i > 0 && i < len && isZwsBetweenCjk(child.text, i)) {
@@ -349,7 +316,6 @@ void _collectStopsInLine(FNode node, List<CaretStop> out) {
         final len = child.text.length;
         final startI = (afterLink || afterImage) ? 1 : 0;
         final endI   = (beforeLink || beforeImage || beforeFragment) ? len - 1 : len;
-        // Create stops only at grapheme cluster boundaries, skipping ZWS between CJK
         int i = startI;
         while (i <= endI) {
           if (i > 0 && i < len && isZwsBetweenCjk(child.text, i)) {
@@ -371,12 +337,6 @@ void _collectStopsInLine(FNode node, List<CaretStop> out) {
   }
 }
 
-// ─── Lookup helpers ──────────────────────────────────────────────────
-
-// Memoized exact-match index for the caret-stop rail. Keyed by the identity
-// of the [stops] list: the document caches and reuses the same list instance
-// until the content changes, so consecutive arrow presses get O(1) lookups
-// instead of an O(n) linear scan of the whole rail.
 List<CaretStop>? _stopsRefForIndex;
 Map<String, int>? _stopExactIndex;
 
@@ -385,7 +345,6 @@ int findStopIndex(List<CaretStop> stops, String fragmentId, int offset) {
     _stopsRefForIndex = stops;
     final m = <String, int>{};
     for (int i = 0; i < stops.length; i++) {
-      // A (fragmentId, offset) pair is unique in the rail, so the map is 1:1.
       m['${stops[i].fragmentId}\u0000${stops[i].offset}'] = i;
     }
     _stopExactIndex = m;
@@ -394,8 +353,6 @@ int findStopIndex(List<CaretStop> stops, String fragmentId, int offset) {
   final exact = _stopExactIndex!['$fragmentId\u0000$offset'];
   if (exact != null) return exact;
 
-  // Fallback (rare): nearest offset within the same fragment when the exact
-  // caret position is not itself a stop (e.g. stale offset after an edit).
   int bestIdx = -1;
   int bestDist = 1 << 30;
   for (int i = 0; i < stops.length; i++) {
@@ -411,15 +368,31 @@ int findStopIndex(List<CaretStop> stops, String fragmentId, int offset) {
   return bestIdx;
 }
 
+// Cache for findLineForStop: maps stop identity to (lineIndex, stopIndexInLine)
+// Keyed by lines list identity to invalidate when lines change.
+List<LogicalLine>? _linesRefForLineIndex;
+Map<CaretStop, ({int lineIndex, int stopIndexInLine})>? _stopToLineIndex;
+
+// Cache for _findStopIndexInLines: hash map keyed by lines identity
+List<LogicalLine>? _linesRefForFlatStops;
+Map<String, int>? _cachedFlatStopIndex;
+
 ({int lineIndex, int stopIndexInLine})? findLineForStop(
   List<LogicalLine> lines,
   CaretStop stop,
 ) {
-  for (int i = 0; i < lines.length; i++) {
-    final idx = lines[i].indexOf(stop);
-    if (idx >= 0) return (lineIndex: i, stopIndexInLine: idx);
+  if (!identical(lines, _linesRefForLineIndex)) {
+    _linesRefForLineIndex = lines;
+    final m = <CaretStop, ({int lineIndex, int stopIndexInLine})>{};
+    for (int i = 0; i < lines.length; i++) {
+      for (int j = 0; j < lines[i].stops.length; j++) {
+        m[lines[i].stops[j]] = (lineIndex: i, stopIndexInLine: j);
+      }
+    }
+    _stopToLineIndex = m;
   }
-  return null;
+
+  return _stopToLineIndex?[stop];
 }
 
 int _findStopIndexInLines(
@@ -427,17 +400,30 @@ int _findStopIndexInLines(
   String fragmentId,
   int offset,
 ) {
-  final allStops = lines.expand((l) => l.stops).toList();
-  for (int i = 0; i < allStops.length; i++) {
-    if (allStops[i].fragmentId == fragmentId && allStops[i].offset == offset) {
-      return i;
+  if (!identical(lines, _linesRefForFlatStops)) {
+    _linesRefForFlatStops = lines;
+    final flat = lines.expand((l) => l.stops).toList(growable: false);
+    final m = <String, int>{};
+    for (int i = 0; i < flat.length; i++) {
+      m['${flat[i].fragmentId}\u0000${flat[i].offset}'] = i;
     }
+    _cachedFlatStopIndex = m;
   }
-  return -1;
+  return _cachedFlatStopIndex!['$fragmentId\u0000$offset'] ?? -1;
 }
 
-// ─── Horizontal navigation ─────────────────────────────────────────
-// Left/Right don't use the resolver: the caller always resets preferredX to -1.0.
+/// Returns the stop at [flatIndex] in the flattened lines list,
+/// without allocating a new list.
+CaretStop? _stopAtFlatIndex(List<LogicalLine> lines, int flatIndex) {
+  int acc = 0;
+  for (final line in lines) {
+    if (flatIndex < acc + line.stops.length) {
+      return line.stops[flatIndex - acc];
+    }
+    acc += line.stops.length;
+  }
+  return null;
+}
 
 NavigationResult moveLeft(Root root, CaretStop current, {
   List<CaretStop>? stops,
@@ -450,8 +436,8 @@ NavigationResult moveLeft(Root root, CaretStop current, {
     final lines = cachedLines ?? buildAllLogicalLines(root);
     idx = _findStopIndexInLines(lines, current.fragmentId, current.offset);
     if (idx <= 0) return NavigationResult.none;
-    final stopsFromLines = lines.expand((l) => l.stops).toList();
-    final newStop = stopsFromLines[idx - 1];
+    final newStop = _stopAtFlatIndex(lines, idx - 1);
+    if (newStop == null) return NavigationResult.none;
     return NavigationResult(position: newStop, preferredX: 0.0);
   }
 
@@ -471,9 +457,8 @@ NavigationResult moveRight(Root root, CaretStop current, {
     final lines = cachedLines ?? buildAllLogicalLines(root);
     idx = _findStopIndexInLines(lines, current.fragmentId, current.offset);
     if (idx < 0) return NavigationResult.none;
-    final stopsFromLines = lines.expand((l) => l.stops).toList();
-    if (idx >= stopsFromLines.length - 1) return NavigationResult.none;
-    final newStop = stopsFromLines[idx + 1];
+    final newStop = _stopAtFlatIndex(lines, idx + 1);
+    if (newStop == null) return NavigationResult.none;
     return NavigationResult(position: newStop, preferredX: 0.0);
   }
 
@@ -483,8 +468,6 @@ NavigationResult moveRight(Root root, CaretStop current, {
 }
 
 const double _kLineYTolerance = 2.0;
-
-// ─── Vertical navigation ───────────────────────────────────────────
 
 /// Moves the cursor up by one LogicalLine.
 /// [preferredX] is the x coordinate in pixels to maintain.
@@ -498,12 +481,13 @@ NavigationResult moveUp(
   CaretYResolver resolveY, {
   List<CaretStop>? stops,
   List<CaretStop>? allStops,
+  ParentResolver? parentResolver,
+  ContainerResolver? containerResolver,
+  TopLevelIndexResolver? topLevelIndexResolver,
 }) {
   final stops_ = stops ?? buildAllStops(root);
   if (stops_.isEmpty) return NavigationResult.none;
 
-  // resolveY/resolveX are expensive (O(visible) each). Cache their
-  // results for the duration of this call to avoid redundant lookups.
   final yCache = <CaretStop, double>{};
   double cachedY(CaretStop s) => yCache[s] ??= resolveY(s);
   final xCache = <CaretStop, double>{};
@@ -512,7 +496,7 @@ NavigationResult moveUp(
   final x = preferredX >= 0.0 ? preferredX : cachedX(current);
   final currentY = cachedY(current);
 
-  // Find the highest y that is strictly above the current line
+  // Single-pass: find targetY, then find nearest-X stop on that line.
   double? targetY;
   for (final stop in stops_) {
     final y = cachedY(stop);
@@ -522,40 +506,48 @@ NavigationResult moveUp(
   }
 
   if (targetY == null) {
-    // Use full document stop list for cross-node fallback so we are not
-    // limited to the candidate subset passed by the caller.
     final docStops = allStops ?? stops_;
-    if (_isInFirstNode(root, current.fragmentId)) {
+    if (_isInFirstNode(root, current.fragmentId,
+        parentResolver: parentResolver, containerResolver: containerResolver,
+        topLevelIndexResolver: topLevelIndexResolver)) {
       final first = docStops.first;
       if (first == current) return NavigationResult.none;
       return NavigationResult(position: first, preferredX: x);
     }
-    // No line above in this node → jump to the last stop of the previous
-    // top-level node that has caret stops (skip block nodes like HR).
-    final currentNodeId = _findTopLevelNodeId(root, current.fragmentId);
+    final currentNodeId = _findTopLevelNodeId(root, current.fragmentId,
+        parentResolver: parentResolver, containerResolver: containerResolver,
+        topLevelIndexResolver: topLevelIndexResolver);
     if (currentNodeId != null) {
-      final currentNodeIdx = root.nodes.indexWhere((n) => n.id == currentNodeId);
+      final currentNodeIdx = topLevelIndexResolver != null
+          ? topLevelIndexResolver(currentNodeId)
+          : root.nodes.indexWhere((n) => n.id == currentNodeId);
       for (int i = currentNodeIdx - 1; i >= 0; i--) {
         final prevNode = root.nodes[i];
         for (int j = docStops.length - 1; j >= 0; j--) {
-          if (_nodeContainsFragment(prevNode, docStops[j].fragmentId)) {
+          if (_stopBelongsToNode(docStops[j], prevNode, root, containerResolver: containerResolver, parentResolver: parentResolver, topLevelIndexResolver: topLevelIndexResolver)) {
             return NavigationResult(position: docStops[j], preferredX: x);
           }
         }
       }
     }
-    // Nothing above → go to the start of the document
     final first = docStops.first;
     if (first == current) return NavigationResult.none;
     return NavigationResult(position: first, preferredX: x);
   }
 
-  // Among the stops on the target line, take the one with closest x
-  final lineStops = stops_
-      .where((s) => (cachedY(s) - targetY!).abs() <= _kLineYTolerance)
-      .toList();
-
-  final best = _stopNearestX(lineStops, x, cachedX);
+  // Single-pass: find nearest-X stop on the target line without allocating.
+  CaretStop? best;
+  double bestDist = double.infinity;
+  for (final stop in stops_) {
+    if ((cachedY(stop) - targetY).abs() <= _kLineYTolerance) {
+      final dist = (cachedX(stop) - x).abs();
+      if (dist < bestDist) {
+        bestDist = dist;
+        best = stop;
+      }
+    }
+  }
+  if (best == null) return NavigationResult(position: current, preferredX: x);
   return NavigationResult(position: best, preferredX: x);
 }
 
@@ -569,6 +561,9 @@ NavigationResult moveDown(
   CaretYResolver resolveY, {
   List<CaretStop>? stops,
   List<CaretStop>? allStops,
+  ParentResolver? parentResolver,
+  ContainerResolver? containerResolver,
+  TopLevelIndexResolver? topLevelIndexResolver,
 }) {
   final stops_ = stops ?? buildAllStops(root);
   if (stops_.isEmpty) return NavigationResult.none;
@@ -581,7 +576,6 @@ NavigationResult moveDown(
   final x = preferredX >= 0.0 ? preferredX : cachedX(current);
   final currentY = cachedY(current);
 
-  // Find the lowest y that is strictly below the current line
   double? targetY;
   for (final stop in stops_) {
     final y = cachedY(stop);
@@ -591,43 +585,50 @@ NavigationResult moveDown(
   }
 
   if (targetY == null) {
-    // Use full document stop list for cross-node fallback so we are not
-    // limited to the candidate subset passed by the caller.
     final docStops = allStops ?? stops_;
-    if (_isInLastNode(root, current.fragmentId)) {
+    if (_isInLastNode(root, current.fragmentId,
+        parentResolver: parentResolver, containerResolver: containerResolver,
+        topLevelIndexResolver: topLevelIndexResolver)) {
       final last = docStops.last;
       if (last == current) return NavigationResult.none;
       return NavigationResult(position: last, preferredX: x);
     }
-    // No line below in this node → jump to the first stop of the next
-    // top-level node that has caret stops (skip block nodes like HR).
-    final currentNodeId = _findTopLevelNodeId(root, current.fragmentId);
+    final currentNodeId = _findTopLevelNodeId(root, current.fragmentId,
+        parentResolver: parentResolver, containerResolver: containerResolver,
+        topLevelIndexResolver: topLevelIndexResolver);
     if (currentNodeId != null) {
-      final currentNodeIdx = root.nodes.indexWhere((n) => n.id == currentNodeId);
+      final currentNodeIdx = topLevelIndexResolver != null
+          ? topLevelIndexResolver(currentNodeId)
+          : root.nodes.indexWhere((n) => n.id == currentNodeId);
       for (int i = currentNodeIdx + 1; i < root.nodes.length; i++) {
         final nextNode = root.nodes[i];
         for (final stop in docStops) {
-          if (_nodeContainsFragment(nextNode, stop.fragmentId)) {
+          if (_stopBelongsToNode(stop, nextNode, root, containerResolver: containerResolver, parentResolver: parentResolver, topLevelIndexResolver: topLevelIndexResolver)) {
             return NavigationResult(position: stop, preferredX: x);
           }
         }
       }
     }
-    // Nothing below → go to the end of the document
     final last = docStops.last;
     if (last == current) return NavigationResult.none;
     return NavigationResult(position: last, preferredX: x);
   }
 
-  final lineStops = stops_
-      .where((s) => (cachedY(s) - targetY!).abs() <= _kLineYTolerance)
-      .toList();
-
-  final best = _stopNearestX(lineStops, x, cachedX);
+  // Single-pass: find nearest-X stop on the target line without allocating.
+  CaretStop? best;
+  double bestDist = double.infinity;
+  for (final stop in stops_) {
+    if ((cachedY(stop) - targetY).abs() <= _kLineYTolerance) {
+      final dist = (cachedX(stop) - x).abs();
+      if (dist < bestDist) {
+        bestDist = dist;
+        best = stop;
+      }
+    }
+  }
+  if (best == null) return NavigationResult(position: current, preferredX: x);
   return NavigationResult(position: best, preferredX: x);
 }
-
-// ─── Helpers for visual column ─────────────────────────────────────
 
 /// Finds the stop in [line] whose x coordinate (from [resolveX]) is closest
 /// to [preferredX]. Automatic clamp if the line is empty.
@@ -683,6 +684,29 @@ Map<String, Fragment> _buildFragmentCache(Root root) {
 }
 
 /// Returns true if [fragmentId] is inside [node] (recursively).
+/// Uses O(1) cached resolvers when available, falls back to O(n) recursive scan.
+bool _stopBelongsToNode(
+  CaretStop stop,
+  FNode node,
+  Root root, {
+  ContainerResolver? containerResolver,
+  ParentResolver? parentResolver,
+  TopLevelIndexResolver? topLevelIndexResolver,
+}) {
+  final fragmentId = stop.fragmentId;
+  if (containerResolver != null && topLevelIndexResolver != null) {
+    // O(1) path: resolve the stop's top-level node id and compare.
+    final stopTopId = _findTopLevelNodeId(root,
+        fragmentId,
+        parentResolver: parentResolver,
+        containerResolver: containerResolver,
+        topLevelIndexResolver: topLevelIndexResolver);
+    return stopTopId == node.id;
+  }
+  return _nodeContainsFragment(node, fragmentId);
+}
+
+/// Returns true if [fragmentId] is inside [node] (recursively).
 bool _nodeContainsFragment(FNode node, String fragmentId) {
   if (node is Fragment && node.id == fragmentId) return true;
   if (node is FluentTable) {
@@ -707,24 +731,76 @@ bool _nodeContainsFragment(FNode node, String fragmentId) {
   return false;
 }
 
+/// Returns the id of the top-level node in [root] that contains [fragmentId].
+/// Uses [parentResolver] and [containerResolver] for O(1) lookups when provided;
+/// falls back to O(n) tree traversal otherwise.
+String? _findTopLevelNodeId(
+  Root root,
+  String fragmentId, {
+  ParentResolver? parentResolver,
+  ContainerResolver? containerResolver,
+  TopLevelIndexResolver? topLevelIndexResolver,
+}) {
+  if (containerResolver != null) {
+    final containerId = containerResolver(fragmentId);
+    if (containerId == null) return null;
+    // If the container is itself a top-level node, return it directly.
+    if (topLevelIndexResolver != null) {
+      if (topLevelIndexResolver(containerId) >= 0) return containerId;
+    } else if (root.nodes.any((n) => n.id == containerId)) {
+      return containerId;
+    }
+    String current = containerId;
+    while (true) {
+      final parent = parentResolver?.call(current);
+      if (parent == null) return current;
+      // If parent is a top-level node, return it.
+      if (topLevelIndexResolver != null) {
+        if (topLevelIndexResolver(parent) >= 0) return parent;
+      } else if (root.nodes.any((n) => n.id == parent)) {
+        return parent;
+      }
+      current = parent;
+    }
+  }
+  final container = findLogicalContainer(root, fragmentId);
+  if (container == null) return null;
+  FNode node = container as FNode;
+  while (true) {
+    final parent = findParent(root, node);
+    if (parent == null || parent is Root) return node.id;
+    node = parent;
+  }
+}
+
 /// True when the fragment belongs to the first top-level node of [root].
-bool _isInFirstNode(Root root, String fragmentId) {
+bool _isInFirstNode(
+  Root root,
+  String fragmentId, {
+  ParentResolver? parentResolver,
+  ContainerResolver? containerResolver,
+  TopLevelIndexResolver? topLevelIndexResolver,
+}) {
   if (root.nodes.isEmpty) return false;
-  return _nodeContainsFragment(root.nodes.first, fragmentId);
+  final id = _findTopLevelNodeId(root, fragmentId,
+      parentResolver: parentResolver, containerResolver: containerResolver,
+      topLevelIndexResolver: topLevelIndexResolver);
+  return id != null && id == root.nodes.first.id;
 }
 
 /// True when the fragment belongs to the last top-level node of [root].
-bool _isInLastNode(Root root, String fragmentId) {
+bool _isInLastNode(
+  Root root,
+  String fragmentId, {
+  ParentResolver? parentResolver,
+  ContainerResolver? containerResolver,
+  TopLevelIndexResolver? topLevelIndexResolver,
+}) {
   if (root.nodes.isEmpty) return false;
-  return _nodeContainsFragment(root.nodes.last, fragmentId);
-}
-
-/// Returns the id of the top-level node in [root] that contains [fragmentId].
-String? _findTopLevelNodeId(Root root, String fragmentId) {
-  for (final node in root.nodes) {
-    if (_nodeContainsFragment(node, fragmentId)) return node.id;
-  }
-  return null;
+  final id = _findTopLevelNodeId(root, fragmentId,
+      parentResolver: parentResolver, containerResolver: containerResolver,
+      topLevelIndexResolver: topLevelIndexResolver);
+  return id != null && id == root.nodes.last.id;
 }
 
 /// Pre-compiled RegExp for word-character detection.
@@ -735,7 +811,22 @@ final _wordCharRe = RegExp(r'[a-zA-Z0-9_\u00C0-\u024F]');
 
 bool _isWordChar(String ch) => _wordCharRe.hasMatch(ch);
 
-bool _isSpaceChar(String ch) => ch == ' ' || ch == '\t' || ch == '\n';
+/// All Unicode whitespace characters, including IME-produced spaces
+/// (ideographic space U+3000, NBSP U+00A0, various width spaces, etc.).
+const _spaceChars = {
+  ' ', '\t', '\n', '\r', '\f', '\v',
+  '\u00A0', // NBSP
+  '\u1680', // Ogham space mark
+  '\u2000', '\u2001', '\u2002', '\u2003', '\u2004', '\u2005',
+  '\u2006', '\u2007', '\u2008', '\u2009', '\u200A', // en/em/thin/hair spaces
+  '\u2028', '\u2029', // line/paragraph separator
+  '\u202F', // narrow no-break space
+  '\u205F', // medium mathematical space
+  '\u3000', // ideographic space (CJK IME)
+  '\uFEFF', // zero-width no-break space (BOM)
+};
+
+bool _isSpaceChar(String ch) => _spaceChars.contains(ch);
 
 List<int> _buildStopLineIndex(
     List<CaretStop> stops, List<LogicalLine> lines) {
@@ -754,10 +845,6 @@ List<int> _buildStopLineIndex(
   return result;
 }
 
-// Memoized fragment cache + stop→line index for word navigation, keyed by
-// the identity of the caret-stop list. The document reuses the same cached
-// list until the content changes, so consecutive ctrl+arrow presses reuse
-// these O(n)-to-build structures instead of rebuilding them every press.
 List<CaretStop>? _wordCacheStopsRef;
 Map<String, Fragment>? _wordFragCache;
 List<int>? _wordLineIdx;
@@ -792,10 +879,9 @@ NavigationResult moveWordRight(Root root, CaretStop current, {
 
   final startChar = ch(idx);
 
-  if (startChar == null) return NavigationResult.none; // end of document
+  if (startChar == null) return NavigationResult.none;
 
   if (_isSpaceChar(startChar)) {
-    // On space or line boundary: skip separators, then skip the word
     while (idx < stops_.length - 1 && _isSpaceChar(ch(idx) ?? '')) {
       idx++;
     }
@@ -805,14 +891,12 @@ NavigationResult moveWordRight(Root root, CaretStop current, {
       idx++;
     }
   } else if (_isWordChar(startChar)) {
-    // Inside a word: go to the end
     while (idx < stops_.length - 1) {
       final c = ch(idx);
       if (c == null || !_isWordChar(c)) break;
       idx++;
     }
   } else {
-    // Punctuation: skip the sequence
     while (idx < stops_.length - 1) {
       final c = ch(idx);
       if (c == null || _isWordChar(c) || _isSpaceChar(c)) break;
@@ -884,7 +968,7 @@ String? _charRight(
     if (stop.offset < frag.text.length) return frag.text[stop.offset];
     i++; // end of fragment: look at the next stop on the same line
   }
-  return null; // end of document
+  return null;
 }
 
 /// Character to the left of [startIdx].
@@ -909,8 +993,6 @@ String? _charLeft(
   }
   return null;
 }
-
-// ─── Line navigation (Home/End) ─────────────────────────────────────
 
 /// Moves the cursor to the start of the current logical line.
 /// If [lines] is provided (e.g. from a document cache), it is used directly
@@ -952,8 +1034,6 @@ NavigationResult moveToLineEnd(
   return NavigationResult(position: lastStop, preferredX: 0.0);
 }
 
-// ─── Page navigation (Page Up/Down) ───────────────────────────────────
-
 /// Moves the cursor up by approximately 10-15 logical lines.
 NavigationResult movePageUp(
   Root root,
@@ -971,10 +1051,9 @@ NavigationResult movePageUp(
   final targetLineIndex = (currentLineIndex - 10).clamp(0, lines_.length - 1);
 
   if (targetLineIndex == currentLineIndex) {
-    // Already at or near the top, go to document start
-    final stops = buildAllStops(root);
-    if (stops.isEmpty) return NavigationResult.none;
-    final firstStop = stops.first;
+    // Use the first line's first stop instead of rebuilding all stops.
+    if (lines_.isEmpty || lines_.first.stops.isEmpty) return NavigationResult.none;
+    final firstStop = lines_.first.stops.first;
     if (firstStop == current) return NavigationResult.none;
     return NavigationResult(position: firstStop, preferredX: preferredX);
   }
@@ -1005,10 +1084,9 @@ NavigationResult movePageDown(
   final targetLineIndex = (currentLineIndex + 10).clamp(0, lines_.length - 1);
 
   if (targetLineIndex == currentLineIndex) {
-    // Already at or near the bottom, go to document end
-    final stops = buildAllStops(root);
-    if (stops.isEmpty) return NavigationResult.none;
-    final lastStop = stops.last;
+    // Use the last line's last stop instead of rebuilding all stops.
+    if (lines_.isEmpty || lines_.last.stops.isEmpty) return NavigationResult.none;
+    final lastStop = lines_.last.stops.last;
     if (lastStop == current) return NavigationResult.none;
     return NavigationResult(position: lastStop, preferredX: preferredX);
   }
@@ -1020,4 +1098,22 @@ NavigationResult movePageDown(
   final best = _stopNearestX(targetLine.stops, x, resolveX);
 
   return NavigationResult(position: best, preferredX: x);
+}
+
+/// Checks whether [nodeId] (with its two caret stops at offset 0 and 1)
+/// falls within the current selection range defined by [cursor].
+bool isNodeInSelectionRange(
+  List<CaretStop> stops,
+  Cursor cursor,
+  String nodeId,
+) {
+  if (cursor.isCollapsed) return false;
+  final anchorIdx = findStopIndex(stops, cursor.anchorId, cursor.anchorOffset);
+  final focusIdx = findStopIndex(stops, cursor.focusId, cursor.focusOffset);
+  final node0Idx = findStopIndex(stops, nodeId, 0);
+  final node1Idx = findStopIndex(stops, nodeId, 1);
+  if (anchorIdx < 0 || focusIdx < 0 || node0Idx < 0 || node1Idx < 0) return false;
+  final lo = anchorIdx < focusIdx ? anchorIdx : focusIdx;
+  final hi = anchorIdx < focusIdx ? focusIdx : anchorIdx;
+  return lo <= node0Idx && node1Idx <= hi;
 }

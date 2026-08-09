@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:fluent_editor/fluent_editor.dart';
 import 'package:fluent_editor/fluent_document.dart';
+import 'package:fluent_editor/widgets/fluent_document_widget.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -11,7 +12,8 @@ Future<void> main() async {
   // Forward all Flutter framework errors to the console (visible on web debug)
   FlutterError.onError = (FlutterErrorDetails details) {
     FlutterError.presentError(details);
-    debugPrint('FlutterError: ${details.exceptionAsString()}\n${details.stack}');
+    debugPrint(
+        'FlutterError: ${details.exceptionAsString()}\n${details.stack}');
   };
 
   // Catch async errors that escape the framework (zone-level)
@@ -20,46 +22,106 @@ Future<void> main() async {
     return true;
   };
 
-  // Load bundled Google Fonts on web platform
-  if (kIsWeb) {
-    await _loadBundledFonts();
-  }
+  await loadBundledFonts();
 
   runApp(const MyApp());
 }
 
-/// Loads bundled Google Fonts from local assets.
-/// On Flutter Web, this ensures fonts are available before the app starts.
-Future<void> _loadBundledFonts() async {
-  const bundledFonts = [
-    'Crimson Text', 'Fira Sans', 'Lato', 'Poppins', 'Titillium Web',
+/// Loads all bundled fonts from the fluent_editor package assets.
+/// Includes DejaVu family, Google Fonts, and NotoColorEmoji.
+Future<void> loadBundledFonts() async {
+  // DejaVu family (in assets/fonts/)
+  const dejavuFonts = [
+    (
+      'DejaVu Sans',
+      [
+        'DejaVuSans.ttf',
+        'DejaVuSans-Oblique.ttf',
+        'DejaVuSans-Bold.ttf',
+        'DejaVuSans-BoldOblique.ttf',
+      ]
+    ),
+    (
+      'DejaVu Sans Mono',
+      [
+        'DejaVuSansMono.ttf',
+        'DejaVuSansMono-Bold.ttf',
+      ]
+    ),
+    (
+      'DejaVu Serif',
+      [
+        'DejaVuSerif.ttf',
+        'DejaVuSerif-Italic.ttf',
+        'DejaVuSerif-Bold.ttf',
+        'DejaVuSerif-BoldItalic.ttf',
+      ]
+    ),
   ];
 
-  for (final fontName in bundledFonts) {
-    final fontLoader = FontLoader(fontName);
-    final fileName = fontName.replaceAll(' ', '');
+  for (final (familyName, files) in dejavuFonts) {
+    final loader = FontLoader(familyName);
     var loadedAny = false;
-    
-    for (final suffix in ['-Regular.ttf', '-Italic.ttf', '-Bold.ttf', '-BoldItalic.ttf']) {
+    for (final file in files) {
       try {
-        final fontData = await rootBundle.load(
-          'packages/fluent_editor/assets/google_fonts/$fileName$suffix',
-        );
-        fontLoader.addFont(Future.value(fontData));
+        final data =
+            await rootBundle.load('packages/fluent_editor/assets/fonts/$file');
+        loader.addFont(Future.value(data));
         loadedAny = true;
-      } catch (_) {
-        // Variant not available, skip
-      }
+      } catch (_) {}
     }
-    
     if (loadedAny) {
       try {
-        await fontLoader.load();
-      } catch (_) {
-        // Font loading failed, will fall back to default
-      }
+        await loader.load();
+      } catch (_) {}
     }
   }
+
+  // Google Fonts (in assets/fonts/)
+  const googleFonts = [
+    'Crimson Text',
+    'Fira Sans',
+    'Lato',
+    'Poppins',
+    'Titillium Web',
+    'Barlow',
+    'SpaceMono',
+  ];
+
+  for (final fontName in googleFonts) {
+    final loader = FontLoader(fontName);
+    final fileName = fontName.replaceAll(' ', '');
+    var loadedAny = false;
+
+    for (final suffix in [
+      '-Regular.ttf',
+      '-Italic.ttf',
+      '-Bold.ttf',
+      '-BoldItalic.ttf'
+    ]) {
+      try {
+        final data = await rootBundle.load(
+          'packages/fluent_editor/assets/fonts/$fileName$suffix',
+        );
+        loader.addFont(Future.value(data));
+        loadedAny = true;
+      } catch (_) {}
+    }
+
+    if (loadedAny) {
+      try {
+        await loader.load();
+      } catch (_) {}
+    }
+  }
+
+  // NotoColorEmoji (in assets/fonts/)
+  try {
+    final emojiLoader = FontLoader('NotoColorEmoji')
+      ..addFont(rootBundle
+          .load('packages/fluent_editor/assets/fonts/NotoColorEmoji.ttf'));
+    await emojiLoader.load();
+  } catch (_) {}
 }
 
 class MyApp extends StatefulWidget {
@@ -72,9 +134,31 @@ class MyApp extends StatefulWidget {
 class _MyAppState extends State<MyApp> {
   ThemeMode _themeMode = ThemeMode.light;
 
+  @override
+  void initState() {
+    super.initState();
+    final platformBrightness =
+        WidgetsBinding.instance.platformDispatcher.platformBrightness;
+    _themeMode = platformBrightness == Brightness.dark
+        ? ThemeMode.dark
+        : ThemeMode.light;
+
+    WidgetsBinding.instance.platformDispatcher.onPlatformBrightnessChanged =
+        () {
+      setState(() {
+        final platformBrightness =
+            WidgetsBinding.instance.platformDispatcher.platformBrightness;
+        _themeMode = platformBrightness == Brightness.dark
+            ? ThemeMode.dark
+            : ThemeMode.light;
+      });
+    };
+  }
+
   void _toggleTheme() {
     setState(() {
-      _themeMode = _themeMode == ThemeMode.light ? ThemeMode.dark : ThemeMode.light;
+      _themeMode =
+          _themeMode == ThemeMode.light ? ThemeMode.dark : ThemeMode.light;
     });
   }
 
@@ -84,22 +168,26 @@ class _MyAppState extends State<MyApp> {
       title: 'Fluent Editor',
       theme: ThemeData(
         useMaterial3: true,
-        colorSchemeSeed: Colors.green,
+        colorSchemeSeed: const Color(0xFF1d2d2c),
         brightness: Brightness.light,
       ),
       darkTheme: ThemeData(
         useMaterial3: true,
-        colorSchemeSeed: Colors.green,
+        colorSchemeSeed: const Color(0xFF1d2d2c),
         brightness: Brightness.dark,
       ),
       themeMode: _themeMode,
-      home: MyHomePage(title: 'Fluent Editor Demo', onToggleTheme: _toggleTheme),
+      home: MyHomePage(
+        title: 'Fluent Editor Demo',
+        onToggleTheme: _toggleTheme,
+      ),
     );
   }
 }
 
 class MyHomePage extends StatefulWidget {
-  const MyHomePage({super.key, required this.title, required this.onToggleTheme});
+  const MyHomePage(
+      {super.key, required this.title, required this.onToggleTheme});
   final String title;
   final VoidCallback onToggleTheme;
 
@@ -109,11 +197,17 @@ class MyHomePage extends StatefulWidget {
 
 class _MyHomePageState extends State<MyHomePage> {
   FluentDocument? _document;
+  FluentToolbarMode _toolbarMode = FluentToolbarMode.fixed;
 
   @override
   void initState() {
     super.initState();
     _loadDocument();
+  }
+
+  @override
+  void dispose() {
+    super.dispose();
   }
 
   Future<void> _loadDocument() async {
@@ -145,6 +239,23 @@ class _MyHomePageState extends State<MyHomePage> {
         actions: [
           IconButton(
             icon: Icon(
+              _toolbarMode == FluentToolbarMode.bubble
+                  ? Icons.view_headline
+                  : Icons.bubble_chart,
+            ),
+            tooltip: _toolbarMode == FluentToolbarMode.bubble
+                ? 'Switch to fixed toolbar'
+                : 'Switch to bubble toolbar',
+            onPressed: () {
+              setState(() {
+                _toolbarMode = _toolbarMode == FluentToolbarMode.fixed
+                    ? FluentToolbarMode.bubble
+                    : FluentToolbarMode.fixed;
+              });
+            },
+          ),
+          IconButton(
+            icon: Icon(
               Theme.of(context).brightness == Brightness.dark
                   ? Icons.light_mode
                   : Icons.dark_mode,
@@ -156,6 +267,14 @@ class _MyHomePageState extends State<MyHomePage> {
       body: SafeArea(
         child: FluentEditor(
           document: _document,
+          plugins: [
+          ],
+          toolbarMode: _toolbarMode,
+          // Sidebar is automatically resolved from plugins:
+          // comments and suggestions are merged into a single unified sidebar
+          // with scroll synchronization to document positions.
+          bubbleActions: [
+          ],
         ),
       ),
     );

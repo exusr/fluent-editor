@@ -1,4 +1,3 @@
-// Stub implementation for non-web platforms
 import 'package:flutter/material.dart';
 
 class WebDropTarget extends StatelessWidget {
@@ -13,7 +12,6 @@ class WebDropTarget extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // On non-web platforms, just return the child
     return child;
   }
 }

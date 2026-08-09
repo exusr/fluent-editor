@@ -9,13 +9,11 @@ class ImportHtmlService {
     final body = document.body;
     if (body == null) return Root(nodes: [Paragraph(text: '')]);
     final nodes = _elementsToNodes(body.children);
-    // Filter out empty paragraphs (whitespace-only) that create unwanted spacing
     final filtered = nodes.where((n) => !_isEmptyParagraph(n)).toList();
     return Root(nodes: filtered.isEmpty ? [Paragraph(text: '')] : filtered);
   }
 
   bool _isEmptyParagraph(FNode node) {
-    // Only check exact Paragraph type, not subclasses (FluentList, Link, etc.)
     if (node.runtimeType != Paragraph) return false;
     final p = node as Paragraph;
     if (p.styleName != null) return false; // Styled paragraphs (headings, etc.) are never empty
@@ -32,9 +30,7 @@ class ImportHtmlService {
   /// If [trim] is true (default), also trims leading/trailing whitespace.
   String _collapseWhitespace(String text, {bool trim = true}) {
     if (text.isEmpty) return text;
-    // Replace \n, \r, \t with space, then collapse multiple spaces
     final normalized = text.replaceAll(RegExp(r'[\n\r\t]+'), ' ');
-    // Collapse multiple spaces to single space
     final collapsed = normalized.replaceAll(RegExp(r' +'), ' ');
     if (trim) {
       return collapsed.trim();
@@ -111,13 +107,11 @@ class ImportHtmlService {
   }
 
   int _parseIndent(html_dom.Element el) {
-    // Check data-indent attribute first
     final dataIndent = el.attributes['data-indent'];
     if (dataIndent != null) {
       final indent = int.tryParse(dataIndent);
       if (indent != null && indent > 0) return indent;
     }
-    // Parse CSS padding-left or margin-left from style attribute
     final styleAttr = el.attributes['style'] ?? '';
     final paddingMatch = RegExp(r'padding-left:\s*(\d+)px').firstMatch(styleAttr);
     if (paddingMatch != null) {
@@ -129,7 +123,6 @@ class ImportHtmlService {
       final px = int.tryParse(marginMatch.group(1)!);
       if (px != null) return (px / 24).round();
     }
-    // Check for indent-N class
     final classAttr = el.attributes['class'] ?? '';
     final classMatch = RegExp(r'indent-(\d+)').firstMatch(classAttr);
     if (classMatch != null) {
@@ -140,7 +133,6 @@ class ImportHtmlService {
   }
 
   String _parseTextAlign(html_dom.Element el) {
-    // Check deprecated align attribute first
     final alignAttr = el.attributes['align'];
     if (alignAttr != null) {
       return switch (alignAttr.toLowerCase()) {
@@ -150,7 +142,6 @@ class ImportHtmlService {
         _ => 'left',
       };
     }
-    // Parse CSS text-align from style attribute
     final styleAttr = el.attributes['style'] ?? '';
     final textAlignMatch = RegExp(r'text-align:\s*([^;]+)').firstMatch(styleAttr);
     if (textAlignMatch != null) {
@@ -240,7 +231,6 @@ class ImportHtmlService {
       }
     }
 
-    // Remove trailing empty paragraphs (phantom whitespace from HTML parser)
     while (children.isNotEmpty &&
            children.last is Paragraph &&
            (children.last as Paragraph).fragments.isEmpty) {
@@ -289,7 +279,6 @@ class ImportHtmlService {
       }
     }
     final cell = FluentCell(children: children.isEmpty ? [Paragraph()] : children);
-    // Parse colspan and rowspan attributes
     final colspanAttr = el.attributes['colspan'];
     if (colspanAttr != null) {
       final colspan = int.tryParse(colspanAttr);
@@ -309,7 +298,6 @@ class ImportHtmlService {
 
   FluentImage _image(html_dom.Element el) {
     final img = FluentImage(el.attributes['src'] ?? '');
-    // Parse width and height attributes
     final widthAttr = el.attributes['width'];
     if (widthAttr != null) {
       final width = double.tryParse(widthAttr);
@@ -320,8 +308,7 @@ class ImportHtmlService {
       final height = double.tryParse(heightAttr);
       if (height != null) img.height = height;
     }
-    // Set required fields for JSON serialization
-    img.text = '\u200b'; // Zero-width space
+    img.text = '\u200b';
     img.textAlign = 'left';
     img.styles = null;
     img.fontFamily = 'DejaVu Sans';
@@ -352,7 +339,6 @@ class ImportHtmlService {
       if (node is html_dom.Text) {
         buffer.write(node.text);
       } else if (node is html_dom.Element) {
-        // Don't trim when buffer is interrupted by an element (preserve trailing space)
         flushBuffer(trim: false);
         if (node.localName == 'img') {
           result.add(_image(node));
@@ -376,7 +362,6 @@ class ImportHtmlService {
         }
       }
     }
-    // Trim at the end of the paragraph
     flushBuffer(trim: true);
     return result;
   }
@@ -403,11 +388,9 @@ class ImportHtmlService {
         final styleAttr = el.attributes['style'] ?? '';
         if (styleAttr.contains('small-caps')) styles.add('smallcaps');
       case 'a':
-        // Links are handled specially below - don't add to styles
         break;
     }
 
-    // Parse font-size and color from element style
     final styleAttr = el.attributes['style'] ?? '';
     final fontSize = _parseFontSize(styleAttr);
     final color = _parseColor(styleAttr);
@@ -417,7 +400,6 @@ class ImportHtmlService {
 
     for (final child in el.nodes) {
       if (child is html_dom.Text) {
-        // Don't collapse yet - preserve spaces that may be adjacent to links
         buffer.write(child.text);
       } else if (child is html_dom.Element) {
         if (buffer.isNotEmpty) {

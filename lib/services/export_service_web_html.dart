@@ -1,4 +1,3 @@
-// Web-specific implementation using HTML5 download
 import 'dart:html' as html;
 
 void downloadFileWeb(List<int> bytes, String filename) {

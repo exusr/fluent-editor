@@ -3,11 +3,9 @@ import 'dart:io' show Directory, File, Platform;
 
 import 'package:archive/archive.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
-// ignore: unused_import
 import 'package:fluent_editor/factories.dart';
 import 'package:fluent_editor/fluent_document.dart';
 import 'package:fluent_editor/styles.dart';
-import 'package:fluent_editor/utils/editor_utils.dart';
 import 'package:flutter/services.dart';
 
 class _CommentSeg {
@@ -38,39 +36,32 @@ class OdtExporter {
   final Map<String, Uint8List> imageCache;
 
   OdtExporter(this.document, {Map<String, Uint8List>? imageCache})
-      : imageCache = imageCache ?? {};
+    : imageCache = imageCache ?? {};
 
-  // Registered automatic styles: property key -> style name.
   final Map<String, String> _textStyles = {};
   final Map<String, String> _paragraphStyles = {};
   int _textStyleCounter = 0;
   int _paragraphStyleCounter = 0;
 
-  // Image frame styles: align key -> style name.
   final Map<String, String> _imageFrameStyles = {};
   final Map<String, String> _imageFrameStyleDefs = {};
   int _imageFrameStyleCounter = 0;
 
-  // Embedded images: src -> file name in Pictures/.
   final Map<String, String> _pictures = {};
   final Map<String, Uint8List> _pictureBytes = {};
   int _pictureCounter = 0;
 
-  // Fonts used in the document (for declaration in font-face-decls).
   final Set<String> _fonts = {};
 
-  // Embedded fonts: font name -> asset path.
   final Map<String, String> _embeddedFonts = {};
 
-  // Comment index by paragraph node id (built once at export start).
   Map<String, List<Map<String, dynamic>>> _commentsByNode = {};
 
-  // Document body buffer.
   final StringBuffer _body = StringBuffer();
 
   /// Attempts to find a TTF/OTF file for [fontName] on the current OS.
   Future<Uint8List?> _findSystemFontBytes(String fontName) async {
-    if (kIsWeb) return null; // Web doesn't have file system access
+    if (kIsWeb) return null;
 
     final lower = fontName.toLowerCase().replaceAll(' ', '');
     final candidates = <String>[];
@@ -110,16 +101,19 @@ class OdtExporter {
       }
     }
 
-    // Deep search on Windows
     if (Platform.isWindows) {
       final windir = Platform.environment['WINDIR'] ?? r'C:\Windows';
       final fontsDir = Directory('$windir\\Fonts');
       if (await fontsDir.exists()) {
         await for (final entity in fontsDir.list()) {
           if (entity is File) {
-            final name = entity.path.split(Platform.pathSeparator).last.toLowerCase();
+            final name = entity.path
+                .split(Platform.pathSeparator)
+                .last
+                .toLowerCase();
             final ext = name.split('.').last;
-            if ((ext == 'ttf' || ext == 'ttc' || ext == 'otf') && name.startsWith(lower)) {
+            if ((ext == 'ttf' || ext == 'ttc' || ext == 'otf') &&
+                name.startsWith(lower)) {
               try {
                 return await entity.readAsBytes();
               } catch (_) {}
@@ -135,7 +129,7 @@ class OdtExporter {
   /// Maps editor fonts to available DejaVu TTF files.
   String? _mapFontToAsset(String fontName) {
     final name = fontName.toLowerCase();
-    if (name.contains('arial') || name.contains('sans')) {
+    if (name.contains('sans')) {
       return 'assets/fonts/DejaVuSans.ttf';
     } else if (name.contains('times') || name.contains('serif')) {
       return 'assets/fonts/DejaVuSerif.ttf';
@@ -159,8 +153,6 @@ class OdtExporter {
 
   /// Generates the ODT file bytes.
   Future<Uint8List> build() async {
-    // Index comments by paragraph node id so every paragraph can
-    // quickly look up its own annotations without re-exporting.
     _commentsByNode = {};
     final commentProvider = document.commentProvider;
     if (commentProvider != null) {
@@ -178,10 +170,8 @@ class OdtExporter {
       _writeNode(node);
     }
 
-    // Ensure DejaVu Sans as default font always present.
     _fonts.add('DejaVu Sans');
 
-    // Resolve fonts: try system fonts first, then bundled fallback.
     final fontBytesMap = <String, Uint8List>{};
     for (final fontName in _fonts) {
       final sysBytes = await _findSystemFontBytes(fontName);
@@ -198,13 +188,17 @@ class OdtExporter {
       }
     }
 
+    final embeddedFontNames = <String>[];
+    for (final entry in fontBytesMap.entries) {
+      embeddedFontNames.add(entry.key);
+    }
+
     final contentXml = _buildContentXml();
     final stylesXml = _buildStylesXml();
-    final manifestXml = _buildManifestXml();
+    final manifestXml = _buildManifestXml(embeddedFontNames);
 
     final archive = Archive();
 
-    // mimetype MUST be the first entry and uncompressed.
     final mimeBytes = utf8.encode('application/vnd.oasis.opendocument.text');
     final mimeFile = ArchiveFile('mimetype', mimeBytes.length, mimeBytes);
     mimeFile.compress = false;
@@ -214,7 +208,6 @@ class OdtExporter {
     _addText(archive, 'content.xml', contentXml);
     _addText(archive, 'styles.xml', stylesXml);
 
-    // Embed resolved fonts.
     for (final entry in fontBytesMap.entries) {
       final fileName = 'Fonts/${entry.key.replaceAll(' ', '_')}.ttf';
       archive.addFile(ArchiveFile(fileName, entry.value.length, entry.value));
@@ -233,8 +226,6 @@ class OdtExporter {
     final bytes = utf8.encode(content);
     archive.addFile(ArchiveFile(path, bytes.length, bytes));
   }
-
-  // ─── Node generation ───────────────────────────────────────────────
 
   void _writeNode(FNode node, {double extraIndentCm = 0}) {
     if (node is FluentImage) {
@@ -264,14 +255,14 @@ class OdtExporter {
 
     if (headingLevel > 0) {
       _body.writeln(
-          '<text:h text:style-name="$styleName" text:outline-level="$headingLevel">$inline</text:h>');
+        '<text:h text:style-name="$styleName" text:outline-level="$headingLevel">$inline</text:h>',
+      );
     } else {
       _body.writeln('<text:p text:style-name="$styleName">$inline</text:p>');
     }
   }
 
   void _writeHr() {
-    // Prefix "HR_" to avoid collisions with auto paragraph style names.
     const key = 'HR_hr';
     final styleName = _paragraphStyles.putIfAbsent(key, () {
       return 'P${_paragraphStyleCounter++}';
@@ -288,7 +279,10 @@ class OdtExporter {
       _body.writeln('<text:p/>');
       return;
     }
-    final pStyleName = _registerImageParagraphStyle(image.textAlign, extraIndentCm);
+    final pStyleName = _registerImageParagraphStyle(
+      image.textAlign,
+      extraIndentCm,
+    );
     _body.writeln('<text:p text:style-name="$pStyleName">$frame</text:p>');
   }
 
@@ -312,7 +306,9 @@ class OdtExporter {
             paragraphId: child.id,
             comments: comments,
           );
-          _body.writeln('<text:p text:style-name="$styleName">$inline</text:p>');
+          _body.writeln(
+            '<text:p text:style-name="$styleName">$inline</text:p>',
+          );
         }
       }
       _body.writeln('</text:list-item>');
@@ -323,9 +319,12 @@ class OdtExporter {
   void _writeTable(FluentTable table) {
     final colCount = _tableColumnCount(table);
     final tableName = 'Tbl${_tableCounter++}';
-    _body.writeln('<table:table table:name="$tableName" table:style-name="$_tableStyleName">');
     _body.writeln(
-        '<table:table-column table:style-name="$_tableColStyleName" table:number-columns-repeated="$colCount"/>');
+      '<table:table table:name="$tableName" table:style-name="$_tableStyleName">',
+    );
+    _body.writeln(
+      '<table:table-column table:style-name="$_tableColStyleName" table:number-columns-repeated="$colCount"/>',
+    );
 
     for (final row in table.rows) {
       _body.writeln('<table:table-row>');
@@ -338,7 +337,8 @@ class OdtExporter {
           spanAttr.write(' table:number-rows-spanned="${cell.rowSpan}"');
         }
         _body.writeln(
-            '<table:table-cell table:style-name="$_tableCellStyleName"$spanAttr office:value-type="string">');
+          '<table:table-cell table:style-name="$_tableCellStyleName"$spanAttr office:value-type="string">',
+        );
         _writeCellContent(cell);
         _body.writeln('</table:table-cell>');
 
@@ -370,7 +370,11 @@ class OdtExporter {
     }
   }
 
-  List<_TextSeg> _extractSegments(String text, int baseOffset, List<_CommentSeg> segs) {
+  List<_TextSeg> _extractSegments(
+    String text,
+    int baseOffset,
+    List<_CommentSeg> segs,
+  ) {
     final result = <_TextSeg>[];
     int pos = 0;
     final textLen = text.length;
@@ -382,7 +386,9 @@ class OdtExporter {
         result.add(_TextSeg(text.substring(pos, segStartLocal), null));
       }
       if (segStartLocal < segEndLocal) {
-        result.add(_TextSeg(text.substring(segStartLocal, segEndLocal), seg.comment));
+        result.add(
+          _TextSeg(text.substring(segStartLocal, segEndLocal), seg.comment),
+        );
       }
       pos = segEndLocal;
       if (pos >= textLen) break;
@@ -395,8 +401,6 @@ class OdtExporter {
     }
     return result;
   }
-
-  // ─── Inline (fragments) ─────────────────────────────────────────────
 
   String _buildInline(
     List<FNode> fragments,
@@ -411,19 +415,17 @@ class OdtExporter {
     final segs = <_CommentSeg>[];
     if (comments != null && paragraphId != null) {
       for (final c in comments) {
-        if (c['nodeId'] == paragraphId && c['resolved'] != true && c['orphan'] != true) {
-          segs.add(_CommentSeg(
-            c['startOffset'] as int,
-            c['endOffset'] as int,
-            c,
-          ));
+        if (c['nodeId'] == paragraphId &&
+            c['resolved'] != true &&
+            c['orphan'] != true) {
+          segs.add(
+            _CommentSeg(c['startOffset'] as int, c['endOffset'] as int, c),
+          );
         }
       }
       segs.sort((a, b) => a.start.compareTo(b.start));
     }
 
-    // Build a lookup map so we can find comment metadata (including replies)
-    // when we close an annotation and need to emit replies after it.
     final commentById = <String, Map<String, dynamic>>{};
     for (final seg in segs) {
       final cid = seg.comment['id'] as String? ?? '';
@@ -464,7 +466,9 @@ class OdtExporter {
         final linkOpenIds = <String>[];
         void closeLinkAnnotations() {
           for (final id in linkOpenIds.reversed) {
-            linkInner.write('<office:annotation-end office:name="comment_$id"/>');
+            linkInner.write(
+              '<office:annotation-end office:name="comment_$id"/>',
+            );
             final comment = commentById[id];
             if (comment != null) {
               final replies = (comment['replies'] as List<dynamic>?) ?? [];
@@ -494,23 +498,37 @@ class OdtExporter {
             final f = _imageFrame(child, anchor: 'as-char');
             if (f != null) linkInner.write(f);
           } else if (child is Fragment) {
-            final subs = _extractSegments(child.text, globalOffset + linkOffset, segs);
+            final subs = _extractSegments(
+              child.text,
+              globalOffset + linkOffset,
+              segs,
+            );
             for (final sub in subs) {
-              if (sub.comment == null || !linkOpenIds.contains(sub.comment!['id'] as String)) {
+              if (sub.comment == null ||
+                  !linkOpenIds.contains(sub.comment!['id'] as String)) {
                 closeLinkAnnotations();
               }
               if (sub.comment != null) {
                 emitLinkCommentAnnotations(sub.comment!);
               }
-              linkInner.write(_span(child, pStyle,
-                  forceLink: true, text: sub.text, isCommented: sub.comment != null));
+              linkInner.write(
+                _span(
+                  child,
+                  pStyle,
+                  forceLink: true,
+                  text: sub.text,
+                  isCommented: sub.comment != null,
+                  paragraphId: paragraphId,
+                ),
+              );
             }
             linkOffset += child.text.length;
           }
         }
         closeLinkAnnotations();
         buffer.write(
-            '<text:a xlink:type="simple" xlink:href="${_esc(frag.url)}">${linkInner.toString()}</text:a>');
+          '<text:a xlink:type="simple" xlink:href="${_esc(frag.url)}">${linkInner.toString()}</text:a>',
+        );
         globalOffset += linkOffset;
       } else if (frag is FluentImage) {
         closeOpenAnnotations();
@@ -519,14 +537,22 @@ class OdtExporter {
       } else if (frag is Fragment) {
         final subs = _extractSegments(frag.text, globalOffset, segs);
         for (final sub in subs) {
-          if (sub.comment == null || !openCommentIds.contains(sub.comment!['id'] as String)) {
+          if (sub.comment == null ||
+              !openCommentIds.contains(sub.comment!['id'] as String)) {
             closeOpenAnnotations();
           }
           if (sub.comment != null) {
             emitCommentAnnotations(sub.comment!);
           }
-          buffer.write(_span(frag, pStyle,
-              text: sub.text, isCommented: sub.comment != null));
+          buffer.write(
+            _span(
+              frag,
+              pStyle,
+              text: sub.text,
+              isCommented: sub.comment != null,
+              paragraphId: paragraphId,
+            ),
+          );
         }
         globalOffset += frag.text.length;
       }
@@ -553,12 +579,6 @@ class OdtExporter {
     final id = comment['id'] as String? ?? '0';
     final buf = StringBuffer();
     buf.write('<office:annotation office:name="comment_$id"');
-    if (author.isNotEmpty) {
-      buf.write(' office:author="$author"');
-    }
-    if (date.isNotEmpty) {
-      buf.write(' office:date="$date"');
-    }
     buf.write(' loext:resolved="false">');
     buf.write('<dc:creator>$author</dc:creator>');
     if (date.isNotEmpty) {
@@ -573,17 +593,8 @@ class OdtExporter {
     final author = _esc(reply['authorName'] as String? ?? 'Anonymous');
     final date = _formatDateOdt(reply['createdAt']);
     final text = _esc(reply['text'] as String? ?? '');
-    final id = reply['id'] as String? ?? '0';
     final buf = StringBuffer();
-    buf.write('<office:annotation office:name="reply_$id" '
-        'officeooo:paraIdParent="comment_$parentId" '
-        'office:parent-name="comment_$parentId"');
-    if (author.isNotEmpty) {
-      buf.write(' office:author="$author"');
-    }
-    if (date.isNotEmpty) {
-      buf.write(' office:date="$date"');
-    }
+    buf.write('<office:annotation loext:parent-name="comment_$parentId"');
     buf.write(' loext:resolved="false">');
     buf.write('<dc:creator>$author</dc:creator>');
     if (date.isNotEmpty) {
@@ -594,19 +605,91 @@ class OdtExporter {
     return buf.toString();
   }
 
-  String _span(Fragment frag, ParagraphStyle pStyle,
-      {bool forceLink = false, String? text, bool isCommented = false}) {
-    final styleName = _registerTextStyle(frag, pStyle,
-        forceLink: forceLink, isCommented: isCommented);
-    final spanText = text ?? frag.text;
-    final escaped = _escWithSpaces(spanText);
-    return '<text:span text:style-name="$styleName">$escaped</text:span>';
+  int _changeCounter = 1;
+  final Map<String, String> _changeRegionXmls = {};
+  final Map<String, String> _fragToChangeId = {};
+
+  String _ensureTrackedChange(Fragment frag, {String? paragraphId}) {
+    final key = frag.id;
+    if (_fragToChangeId.containsKey(key)) {
+      return _fragToChangeId[key]!;
+    }
+    final changeId = 'ct-${_changeCounter++}';
+    _fragToChangeId[key] = changeId;
+
+    final fs = frag.styles ?? [];
+    final isAddition = fs.contains(document.suggestionStyleHook.additionTag);
+    final isDeletion = fs.contains(document.suggestionStyleHook.deletionTag);
+
+    Map<String, dynamic>? matchingSug;
+    final suggestionProvider = document.suggestionProvider;
+    if (suggestionProvider != null && paragraphId != null) {
+      final sugs = suggestionProvider.suggestionsForNode(paragraphId);
+      final targetType = isAddition ? 'addition' : 'deletion';
+      for (final s in sugs) {
+        if (s['type'] == targetType) {
+          matchingSug = s;
+          break;
+        }
+      }
+    }
+
+    final author = _esc(matchingSug?['authorName'] as String? ?? document.authorName);
+    final dateStr = _formatDateOdt(matchingSug?['createdAt'] ?? DateTime.now());
+
+    final buf = StringBuffer();
+    buf.write('<text:changed-region xml:id="$changeId" text:id="$changeId">');
+    if (isAddition) {
+      buf.write('<text:insertion><office:change-info><dc:creator>$author</dc:creator>');
+      if (dateStr.isNotEmpty) buf.write('<dc:date>$dateStr</dc:date>');
+      buf.write('</office:change-info></text:insertion>');
+    } else {
+      buf.write('<text:deletion><office:change-info><dc:creator>$author</dc:creator>');
+      if (dateStr.isNotEmpty) buf.write('<dc:date>$dateStr</dc:date>');
+      buf.write('</office:change-info></text:deletion>');
+    }
+    buf.write('</text:changed-region>');
+
+    _changeRegionXmls[changeId] = buf.toString();
+    return changeId;
   }
 
-  // ─── Style registration ────────────────────────────────────────────
+  String _span(
+    Fragment frag,
+    ParagraphStyle pStyle, {
+    bool forceLink = false,
+    String? text,
+    bool isCommented = false,
+    String? paragraphId,
+  }) {
+    final fs = frag.styles ?? [];
+    final isAddition = fs.contains(document.suggestionStyleHook.additionTag);
+    final isDeletion = fs.contains(document.suggestionStyleHook.deletionTag);
 
-  String _registerTextStyle(Fragment frag, ParagraphStyle pStyle,
-      {bool forceLink = false, bool isCommented = false}) {
+    final styleName = _registerTextStyle(
+      frag,
+      pStyle,
+      forceLink: forceLink,
+      isCommented: isCommented,
+    );
+    final spanText = text ?? frag.text;
+    final escaped = _escWithSpaces(spanText);
+    final spanXml = '<text:span text:style-name="$styleName">$escaped</text:span>';
+
+    if (isAddition || isDeletion) {
+      final changeId = _ensureTrackedChange(frag, paragraphId: paragraphId);
+      return '<text:change-start text:change-id="$changeId"/>$spanXml<text:change-end text:change-id="$changeId"/>';
+    }
+
+    return spanXml;
+  }
+
+  String _registerTextStyle(
+    Fragment frag,
+    ParagraphStyle pStyle, {
+    bool forceLink = false,
+    bool isCommented = false,
+  }) {
     final fragStyles = frag.styles ?? [];
     final pStyles = pStyle.styles ?? [];
     final bold = fragStyles.contains('bold') || pStyles.contains('bold');
@@ -618,10 +701,12 @@ class OdtExporter {
     final smallcaps = fragStyles.contains('smallcaps');
 
     double fontSize = frag.fontSize;
-    if (fontSize == 14.0 && pStyle.fontSize != null) fontSize = pStyle.fontSize!;
+    if (fontSize == 14.0 && pStyle.fontSize != null)
+      fontSize = pStyle.fontSize!;
 
-    final fontFamily =
-        normalizeFontFamily(frag.fontFamily.isNotEmpty ? frag.fontFamily : pStyle.fontFamily);
+    final fontFamily = normalizeFontFamily(
+      frag.fontFamily.isNotEmpty ? frag.fontFamily : pStyle.fontFamily,
+    );
     _fonts.add(fontFamily);
     _registerFont(fontFamily);
 
@@ -630,8 +715,8 @@ class OdtExporter {
         : (forceLink ? '#1a73e8' : (pStyle.color));
     if (color != null) color = _normColor(color);
 
-    final highlight = (frag.highlightColor != null &&
-            frag.highlightColor!.isNotEmpty)
+    final highlight =
+        (frag.highlightColor != null && frag.highlightColor!.isNotEmpty)
         ? _normColor(frag.highlightColor!)
         : null;
 
@@ -643,7 +728,8 @@ class OdtExporter {
     if (italic) props.write(' fo:font-style="italic"');
     if (underline) {
       props.write(
-          ' style:text-underline-style="solid" style:text-underline-width="auto" style:text-underline-color="font-color"');
+        ' style:text-underline-style="solid" style:text-underline-width="auto" style:text-underline-color="font-color"',
+      );
     }
     if (strike) {
       props.write(' style:text-line-through-style="solid"');
@@ -666,10 +752,13 @@ class OdtExporter {
   final Map<String, String> _textStyleDefs = {};
 
   String _registerParagraphStyle(
-      Paragraph paragraph, ParagraphStyle pStyle, double extraIndentCm) {
+    Paragraph paragraph,
+    ParagraphStyle pStyle,
+    double extraIndentCm,
+  ) {
     final align = _odtAlign(paragraph.textAlign);
-    final indentCm = paragraph.indent * 0.63 + extraIndentCm +
-        ((pStyle.indent ?? 0) * 0.63);
+    final indentCm =
+        paragraph.indent * 0.63 + extraIndentCm + ((pStyle.indent ?? 0) * 0.63);
     final spacingBefore = pStyle.spacingBefore ?? document.pendingSpacingBefore;
     final spacingAfter = pStyle.spacingAfter ?? document.pendingSpacingAfter;
     final lineHeight = pStyle.lineHeight ?? document.pendingLineHeight;
@@ -689,11 +778,13 @@ class OdtExporter {
     }
     if (isQuote) {
       props.write(
-          ' fo:border-left="0.06cm solid #999999" fo:padding-left="0.3cm"');
+        ' fo:border-left="0.06cm solid #999999" fo:padding-left="0.3cm"',
+      );
     }
     if (isCode) {
       props.write(
-          ' fo:background-color="#f5f5f5" fo:border="0.02cm solid #dddddd" fo:padding="0.2cm"');
+        ' fo:background-color="#f5f5f5" fo:border="0.02cm solid #dddddd" fo:padding="0.2cm"',
+      );
     }
 
     final textProps = StringBuffer();
@@ -732,7 +823,9 @@ class OdtExporter {
     final code = document.documentLanguage;
     final parts = code.split('_');
     final language = parts.first;
-    final country = parts.length > 1 ? parts.last.toUpperCase() : language.toUpperCase();
+    final country = parts.length > 1
+        ? parts.last.toUpperCase()
+        : language.toUpperCase();
     return 'fo:language="$language" fo:country="$country"';
   }
 
@@ -752,7 +845,10 @@ class OdtExporter {
     });
   }
 
-  String _registerListParagraphStyle(Paragraph paragraph, ParagraphStyle pStyle) {
+  String _registerListParagraphStyle(
+    Paragraph paragraph,
+    ParagraphStyle pStyle,
+  ) {
     final align = _odtAlign(paragraph.textAlign);
     final props = StringBuffer();
     props.write('fo:text-align="$align"');
@@ -786,8 +882,6 @@ class OdtExporter {
     });
   }
 
-  // ─── List styles ───────────────────────────────────────────────────
-
   final Map<String, String> _listStyles = {};
   final Map<String, (String, int)> _listStyleDefs = {};
   int _listStyleCounter = 0;
@@ -808,34 +902,44 @@ class OdtExporter {
       String suffix;
       switch (listType) {
         case 'ordered-alpha':
-          format = 'a'; suffix = '.';
+          format = 'a';
+          suffix = '.';
           break;
         case 'ordered-alpha-parenthesis':
-          format = 'a'; suffix = ')';
+          format = 'a';
+          suffix = ')';
           break;
         case 'ordered-alpha-upper':
-          format = 'A'; suffix = '.';
+          format = 'A';
+          suffix = '.';
           break;
         case 'ordered-alpha-upper-parenthesis':
-          format = 'A'; suffix = ')';
+          format = 'A';
+          suffix = ')';
           break;
         case 'ordered-roman':
-          format = 'i'; suffix = '.';
+          format = 'i';
+          suffix = '.';
           break;
         case 'ordered-roman-parenthesis':
-          format = 'i'; suffix = ')';
+          format = 'i';
+          suffix = ')';
           break;
         case 'ordered-roman-upper':
-          format = 'I'; suffix = '.';
+          format = 'I';
+          suffix = '.';
           break;
         case 'ordered-roman-upper-parenthesis':
-          format = 'I'; suffix = ')';
+          format = 'I';
+          suffix = ')';
           break;
         case 'ordered-parenthesis':
-          format = '1'; suffix = ')';
+          format = '1';
+          suffix = ')';
           break;
         default:
-          format = '1'; suffix = '.';
+          format = '1';
+          suffix = '.';
       }
       return '<text:list-level-style-number text:level="1" style:num-format="$format" style:num-suffix="$suffix" text:display-levels="1"/>';
     }
@@ -862,8 +966,6 @@ class OdtExporter {
     }
     return '<text:list-level-style-bullet text:level="1" text:bullet-char="$bullet"/>';
   }
-
-  // ─── Images ───────────────────────────────────────────────────────
 
   String? _imageFrame(FluentImage image, {required String anchor}) {
     final bytes = _imageBytes(image.src);
@@ -918,8 +1020,6 @@ class OdtExporter {
     return imageCache[src];
   }
 
-  // ─── Final XML construction ─────────────────────────────────────────
-
   /// Builds the <office:font-face-decls> block to use in both files.
   String _buildFontFaceDecls() {
     final buf = StringBuffer();
@@ -927,11 +1027,12 @@ class OdtExporter {
     for (final font in _fonts) {
       final fileName = 'Fonts/${font.replaceAll(' ', '_')}.ttf';
       buf.write(
-          '<style:font-face style:name="${_esc(font)}" svg:font-family="${_esc(font)}">'
-          '<style:font-face-src>'
-          '<svg:font-face-uri xlink:href="$fileName" svg:format="truetype"/>'
-          '</style:font-face-src>'
-          '</style:font-face>');
+        '<style:font-face style:name="${_esc(font)}" svg:font-family="${_esc(font)}">'
+        '<style:font-face-src>'
+        '<svg:font-face-uri xlink:href="$fileName" svg:format="truetype"/>'
+        '</style:font-face-src>'
+        '</style:font-face>',
+      );
     }
     buf.write('</office:font-face-decls>');
     return buf.toString();
@@ -940,18 +1041,17 @@ class OdtExporter {
   String _buildContentXml() {
     final styles = StringBuffer();
 
-    // Automatic text styles.
     _textStyleDefs.forEach((name, props) {
       styles.write('<style:style style:name="$name" style:family="text">');
       styles.write('<style:text-properties $props/>');
       styles.write('</style:style>');
     });
 
-    // Automatic paragraph styles.
     _paragraphStyleDefs.forEach((name, defs) {
       final (pProps, tProps) = defs;
       styles.write(
-          '<style:style style:name="$name" style:family="paragraph" style:parent-style-name="Standard">');
+        '<style:style style:name="$name" style:family="paragraph" style:parent-style-name="Standard">',
+      );
       if (pProps.isNotEmpty) {
         styles.write('<style:paragraph-properties $pProps/>');
       }
@@ -961,7 +1061,6 @@ class OdtExporter {
       styles.write('</style:style>');
     });
 
-    // List styles.
     _listStyleDefs.forEach((name, def) {
       final (listType, _) = def;
       final levelStyle = _buildListLevelStyle(listType);
@@ -970,37 +1069,46 @@ class OdtExporter {
       styles.write('</text:list-style>');
     });
 
-    // HR style (bottom border).
     if (_hrStyleName != null) {
       styles.write(
-          '<style:style style:name="$_hrStyleName" style:family="paragraph" style:parent-style-name="Standard">');
+        '<style:style style:name="$_hrStyleName" style:family="paragraph" style:parent-style-name="Standard">',
+      );
       styles.write(
-          '<style:paragraph-properties fo:border-bottom="0.02cm solid #cccccc" fo:margin-top="0.3cm" fo:margin-bottom="0.3cm" fo:padding="0cm"/>');
+        '<style:paragraph-properties fo:border-bottom="0.02cm solid #cccccc" fo:margin-top="0.3cm" fo:margin-bottom="0.3cm" fo:padding="0cm"/>',
+      );
       styles.write('</style:style>');
     }
 
-    // Table styles.
     styles.write(
-        '<style:style style:name="$_tableStyleName" style:family="table">'
-        '<style:table-properties style:width="17cm" fo:margin-top="0.2cm" fo:margin-bottom="0.2cm" table:align="margins"/>'
-        '</style:style>');
+      '<style:style style:name="$_tableStyleName" style:family="table">'
+      '<style:table-properties style:width="17cm" fo:margin-top="0.2cm" fo:margin-bottom="0.2cm" table:align="margins"/>'
+      '</style:style>',
+    );
     styles.write(
-        '<style:style style:name="$_tableColStyleName" style:family="table-column">'
-        '<style:table-column-properties style:use-optimal-column-width="true"/>'
-        '</style:style>');
+      '<style:style style:name="$_tableColStyleName" style:family="table-column">'
+      '<style:table-column-properties style:use-optimal-column-width="true"/>'
+      '</style:style>',
+    );
     styles.write(
-        '<style:style style:name="$_tableCellStyleName" style:family="table-cell">'
-        '<style:table-cell-properties fo:border="0.02cm solid #999999" fo:padding="0.1cm" style:vertical-align="top"/>'
-        '</style:style>');
+      '<style:style style:name="$_tableCellStyleName" style:family="table-cell">'
+      '<style:table-cell-properties fo:border="0.02cm solid #999999" fo:padding="0.1cm" style:vertical-align="top"/>'
+      '</style:style>',
+    );
 
-      // Image frame styles.
     for (final entry in _imageFrameStyleDefs.entries) {
       styles.write(entry.value);
     }
 
-    // FIX: font-face-decls must also be present in content.xml,
-    // otherwise style:font-name in automatic styles are not resolved.
     final fontFaceDecls = _buildFontFaceDecls();
+
+    final trackedXml = StringBuffer();
+    if (_changeRegionXmls.isNotEmpty) {
+      trackedXml.write('<text:tracked-changes text:track-changes="true">');
+      for (final xml in _changeRegionXmls.values) {
+        trackedXml.write(xml);
+      }
+      trackedXml.write('</text:tracked-changes>');
+    }
 
     return '<?xml version="1.0" encoding="UTF-8"?>\n'
         '<office:document-content '
@@ -1018,15 +1126,11 @@ class OdtExporter {
         'office:version="1.2">'
         '$fontFaceDecls'
         '<office:automatic-styles>${styles.toString()}</office:automatic-styles>'
-        '<office:body><office:text>${_body.toString()}</office:text></office:body>'
+        '<office:body><office:text>${trackedXml.toString()}${_body.toString()}</office:text></office:body>'
         '</office:document-content>';
   }
 
   String _buildStylesXml() {
-    // FIX: font-face go in <office:font-face-decls>, NOT inside
-    // <office:styles>. In the previous version they were inside office:styles,
-    // which is syntactically invalid for the ODF standard and causes
-    // LibreOffice/Writer to silently ignore all font declarations.
     final fontFaceDecls = _buildFontFaceDecls();
 
     return '<?xml version="1.0" encoding="UTF-8"?>\n'
@@ -1062,31 +1166,34 @@ class OdtExporter {
         '</office:document-styles>';
   }
 
-  String _buildManifestXml() {
+  String _buildManifestXml(List<String> embeddedFontNames) {
     final entries = StringBuffer();
     entries.write(
-        '<manifest:file-entry manifest:full-path="/" manifest:media-type="application/vnd.oasis.opendocument.text"/>');
+      '<manifest:file-entry manifest:full-path="/" manifest:media-type="application/vnd.oasis.opendocument.text"/>',
+    );
     entries.write(
-        '<manifest:file-entry manifest:full-path="content.xml" manifest:media-type="text/xml"/>');
+      '<manifest:file-entry manifest:full-path="content.xml" manifest:media-type="text/xml"/>',
+    );
     entries.write(
-        '<manifest:file-entry manifest:full-path="styles.xml" manifest:media-type="text/xml"/>');
+      '<manifest:file-entry manifest:full-path="styles.xml" manifest:media-type="text/xml"/>',
+    );
     for (final entry in _pictureBytes.entries) {
       final mime = _mimeFromName(entry.key);
       entries.write(
-          '<manifest:file-entry manifest:full-path="Pictures/${entry.key}" manifest:media-type="$mime"/>');
+        '<manifest:file-entry manifest:full-path="Pictures/${entry.key}" manifest:media-type="$mime"/>',
+      );
     }
-    for (final fontName in _embeddedFonts.keys) {
+    for (final fontName in embeddedFontNames) {
       final fileName = 'Fonts/${fontName.replaceAll(' ', '_')}.ttf';
       entries.write(
-          '<manifest:file-entry manifest:full-path="$fileName" manifest:media-type="application/vnd.oasis.opendocument.font"/>');
+        '<manifest:file-entry manifest:full-path="$fileName" manifest:media-type="application/vnd.oasis.opendocument.font"/>',
+      );
     }
     return '<?xml version="1.0" encoding="UTF-8"?>\n'
         '<manifest:manifest '
         'xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0" '
         'manifest:version="1.2">${entries.toString()}</manifest:manifest>';
   }
-
-  // ─── Helper ─────────────────────────────────────────────────────────
 
   static const _tableStyleName = 'TableStyle';
   static const _tableColStyleName = 'TableCol';
@@ -1193,9 +1300,14 @@ class OdtExporter {
 
   (int, int)? _readImageDimensions(Uint8List bytes) {
     if (bytes.length < 24) return null;
-    if (bytes[0] == 0x89 && bytes[1] == 0x50 && bytes[2] == 0x4E && bytes[3] == 0x47) {
-      final w = (bytes[16] << 24) | (bytes[17] << 16) | (bytes[18] << 8) | bytes[19];
-      final h = (bytes[20] << 24) | (bytes[21] << 16) | (bytes[22] << 8) | bytes[23];
+    if (bytes[0] == 0x89 &&
+        bytes[1] == 0x50 &&
+        bytes[2] == 0x4E &&
+        bytes[3] == 0x47) {
+      final w =
+          (bytes[16] << 24) | (bytes[17] << 16) | (bytes[18] << 8) | bytes[19];
+      final h =
+          (bytes[20] << 24) | (bytes[21] << 16) | (bytes[22] << 8) | bytes[23];
       return (w, h);
     }
     if (bytes[0] == 0xFF && bytes[1] == 0xD8) {

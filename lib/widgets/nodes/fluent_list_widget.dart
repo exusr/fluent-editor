@@ -2,7 +2,7 @@ import 'dart:math' as math;
 import 'package:fluent_editor/factories.dart';
 import 'package:fluent_editor/fluent_document.dart';
 import 'package:fluent_editor/renderers/render_fluent_node.dart';
-import 'package:fluent_editor/utils/editor_utils.dart';
+import 'package:fluent_editor/widgets/node_widget_builder.dart';
 import 'package:fluent_editor/widgets/nodes/fluent_paragraph_widget.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/widgets.dart';

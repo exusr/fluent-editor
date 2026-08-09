@@ -7,20 +7,15 @@ import 'package:xml/xml.dart';
 
 /// Service for importing ODT into FluentEditor nodes.
 class ImportOdtService {
-  // Maps ODT style-name → resolved text properties (bold, italic, etc.)
   final Map<String, Map<String, String>> _styleProps = {};
 
-  // Maps list style-name → listType ('ordered' | 'unordered')
-  // Populated by parsing <text:list-style> elements in automatic-styles.
   final Map<String, String> _listStyleType = {};
 
-  // Archive reference kept for image extraction
   Archive? _archive;
 
   Root importFromOdt(List<int> bytes) {
     _archive = ZipDecoder().decodeBytes(bytes);
 
-    // --- Parse styles.xml first to build the style map ---
     final stylesFile = _archive!.files
         .where((f) => f.name == 'styles.xml')
         .firstOrNull;
@@ -28,7 +23,6 @@ class ImportOdtService {
       _parseStylesXml(utf8.decode(stylesFile.content as Uint8List));
     }
 
-    // --- Also parse automatic styles from content.xml ---
     final contentXml = _archive!.files
         .where((f) => f.name == 'content.xml')
         .firstOrNull;
@@ -37,7 +31,6 @@ class ImportOdtService {
     final xmlString = utf8.decode(contentXml.content as Uint8List);
     final document = XmlDocument.parse(xmlString);
 
-    // Parse automatic-styles block inside content.xml
     final autoStyles =
         document.findAllElements('office:automatic-styles').firstOrNull;
     if (autoStyles != null) _parseStyleElements(autoStyles.children);
@@ -51,10 +44,6 @@ class ImportOdtService {
     final nodes = _elementsToNodes(textEl.children);
     return Root(nodes: nodes.isEmpty ? [Paragraph(text: '')] : nodes);
   }
-
-  // ---------------------------------------------------------------------------
-  // Style parsing
-  // ---------------------------------------------------------------------------
 
   void _parseStylesXml(String xml) {
     try {
@@ -72,18 +61,13 @@ class ImportOdtService {
     for (final node in nodes) {
       if (node is! XmlElement) continue;
 
-      // --- text:list-style: resolve ordered vs unordered from level-1 format ---
-      // FIX: list type detection from actual XML structure, not style name string
       if (node.name.local == 'list-style') {
         final name = node.getAttribute('style:name');
         if (name != null) {
-          // Check the first level child to determine type
           final firstLevel = node.children
               .whereType<XmlElement>()
               .firstOrNull;
           if (firstLevel != null) {
-            // list-level-style-number → ordered
-            // list-level-style-bullet / list-level-style-image → unordered
             _listStyleType[name] =
                 firstLevel.name.local == 'list-level-style-number'
                     ? 'ordered'
@@ -93,19 +77,16 @@ class ImportOdtService {
         continue;
       }
 
-      // --- style:style: text properties ---
       if (node.name.local == 'style') {
         final name = node.getAttribute('style:name');
         if (name == null) continue;
         final props = <String, String>{};
 
-        // Inherit from parent style
         final parentName = node.getAttribute('style:parent-style-name');
         if (parentName != null && _styleProps.containsKey(parentName)) {
           props.addAll(_styleProps[parentName]!);
         }
 
-        // Read paragraph-properties for indent/alignment
         for (final child in node.children) {
           if (child is XmlElement && child.name.local == 'paragraph-properties') {
             final marginLeft = child.getAttribute('fo:margin-left');
@@ -115,7 +96,6 @@ class ImportOdtService {
           }
         }
 
-        // Read text-properties
         for (final child in node.children) {
           if (child is XmlElement && child.name.local == 'text-properties') {
             final fw = child.getAttribute('fo:font-weight');
@@ -134,7 +114,6 @@ class ImportOdtService {
                 props['subscript'] = 'true';
               }
             }
-            // fo:font-variant: small-caps
             final fv = child.getAttribute('fo:font-variant');
             if (fv == 'small-caps') props['smallcaps'] = 'true';
             final color = child.getAttribute('fo:color');
@@ -166,14 +145,6 @@ class ImportOdtService {
     return styles;
   }
 
-  double? _fontSizeFromName(String? styleName) {
-    if (styleName == null) return null;
-    final raw = _styleProps[styleName]?['fontSize'];
-    if (raw == null) return null;
-    final num = double.tryParse(raw.replaceAll(RegExp(r'[a-zA-Z]'), ''));
-    return num;
-  }
-
   String? _colorFromName(String? styleName) {
     if (styleName == null) return null;
     return _styleProps[styleName]?['color'];
@@ -200,24 +171,17 @@ class ImportOdtService {
     return double.tryParse(value);
   }
 
-  // ---------------------------------------------------------------------------
-  // Node building
-  // ---------------------------------------------------------------------------
-
   List<FNode> _elementsToNodes(Iterable<XmlNode> nodes) {
     final result = <FNode>[];
     for (final node in nodes) {
       if (node is XmlElement) {
         switch (node.name.local) {
           case 'p':
-            // FIX: a <text:p> may contain a <draw:frame> with an image;
-            // if so, emit a FluentImage node instead of a Paragraph.
             final imageNode = _extractImageFromParagraph(node);
             if (imageNode != null) {
               result.add(imageNode);
             } else {
               final para = _paragraph(node);
-              // Skip empty sentinel paragraphs with no fragments
               if (para.fragments.isNotEmpty || para.text.isNotEmpty) {
                 result.add(para);
               }
@@ -234,12 +198,7 @@ class ImportOdtService {
     return result;
   }
 
-  // ---------------------------------------------------------------------------
-  // FIX: Image extraction from <draw:frame><draw:image>
-  // ---------------------------------------------------------------------------
-
   FluentImage? _extractImageFromParagraph(XmlElement p) {
-    // A paragraph that contains only a draw:frame is an image paragraph.
     final frame = p.children
         .whereType<XmlElement>()
         .where((e) => e.name.local == 'frame')
@@ -252,10 +211,8 @@ class ImportOdtService {
         .firstOrNull;
     if (drawImage == null) return null;
 
-    // href is the path inside the ODT zip (e.g. "Pictures/img0.png")
     final href = drawImage.getAttribute('xlink:href') ?? '';
 
-    // Extract the image bytes from the archive and encode as data-URI
     String src = href;
     if (_archive != null && href.isNotEmpty) {
       final imageFile = _archive!.files
@@ -276,7 +233,6 @@ class ImportOdtService {
       }
     }
 
-    // Dimensions from svg:width / svg:height on the frame
     final widthRaw = frame.getAttribute('svg:width');
     final heightRaw = frame.getAttribute('svg:height');
     final width = _lengthToPt(widthRaw) ?? 100.0;
@@ -297,7 +253,6 @@ class ImportOdtService {
     if (styleName != null) {
       if (styleName.toLowerCase().contains('quote')) mappedStyle = 'quote';
       if (styleName.toLowerCase().contains('code')) mappedStyle = 'code';
-      // Read alignment and indent from the paragraph style props
       final props = _styleProps[styleName];
       if (props != null) {
         final align = props['textAlign'];
@@ -307,7 +262,6 @@ class ImportOdtService {
         final marginLeft = props['marginLeft'];
         if (marginLeft != null) {
           final pt = _lengthToPt(marginLeft) ?? 0;
-          // 0.63cm ≈ 17.9pt per indent level (FluentEditor uses ~18pt steps)
           indent = (pt / 17.86).round();
         }
       }
@@ -357,8 +311,6 @@ class ImportOdtService {
             result.add(Fragment('\t'));
           case 'line-break':
             result.add(Fragment('\n'));
-          // draw:frame inside inline context (rare) — skip here,
-          // handled at paragraph level by _extractImageFromParagraph
         }
       }
     }
@@ -369,7 +321,6 @@ class ImportOdtService {
     final styleName = el.getAttribute('text:style-name');
 
     final styles = _stylesFromName(styleName);
-    final fontSize = _fontSizeFromName(styleName);
     final color = _colorFromName(styleName);
 
     final innerFragments = _collectFragments(el.children);
@@ -383,7 +334,7 @@ class ImportOdtService {
       return Fragment(
         f.text,
         styles: mergedStyles.isEmpty ? null : mergedStyles,
-        fontSize: f.fontSize ?? fontSize ?? 14.0,
+        fontSize: f.fontSize,
         color: f.color ?? color,
         fontFamily: f.fontFamily,
         highlightColor: f.highlightColor,
@@ -400,8 +351,6 @@ class ImportOdtService {
   }
 
   FluentList _list(XmlElement el) {
-    // FIX: resolve listType from _listStyleType map built by _parseStyleElements,
-    // not from a string-contains check on the style name.
     final styleAttr = el.getAttribute('text:style-name');
     final listType = _listStyleType[styleAttr] ?? 'unordered';
 
@@ -430,7 +379,6 @@ class ImportOdtService {
         }
       }
     }
-    // Remove trailing empty paragraphs (whitespace artefacts from the ODT)
     while (children.isNotEmpty &&
         children.last is Paragraph &&
         (children.last as Paragraph).fragments.isEmpty) {
@@ -459,7 +407,6 @@ class ImportOdtService {
     final cells = <FluentCell>[];
     for (final child in el.children) {
       if (child is XmlElement) {
-        // Skip covered-table-cell (colspan/rowspan placeholders)
         if (child.name.local == 'table-cell') {
           cells.add(_tableCell(child));
         }

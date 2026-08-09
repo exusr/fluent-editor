@@ -37,14 +37,12 @@ class _ListMarkerDialogState extends State<ListMarkerDialog> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Header
             Text(
               _labels.chooseListMarkerType,
               style: Theme.of(context).textTheme.headlineSmall,
             ),
             const SizedBox(height: 16),
 
-            // Category tabs
             SingleChildScrollView(
               scrollDirection: Axis.horizontal,
               child: Row(
@@ -58,7 +56,6 @@ class _ListMarkerDialogState extends State<ListMarkerDialog> {
             ),
             const SizedBox(height: 16),
 
-            // Marker types grid
             Expanded(
               child: GridView.builder(
                 gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
@@ -77,18 +74,17 @@ class _ListMarkerDialogState extends State<ListMarkerDialog> {
               ),
             ),
 
-            // Actions
             Row(
               mainAxisAlignment: MainAxisAlignment.end,
               children: [
                 TextButton(
                   onPressed: () => Navigator.of(context).pop(),
-                  child: const Text('Cancel'),
+                  child: Text(_labels.cancel),
                 ),
                 const SizedBox(width: 8),
                 ElevatedButton(
                   onPressed: () => Navigator.of(context).pop(),
-                  child: const Text('Done'),
+                  child: Text(_labels.done),
                 ),
               ],
             ),
@@ -167,7 +163,6 @@ class _ListMarkerDialogState extends State<ListMarkerDialog> {
   }
 }
 
-// Helper function to show the dialog
 Future<void> showListMarkerDialog(
   BuildContext context,
   String currentMarkerType,

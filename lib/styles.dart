@@ -2,6 +2,16 @@ import 'package:json_annotation/json_annotation.dart';
 
 part 'styles.g.dart';
 
+/// Normalizes a font family name, mapping generic/legacy families to our bundled default.
+String normalizeFontFamily(String? fontFamily) {
+  if (fontFamily == null || fontFamily.isEmpty) return 'DejaVu Sans';
+  final lower = fontFamily.toLowerCase();
+  if (lower == 'sans-serif' || lower == 'dejavu sans' || lower == 'helvetica') {
+    return 'DejaVu Sans';
+  }
+  return fontFamily;
+}
+
 /// Defines a paragraph style with formatting properties.
 /// Can be used as a base for "Normal Text", "Heading 1", etc.
 @JsonSerializable()
@@ -168,6 +178,11 @@ class ParagraphStyle {
     quote,
     code,
   ];
+
+  /// O(1) lookup map for predefined styles by name.
+  static final Map<String, ParagraphStyle> styleByName = {
+    for (final s in predefinedStyles) s.name: s,
+  };
 
   factory ParagraphStyle.fromJson(Map<String, dynamic> json) =>
       _$ParagraphStyleFromJson(json);

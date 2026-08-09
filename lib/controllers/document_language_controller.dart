@@ -6,8 +6,7 @@ import 'package:fluent_editor/models/document_language.dart';
 
 /// Singleton controller that manages the document-level language selection.
 /// Persists the choice via SharedPreferences and exposes it through a
-/// [ValueNotifier] so consumers (e.g. SpellCheckController) can listen
-/// without direct coupling.
+/// [ValueNotifier] so consumers can listen without direct coupling.
 class DocumentLanguageController {
   DocumentLanguageController._();
 
@@ -26,16 +25,13 @@ class DocumentLanguageController {
   static String _resolveSystemLocale() {
     try {
       final raw = Platform.localeName;
-      // Extract locale before any '.' (e.g. "it_IT.UTF-8" -> "it_IT")
       final locale = raw.split('.').first;
       final lower = locale.toLowerCase();
 
-      // Exact match first
       for (final lang in DocumentLanguage.supported) {
         if (lang.code.toLowerCase() == lower) return lang.code;
       }
 
-      // Partial match by primary language (e.g. "en_CA" -> "en_US")
       final primary = lower.split('_').first;
       for (final lang in DocumentLanguage.supported) {
         if (lang.code.toLowerCase().split('_').first == primary) {

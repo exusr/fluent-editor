@@ -227,7 +227,7 @@ void main() {
       final node = makeNode('table', {'rows': 2, 'cells': 3});
       expect(node is FluentTable, isTrue);
       expect((node as FluentTable).rows.length, 2);
-      expect((node as FluentTable).rows.first.cells.length, 3);
+      expect(node.rows.first.cells.length, 3);
     });
 
     test('creates Image', () {
@@ -251,7 +251,6 @@ void main() {
     test('Link must be checked before Paragraph and Fragment', () {
       final link = Link(url: 'https://example.com', text: 'link text');
 
-      // Correct type-check order: Link -> Paragraph -> Fragment
       String correctCheck(FNode node) {
         if (node is Link) return 'link';
         if (node is Paragraph) return 'paragraph';
@@ -261,7 +260,6 @@ void main() {
 
       expect(correctCheck(link), 'link');
 
-      // Simulate old buggy behavior: Fragment checked first
       String buggyCheck(FNode node) {
         if (node is Fragment) return 'fragment';
         if (node is Paragraph) return 'paragraph';
@@ -269,7 +267,6 @@ void main() {
         return 'other';
       }
 
-      // This demonstrates why Fragment-first is wrong
       expect(buggyCheck(link), 'fragment');
       expect(buggyCheck(link), isNot('link'));
     });

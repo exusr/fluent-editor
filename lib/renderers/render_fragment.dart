@@ -1,4 +1,3 @@
-// render_f_text_node.dart — leaf that knows how to draw itself
 import 'package:fluent_editor/factories.dart';
 import 'package:flutter/material.dart';
 import 'package:fluent_editor/renderers/render_fluent_node.dart';
@@ -81,7 +80,6 @@ class RenderFluentFragment extends RenderFluentLeaf {
 
   /// Returns true if the text was wrapped on multiple lines
   bool get isWrapped {
-    // If the height is significantly greater than the height of one line, it is wrapped
     return size.height > _painter.preferredLineHeight * 1.5;
   }
 
@@ -89,7 +87,6 @@ class RenderFluentFragment extends RenderFluentLeaf {
   double get naturalWidth {
     _painter.layout(minWidth: 0, maxWidth: double.infinity);
     final width = _painter.width;
-    // Restore the previous layout
     _painter.layout(minWidth: constraints.minWidth, maxWidth: constraints.maxWidth);
     return width;
   }
@@ -111,7 +108,6 @@ class RenderFluentFragment extends RenderFluentLeaf {
   }
 
   void _paintCursor(Canvas canvas, Offset offset) {
-    // Calculate the pixel position of the caret via TextPainter
     final caretOffset = _painter.getOffsetForCaret(
       TextPosition(offset: _anchorOffset.clamp(0, text.length)),
       Rect.zero,
@@ -128,7 +124,6 @@ class RenderFluentFragment extends RenderFluentLeaf {
   }
 
   void _paintSelection(Canvas canvas, Offset offset) {
-    // Calculate the pixel position of the caret via TextPainter
     final startOffset = _painter.getOffsetForCaret(
       TextPosition(offset: _anchorOffset.clamp(0, text.length)),
       Rect.zero,

@@ -1,6 +1,7 @@
 import 'package:fluent_editor/factories.dart';
 import 'package:fluent_editor/fluent_document.dart';
-import 'package:fluent_editor/utils/editor_utils.dart';
+import 'package:fluent_editor/utils/node_operations.dart';
+import 'package:fluent_editor/widgets/node_widget_builder.dart';
 import 'package:fluent_editor/widgets/nodes/fluent_paragraph_widget.dart';
 import 'package:fluent_editor/widgets/dialogs/list_marker_dialog.dart';
 import 'package:flutter/material.dart';
@@ -23,6 +24,8 @@ class FluentListItemWidget extends StatefulWidget {
 }
 
 class _FluentListItemWidgetState extends State<FluentListItemWidget> {
+  int _lastContentVersion = -1;
+
   @override
   void initState() {
     super.initState();
@@ -44,15 +47,29 @@ class _FluentListItemWidgetState extends State<FluentListItemWidget> {
     super.dispose();
   }
 
-  void _onStateChange() => setState(() {});
+  void _onStateChange() {
+    if (widget.document.cursorOnlyChange) return;
+    if (!widget.document.isNodeDirty(widget.node.id)) return;
+    final version = widget.document.contentVersion;
+    if (version == _lastContentVersion) return;
+    _lastContentVersion = version;
+    setState(() {});
+  }
 
   @override
   Widget build(BuildContext context) {
     final allChildren = widget.node.getChildren();
 
-    // Separate children: first Paragraph for the marker, rest as block
-    final firstParagraph = allChildren.whereType<Paragraph>().firstOrNull;
-    final otherChildren = allChildren.where((c) => c != firstParagraph).toList();
+    int firstParagraphIndex = -1;
+    for (int i = 0; i < allChildren.length; i++) {
+      if (allChildren[i] is Paragraph) {
+        firstParagraphIndex = i;
+        break;
+      }
+    }
+    final firstParagraph = firstParagraphIndex >= 0
+        ? allChildren[firstParagraphIndex] as Paragraph
+        : null;
 
     final textAlign = firstParagraph?.textAlign ?? 'left';
     final mainAxisAlignment = switch (textAlign) {
@@ -67,7 +84,6 @@ class _FluentListItemWidgetState extends State<FluentListItemWidget> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // ── UPPER PART: Marker + First Paragraph ─────────────
           if (firstParagraph != null)
             Row(
             mainAxisAlignment: mainAxisAlignment,
@@ -100,16 +116,16 @@ class _FluentListItemWidgetState extends State<FluentListItemWidget> {
             ],
           ),
 
-        // ── LOWER PART: Other children ─
-        if (otherChildren.isNotEmpty)
+        if (allChildren.length > 1)
           Padding(
             padding: const EdgeInsets.only(left: 24.0),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: otherChildren
-                  .map((child) => buildFNodeWidget(child, widget.document))
-                  .whereType<Widget>()
-                  .toList(),
+              children: [
+                for (int i = 0; i < allChildren.length; i++)
+                  if (i != firstParagraphIndex)
+                    buildFNodeWidget(allChildren[i], widget.document),
+              ],
             ),
           ),
         ],
@@ -117,9 +133,6 @@ class _FluentListItemWidgetState extends State<FluentListItemWidget> {
     );
   }
 }
-
-
-// ── Marker widget ────────────────────────────────────────────────────────────
 
 class _ListMarker extends StatelessWidget {
   const _ListMarker({
@@ -136,10 +149,106 @@ class _ListMarker extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    String? oldMarkerType;
+    bool isAddition = false;
+    bool isDeletion = false;
+    for (final plugin in document.registry.plugins) {
+      if (plugin.runtimeType.toString() == 'FluentSuggestionPlugin') {
+        dynamic p = plugin;
+        if (p.controller != null) {
+          oldMarkerType = p.controller.getOldMarkerTypeForNode(node.id);
+          try {
+            isAddition = p.controller.isListItemAddition(node);
+          } catch (_) {}
+          try {
+            isDeletion = p.controller.isListItemDeletion(node);
+          } catch (_) {}
+        }
+      }
+    }
+
     final String label = _resolveLabel();
 
+    final bool isDark = Theme.of(context).brightness == Brightness.dark;
+    final Color addBg = isDark ? const Color(0x3581C784) : const Color(0x354CAF50);
+    final Color delBg = isDark ? const Color(0x35EF9A9A) : const Color(0x35F44336);
+    final Color delLineColor = isDark ? const Color(0xFFEF5350) : const Color(0xFFE53935);
+    final Color addTextColor = isDark ? const Color(0xFF81C784) : const Color(0xFF2E7D32);
+    final Color delTextColor = isDark ? const Color(0xFFEF5350) : const Color(0xFFD32F2F);
+
+    Widget labelChild;
+    if (oldMarkerType != null && oldMarkerType != node.bulletType) {
+      final oldLabel = _resolveLabelForType(oldMarkerType);
+      labelChild = RichText(
+        text: TextSpan(
+          children: [
+            TextSpan(
+              text: '$oldLabel ',
+              style: TextStyle(
+                fontSize: 14,
+                height: lineHeight,
+                color: delTextColor,
+                backgroundColor: delBg,
+                decoration: TextDecoration.lineThrough,
+                decorationColor: delLineColor,
+              ),
+            ),
+            TextSpan(
+              text: label,
+              style: TextStyle(
+                fontSize: 14,
+                height: lineHeight,
+                color: addTextColor,
+                backgroundColor: addBg,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ],
+        ),
+      );
+    } else if (isAddition) {
+      labelChild = Text(
+        label,
+        textAlign: TextAlign.left,
+        style: TextStyle(
+          fontSize: 14, 
+          height: lineHeight, 
+          color: addTextColor,
+          backgroundColor: addBg,
+          fontWeight: FontWeight.bold,
+        ),
+      );
+    } else if (isDeletion) {
+      labelChild = Text(
+        label,
+        textAlign: TextAlign.left,
+        style: TextStyle(
+          fontSize: 14, 
+          height: lineHeight, 
+          color: delTextColor,
+          backgroundColor: delBg,
+          decoration: TextDecoration.lineThrough,
+          decorationColor: delLineColor,
+        ),
+      );
+    } else {
+      labelChild = Text(
+        label,
+        textAlign: TextAlign.left,
+        style: TextStyle(
+          fontSize: 14, 
+          height: lineHeight, 
+          color: Theme.of(context).colorScheme.onSurface,
+          decoration: _isCheckboxType(node.bulletType) 
+              ? TextDecoration.none 
+              : TextDecoration.underline,
+          decorationColor: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5),
+          decorationStyle: TextDecorationStyle.dotted,
+        ),
+      );
+    }
+
     return SizedBox(
-      // fixed width keeps all markers aligned regardless of digit count
       width: width,
       child: Padding(
         padding: const EdgeInsets.only(bottom: 2),
@@ -149,20 +258,7 @@ class _ListMarker extends StatelessWidget {
           onLongPress: () => _showMarkerTypeDialog(context),
           child: MouseRegion(
             cursor: SystemMouseCursors.click,
-            child: Text(
-              label,
-              textAlign: TextAlign.left,
-              style: TextStyle(
-                fontSize: 14, 
-                height: lineHeight, 
-                color: Theme.of(context).colorScheme.onSurface,
-                decoration: _isCheckboxType(node.bulletType) 
-                    ? TextDecoration.none 
-                    : TextDecoration.underline,
-                decorationColor: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5),
-                decorationStyle: TextDecorationStyle.dotted,
-              ),
-            ),
+            child: labelChild,
           ),
         ),
       ),
@@ -171,13 +267,28 @@ class _ListMarker extends StatelessWidget {
 
   void _handleMarkerLeftClick(BuildContext context) {
     if (_isCheckboxType(node.bulletType)) {
-      // Toggle checkbox state
       _toggleCheckboxState();
     }
   }
 
   void _toggleCheckboxState() {
-    // Cycle through checkbox states: checkbox -> checkbox-checked -> checkbox-crossed -> checkbox
+    for (final plugin in document.registry.plugins) {
+      if (plugin.runtimeType.toString() == 'FluentSuggestionPlugin') {
+        dynamic p = plugin;
+        if (p.controller != null && p.controller.mode.toString() == 'FluentSuggestionMode.suggesting') {
+          final nextState = switch (node.bulletType) {
+            'checkbox' => 'checkbox-checked',
+            'checkbox-checked' => 'checkbox-crossed',
+            'checkbox-crossed' => 'checkbox',
+            _ => 'checkbox-checked',
+          };
+          p.controller.handleSuggestedListMarkChange(document, node, nextState);
+          return;
+        }
+      }
+    }
+
+    document.saveState(description: 'Toggle checkbox state', forceNewAction: true);
     switch (node.bulletType) {
       case 'checkbox':
         node.bulletType = 'checkbox-checked';
@@ -200,34 +311,37 @@ class _ListMarker extends StatelessWidget {
       context,
       node.bulletType,
       (newMarkerType) {
-        // Update the marker type for this list item and all items at the same level
         _updateMarkerTypeForList(newMarkerType);
       },
     );
   }
 
   void _updateMarkerTypeForList(String newMarkerType) {
-    // Find the parent FluentList and update all its ListItems
+    for (final plugin in document.registry.plugins) {
+      if (plugin.runtimeType.toString() == 'FluentSuggestionPlugin') {
+        dynamic p = plugin;
+        if (p.controller != null && p.controller.mode.toString() == 'FluentSuggestionMode.suggesting') {
+          p.controller.handleSuggestedListMarkChange(document, node, newMarkerType);
+          return;
+        }
+      }
+    }
+
+    document.saveState(description: 'Change list marker', forceNewAction: true);
     final parentList = _findParentFluentList(node);
     if (parentList != null) {
-      // Check if we're dealing with checkboxes
       if (_isCheckboxType(newMarkerType)) {
-        // For checkboxes, only update non-checkbox items or convert to base checkbox
         for (final item in parentList.items) {
           if (!_isCheckboxType(item.bulletType)) {
-            // Convert non-checkbox items to base checkbox type
             item.bulletType = 'checkbox';
           }
-          // If already a checkbox, preserve its current state
         }
       } else {
-        // For non-checkbox types, update all items consistently
         for (final item in parentList.items) {
           item.bulletType = newMarkerType;
         }
       }
     } else {
-      // Fallback: update only the current item
       node.bulletType = newMarkerType;
     }
     document.updateContent();
@@ -240,36 +354,14 @@ class _ListMarker extends StatelessWidget {
   }
 
   FluentList? _findParentFluentList(ListItem listItem) {
-    // Find the parent FluentList by traversing the document structure
-    return _findFluentListInNode(document.content, listItem);
+    return findAncestorCached<FluentList>(document, listItem);
   }
 
-  FluentList? _findFluentListInNode(FNode node, ListItem targetListItem) {
-    // Check if this node is a FluentList containing our target
-    if (node is FluentList) {
-      if (node.items.contains(targetListItem)) {
-        return node;
-      }
-    }
-    
-    // Recursively search in children
-    if (node is InlineContainerNode) {
-      final container = node as InlineContainerNode;
-      for (final child in container.getChildren()) {
-        final result = _findFluentListInNode(child, targetListItem);
-        if (result != null) {
-          return result;
-        }
-      }
-    }
-    
-    return null;
-  }
+  String _resolveLabel() => _resolveLabelForType(node.bulletType);
 
-  String _resolveLabel() {
-    final listType = node.bulletType;
-    final depth = node.indexList.length; // nesting level (0-based)
-    final index = node.indexList.last; // 1-based
+  String _resolveLabelForType(String listType) {
+    final depth = node.indexList.isNotEmpty ? node.indexList.length : 1;
+    final index = node.indexList.isNotEmpty ? node.indexList.last : 1;
 
     switch (listType) {
       case 'ordered':
@@ -308,18 +400,17 @@ class _ListMarker extends StatelessWidget {
       case 'checkbox-crossed':
         return '☒';
       default:
-        // Fallback to bullet
         const bullets = ['•', '◦', '▪'];
         return bullets[depth % bullets.length];
     }
   }
 
   String _toAlpha(int number) {
-    return String.fromCharCode(96 + number); // a, b, c, ...
+    return String.fromCharCode(96 + number);
   }
 
   String _toAlphaUpper(int number) {
-    return String.fromCharCode(64 + number); // A, B, C, ...
+    return String.fromCharCode(64 + number);
   }
 
   String _toRoman(int number) {

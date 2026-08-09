@@ -1,7 +1,7 @@
 import 'package:fluent_editor/factories.dart';
 import 'package:fluent_editor/fluent_document.dart';
 import 'package:fluent_editor/utils/fragment_operations.dart';
-import 'package:fluent_editor/utils/resolve_selection.dart';
+import 'package:fluent_editor/utils/handler_helpers.dart';
 import 'package:flutter/material.dart';
 
 const _fontSizes = <int>[
@@ -55,29 +55,14 @@ class _FluentFontSizeSelectorWidgetState extends State<FluentFontSizeSelectorWid
   int _resolveCurrentSize() {
     final document = widget.document;
     final cursor = document.cursor;
-    final root = document.content;
 
     if (cursor.anchorId != cursor.focusId || cursor.anchorOffset != cursor.focusOffset) {
-      final selection = resolveSelection(
-        root,
-        cursor.anchorId,
-        cursor.anchorOffset,
-        cursor.focusId,
-        cursor.focusOffset,
-        cachedStops: document.caretStops,
-        cachedLines: document.logicalLines,
-      );
+      final selection = resolveSelectionFromCursor(document);
       if (selection != null) {
         final sizes = <double?>{};
         for (final node in selection.nodes) {
-          final leaves = FragmentOperations.collectLeafFragments(node.container as FNode);
-          bool inRange = false;
-          for (final leaf in leaves) {
-            if (leaf.id == node.startFragment.id) inRange = true;
-            if (inRange && leaf is! FluentImage) {
-              sizes.add(leaf.fontSize);
-            }
-            if (leaf.id == node.endFragment.id) inRange = false;
+          for (final leaf in FragmentOperations.collectLeavesInRange(node)) {
+            sizes.add(leaf.fontSize);
           }
         }
         if (sizes.length == 1) {
@@ -98,6 +83,7 @@ class _FluentFontSizeSelectorWidgetState extends State<FluentFontSizeSelectorWid
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final isDisabled = widget.document.registry.isFormattingDisabled(widget.document);
 
     final displaySize = _fontSizes.contains(_currentSize)
         ? _currentSize
@@ -105,30 +91,30 @@ class _FluentFontSizeSelectorWidgetState extends State<FluentFontSizeSelectorWid
             (_currentSize - a).abs() < (_currentSize - b).abs() ? a : b);
 
     return MouseRegion(
-      cursor: SystemMouseCursors.click,
+      cursor: isDisabled ? SystemMouseCursors.basic : SystemMouseCursors.click,
       child: Container(
         height: 32,
         padding: const EdgeInsets.symmetric(horizontal: 8),
         decoration: BoxDecoration(
-          color: colorScheme.surfaceContainerHighest.withAlpha(100),
+          color: colorScheme.surfaceContainerHighest.withAlpha(isDisabled ? 40 : 100),
           borderRadius: BorderRadius.circular(4),
-          border: Border.all(color: colorScheme.outline.withAlpha(100)),
+          border: Border.all(color: colorScheme.outline.withAlpha(isDisabled ? 40 : 100)),
         ),
         child: DropdownButtonHideUnderline(
           child: DropdownButton<int>(
             value: displaySize,
             isDense: true,
-            icon: const Icon(Icons.arrow_drop_down, size: 18),
+            icon: Icon(Icons.arrow_drop_down, size: 18, color: isDisabled ? colorScheme.onSurface.withAlpha(90) : null),
             style: TextStyle(
               fontSize: 13,
-              color: colorScheme.onSurface,
+              color: isDisabled ? colorScheme.onSurface.withAlpha(90) : colorScheme.onSurface,
             ),
             selectedItemBuilder: (context) {
               return _fontSizes.map((size) {
                 return Center(
                   child: Text(
                     '$_currentSize',
-                    style: const TextStyle(fontSize: 13),
+                    style: TextStyle(fontSize: 13, color: isDisabled ? colorScheme.onSurface.withAlpha(90) : null),
                   ),
                 );
               }).toList();
@@ -142,12 +128,14 @@ class _FluentFontSizeSelectorWidgetState extends State<FluentFontSizeSelectorWid
                 ),
               );
             }).toList(),
-            onChanged: (int? newValue) {
-              if (newValue != null) {
-                widget.document.eventHandler.handleFontSize(newValue.toDouble());
-                widget.document.requestEditorFocus();
-              }
-            },
+            onChanged: widget.document.registry.isFormattingDisabled(widget.document)
+                ? null
+                : (int? newValue) {
+                    if (newValue != null) {
+                      widget.document.eventHandler.handleFontSize(newValue.toDouble());
+                      widget.document.requestEditorFocus();
+                    }
+                  },
           ),
         ),
       ),

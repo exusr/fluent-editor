@@ -14,7 +14,6 @@ class ListMarkerType {
 
 class ListMarkerTypes {
   static const List<ListMarkerType> allTypes = [
-    // Bullet types
     ListMarkerType(
       id: 'bullet',
       displayName: 'Bullet',
@@ -34,7 +33,6 @@ class ListMarkerTypes {
       examples: ['□ Item 1', '  ▫ Item 1.1', '    ■ Item 1.1.1'],
     ),
 
-    // Numbered types
     ListMarkerType(
       id: 'ordered',
       displayName: 'Numbered',
@@ -96,7 +94,6 @@ class ListMarkerTypes {
       examples: ['I) Item 1', 'II) Item 2', 'III) Item 3'],
     ),
 
-    // Checkbox types
     ListMarkerType(
       id: 'checkbox',
       displayName: 'Checkbox',

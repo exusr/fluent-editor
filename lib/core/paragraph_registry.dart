@@ -1,10 +1,3 @@
-// paragraph_registry.dart
-//
-// Global registry of active RenderFluentParagraph.
-// Each render object auto-registers in attach() and removes itself in detach().
-// The registry is owned by FluentDocument, which is already accessible
-// anywhere in the widget tree without InheritedWidget.
-
 import 'package:flutter/rendering.dart';
 import 'package:fluent_editor/utils/cursor_navigation.dart';
 import 'package:fluent_editor/renderers/render_paragraph.dart';
@@ -46,8 +39,6 @@ class ParagraphRegistry {
     }
   }
 
-  // ─── Lifecycle called by RenderObject ─────────────────────────
-
   void register(String containerId, RenderFluentParagraph render) {
     _renders[containerId] = render;
   }
@@ -63,8 +54,6 @@ class ParagraphRegistry {
     }
   }
 
-  // ─── HR lifecycle ─────────────────────────────────────────
-
   void registerHR(String nodeId, RenderBox render) {
     _hrRenders[nodeId] = render;
   }
@@ -74,8 +63,6 @@ class ParagraphRegistry {
       _hrRenders.remove(nodeId);
     }
   }
-
-  // ─── Public resolver ───────────────────────────────────────────
 
   /// Returns the global x coordinate (in logical pixels) of the caret
   /// for the given [stop]. Iterates the renders until one recognizes the fragmentId.
@@ -88,7 +75,6 @@ class ParagraphRegistry {
   /// arrow-key navigation the target fragment is almost always inside
   /// the current or a neighbouring visible paragraph.
   double resolveCaretX(CaretStop stop) {
-    // 1. Check visible paragraph renders first (O(visible), usually ~20)
     for (final id in _visibleContainerIds) {
       final render = _renders[id];
       if (render != null) {
@@ -96,14 +82,11 @@ class ParagraphRegistry {
         if (x != null) return x;
       }
     }
-    // 2. HR renders — HR stops use the node id as fragmentId.
-    // Return the center X so vertical navigation lands in the middle.
     final hrRender = _hrRenders[stop.fragmentId];
     if (hrRender != null && hrRender.attached && hrRender.hasSize) {
       final box = hrRender.localToGlobal(Offset.zero);
       return box.dx + hrRender.size.width / 2;
     }
-    // 3. Fall back to all paragraph renders (rare, e.g. after scroll)
     for (final render in _renders.values) {
       final x = render.getCaretX(stop.fragmentId, stop.offset);
       if (x != null) return x;
@@ -112,7 +95,6 @@ class ParagraphRegistry {
   }
 
   double resolveCaretY(CaretStop stop) {
-    // 1. Paragraph renders (visible first)
     for (final id in _visibleContainerIds) {
       final render = _renders[id];
       if (render != null) {
@@ -120,12 +102,10 @@ class ParagraphRegistry {
         if (y != null) return y;
       }
     }
-    // 2. HR renders — HR stops use the node id as fragmentId
     final hrRender = _hrRenders[stop.fragmentId];
     if (hrRender != null && hrRender.attached && hrRender.hasSize) {
       return hrRender.localToGlobal(Offset.zero).dy;
     }
-    // 3. All paragraph renders fallback
     for (final render in _renders.values) {
       final y = render.getCaretY(stop.fragmentId, stop.offset);
       if (y != null) return y;
@@ -153,17 +133,15 @@ class ParagraphRegistry {
   /// Finds the rendered paragraph whose global bounds vertically contain
   /// [globalY]; if none contains it, returns the vertically nearest one.
   ///
-  /// Iterates only the currently rendered paragraphs (bounded by the viewport
-  /// + ListView cache), so it is O(visible) — used by drag selection to do
-  /// precise hit testing without an O(n) scan over the whole document.
+  /// Checks visible renders first (O(visible)); falls back to all registered
+  /// renders only if no visible render matches.
   ({String id, RenderFluentParagraph render})? paragraphAtGlobalY(double globalY) {
     RenderFluentParagraph? best;
     String? bestId;
     double bestDist = double.infinity;
 
-    for (final entry in _renders.entries) {
-      final render = entry.value;
-      if (!render.attached || !render.hasSize) continue;
+    bool checkRender(String id, RenderFluentParagraph render) {
+      if (!render.attached || !render.hasSize) return false;
       final top = render.localToGlobal(Offset.zero).dy;
       final bottom = top + render.size.height;
 
@@ -179,13 +157,27 @@ class ParagraphRegistry {
       if (dist < bestDist) {
         bestDist = dist;
         best = render;
-        bestId = entry.key;
-        if (dist == 0.0) break; // exact vertical hit, cannot do better
+        bestId = id;
+        return dist == 0.0; // exact vertical hit, cannot do better
+      }
+      return false;
+    }
+
+    // Check visible renders first — O(visible)
+    for (final id in _visibleContainerIds) {
+      final render = _renders[id];
+      if (render != null && checkRender(id, render)) break;
+    }
+
+    // Fall back to all renders only if no visible hit
+    if (bestDist > 0.0) {
+      for (final entry in _renders.entries) {
+        if (checkRender(entry.key, entry.value)) break;
       }
     }
 
     if (best == null || bestId == null) return null;
-    return (id: bestId, render: best);
+    return (id: bestId!, render: best!);
   }
 
   /// Diagnostic: number of currently registered renders.

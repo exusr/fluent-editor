@@ -8,11 +8,9 @@ import 'package:fluent_editor/factories.dart';
 import 'package:fluent_editor/fluent_document.dart';
 import 'package:fluent_editor/renderers/render_paragraph.dart';
 import 'package:fluent_editor/comments/comment_provider.dart';
-import 'package:fluent_editor/spell_check/spell_annotation.dart';
-import 'package:fluent_editor/spell_check/spell_check_provider.dart';
 import 'package:fluent_editor/styles.dart';
-import 'package:fluent_editor/utils/fragment_operations.dart';
-import 'package:fluent_editor/utils/node_operations.dart';
+import 'package:fluent_editor/utils/handler_helpers.dart';
+import 'package:fluent_editor/utils/cursor_utils.dart';
 import 'package:fluent_editor/widgets/editor/fluent_link_dialog.dart';
 import 'package:fluent_editor/widgets/editor/fluent_context_menu.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -45,12 +43,11 @@ class FluentParagraphWidgetState<T extends FluentParagraphWidget> extends State<
   DateTime? _lastTapTime;
   Offset? _lastTapPosition;
   int _tapCount = 0;
-  StreamSubscription<String>? _spellSubscription;
   StreamSubscription<void>? _commentSubscription;
   bool _isSecondaryTap = false;
   ({String startFrag, int startOff, String endFrag, int endOff})? _savedSelection;
 
-  /// Tracks the document content version so [_triggerSpellCheck] is only
+  /// Tracks the document content version so setState is only
   /// called when the text actually changed, not on cursor-only movements.
   int _lastContentVersion = -1;
 
@@ -65,19 +62,18 @@ class FluentParagraphWidgetState<T extends FluentParagraphWidget> extends State<
   /// Previous IME preedit state for this paragraph.
   String _lastImePreeditText = '';
   String _lastImePreeditFragmentId = '';
+  bool _lastIsSuggestionMode = false;
 
   /// Cached inline images for this paragraph. Recomputed only when the
   /// document content version changes, avoiding a full tree walk on every
   /// cursor blink or selection update.
   List<FluentImage>? _cachedInlineImages;
   int? _cachedInlineImagesVersion;
+  List<Widget>? _cachedImageWidgets;
 
-  SpellCheckProvider? get _spell => widget.document.spellCheckProvider;
   CommentProvider? get _comment => widget.document.commentProvider;
 
   void onTapDown(TapDownDetails details) {
-    // This method is kept for subclass overrides.
-    // The actual tap logic is handled inline in the GestureDetector within build().
   }
 
   @override
@@ -86,18 +82,7 @@ class FluentParagraphWidgetState<T extends FluentParagraphWidget> extends State<
     widget.document.cursor.addListener(_onStateChange);
     widget.document.selectionManager.addListener(_onStateChange);
     widget.document.addListener(_onDocumentChange);
-    _subscribeToSpell();
     _subscribeToComments();
-    _triggerSpellCheck();
-  }
-
-  void _subscribeToSpell() {
-    _spellSubscription?.cancel();
-    _spellSubscription = null;
-    final provider = _spell;
-    if (provider != null) {
-      _spellSubscription = provider.annotationsChanged.listen(_onSpellAnnotationsChanged);
-    }
   }
 
   @override
@@ -114,7 +99,6 @@ class FluentParagraphWidgetState<T extends FluentParagraphWidget> extends State<
     if (oldWidget.document != widget.document) {
       oldWidget.document.removeListener(_onDocumentChange);
       widget.document.addListener(_onDocumentChange);
-      _subscribeToSpell();
       _subscribeToComments();
     }
   }
@@ -124,35 +108,28 @@ class FluentParagraphWidgetState<T extends FluentParagraphWidget> extends State<
     final doc = widget.document;
     final cursor = doc.cursor;
 
-    // O(1) cached lookups — pre-computed once in cursorOnlyUpdate()
-    // instead of every visible widget running O(n) walks independently.
     final hasCursor = doc.cachedCursorContainerId == nodeId;
-    final hasSelection = doc.isNodeSelectedCached(nodeId);
+    final hasSelection = doc.isNodeSelected(nodeId);
 
-    // Track exact cursor position when inside this paragraph so that
-    // left/right arrow (same paragraph) and up/down within the same
-    // paragraph trigger a rebuild of the caret.
     final cursorOffset = hasCursor ? cursor.focusOffset : null;
     final cursorFragmentId = hasCursor ? cursor.focusId : null;
 
-    // Track selection range so shift+arrow within the same paragraph
-    // (where hasSelection stays true) still triggers a rebuild.
-    final selRange = hasSelection ? doc.getSelectionRangeCached(nodeId) : null;
+    final selRange = hasSelection ? doc.getSelectionRangeForNode(nodeId) : null;
 
-    // Track IME preedit state so preedit underline updates trigger rebuild.
     final hasPreedit = doc.imeHandler.isPreeditInContainer(nodeId);
     final preeditText = hasPreedit ? doc.imeHandler.preeditText : '';
     final preeditFragId = hasPreedit ? doc.imeHandler.preeditFragmentId : '';
 
-    // Only rebuild if this paragraph's involvement, cursor position,
-    // selection range, or preedit state changed.
+    final isSuggestionMode = doc.registry.isSuggestionMode;
+
     if (hasCursor != _lastHadCursor ||
         hasSelection != _lastHadSelection ||
         cursorOffset != _lastCursorOffset ||
         cursorFragmentId != _lastCursorFragmentId ||
         !_sameRange(selRange, _lastSelectionRange) ||
         preeditText != _lastImePreeditText ||
-        preeditFragId != _lastImePreeditFragmentId) {
+        preeditFragId != _lastImePreeditFragmentId ||
+        isSuggestionMode != _lastIsSuggestionMode) {
       _lastHadCursor = hasCursor;
       _lastHadSelection = hasSelection;
       _lastCursorOffset = cursorOffset;
@@ -160,6 +137,7 @@ class FluentParagraphWidgetState<T extends FluentParagraphWidget> extends State<
       _lastSelectionRange = selRange;
       _lastImePreeditText = preeditText;
       _lastImePreeditFragmentId = preeditFragId;
+      _lastIsSuggestionMode = isSuggestionMode;
       setState(() {});
     }
   }
@@ -177,43 +155,13 @@ class FluentParagraphWidgetState<T extends FluentParagraphWidget> extends State<
   }
 
   void _onDocumentChange() {
-    // Skip rebuild if this node was not touched by the last document change.
     if (!widget.document.isNodeDirty(widget.node.id)) return;
 
-    // Content changes (typing, formatting) always require rebuild.
     final currentVersion = widget.document.contentVersion;
     if (currentVersion != _lastContentVersion) {
       _lastContentVersion = currentVersion;
       setState(() {});
-      _triggerSpellCheck();
     }
-    // Cursor-only changes are handled by the cursor/selection listeners
-    // above which already guard setState.
-  }
-
-  void _triggerSpellCheck() {
-    if (widget.node is! Paragraph) return;
-    final paragraph = widget.node as Paragraph;
-    final plainText = paragraph.fragments
-        .whereType<Fragment>()
-        .map((f) => f.text)
-        .join();
-    _spell?.checkParagraph(paragraph.id, plainText);
-  }
-
-  void _onSpellAnnotationsChanged(String nodeId) {
-    if (nodeId == widget.node.id || nodeId == '__all__') {
-      setState(() {});
-    }
-  }
-
-  TextAlign _parseTextAlign(String value) {
-    return switch (value) {
-      'center' => TextAlign.center,
-      'right' => TextAlign.right,
-      'justify' => TextAlign.justify,
-      _ => TextAlign.left,
-    };
   }
 
   @override
@@ -221,12 +169,12 @@ class FluentParagraphWidgetState<T extends FluentParagraphWidget> extends State<
     final cursor = widget.document.cursor;
     final container = widget.node as InlineContainerNode;
     final nodeId = widget.node.id;
+    final hasPreedit = widget.document.imeHandler.isPreeditInContainer(nodeId);
 
-    // Get the paragraph style (if applicable)
     final paragraph = widget.node is Paragraph ? widget.node as Paragraph : null;
     final style = paragraph?.getStyle();
+    final suggestionHook = widget.document.allStyleHooks.whereType<SuggestionStyleHook>().firstOrNull ?? widget.document.suggestionStyleHook;
 
-    // Spacing: use the paragraph style as base, with fallback to document
     final styleSpacingBefore = style?.spacingBefore ?? 0.0;
     final styleSpacingAfter = style?.spacingAfter ?? 0.0;
     final spacingBefore = widget.applyParagraphSpacing
@@ -236,30 +184,32 @@ class FluentParagraphWidgetState<T extends FluentParagraphWidget> extends State<
         ? (styleSpacingAfter > 0 ? styleSpacingAfter : widget.document.pendingSpacingAfter)
         : 0.0;
 
-    // Get the selection range for this node from the document
     final selRange = widget.document.getSelectionRangeForNode(nodeId);
 
-    // Build a widget for each inline FluentImage (e.g. inside Link).
-    // The order must match that of `collectInlineImages` used in the
-    // RenderObject to align WidgetSpan placeholders.
     final currentVersion = widget.document.contentVersion;
     if (_cachedInlineImages == null ||
         _cachedInlineImagesVersion != currentVersion) {
       _cachedInlineImages = collectInlineImages(container);
       _cachedInlineImagesVersion = currentVersion;
+      _cachedImageWidgets = _cachedInlineImages!.map((img) {
+        return InlineImageWidget(node: img, document: widget.document);
+      }).toList();
     }
-    final imageWidgets = _cachedInlineImages!.map((img) {
-      // Use InlineImageWidget for inline images to maintain inline behavior
-      return InlineImageWidget(node: img, document: widget.document);
-    }).toList();
+    final imageWidgets = _cachedImageWidgets!;
 
-    final spellAnnotations = _spell?.annotationsForNode(nodeId) ?? const [];
     final commentAnnotations = _comment?.commentsForNode(nodeId) ?? const [];
     final selectedCommentId = _comment?.selectedCommentId;
 
-    // Calculate padding for indentation (24px per level)
     final indentLevel = (widget.node as Paragraph).indent;
     final indentPadding = indentLevel * 24.0;
+
+    final isSuggestionMode = widget.document.registry.plugins.any((p) {
+      try {
+        return (p as dynamic).controller?.mode?.name == 'suggesting';
+      } catch (_) {
+        return false;
+      }
+    });
 
     return RepaintBoundary(
       child: Padding(
@@ -269,131 +219,121 @@ class FluentParagraphWidgetState<T extends FluentParagraphWidget> extends State<
           bottom: spacingAfter,
         ),
         child: Listener(
-        onPointerDown: (event) {
-          if (event.buttons == 2) { // kSecondaryMouseButton
-            _isSecondaryTap = true;
-          }
-        },
-        child: GestureDetector(
-          onTapDown: (details) {
-            if (_isSecondaryTap) {
-              _isSecondaryTap = false;
-              return; // Do not move cursor / collapse selection on right-click
+          onPointerDown: (event) {
+            if (event.buttons == 2) { // kSecondaryMouseButton
+              _isSecondaryTap = true;
             }
+          },
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTapDown: (details) {
+              if (_isSecondaryTap) return;
+              final now = DateTime.now();
+              final isConsecutiveTap = _lastTapTime != null &&
+                  _lastTapPosition != null &&
+                  now.difference(_lastTapTime!).inMilliseconds < 500 &&
+                  (details.globalPosition - _lastTapPosition!).distance < 30;
 
-            // Commit any active IME composition before processing tap
-            // to prevent cursor movement/selection during preedit.
-            if (widget.document.imeHandler.isComposing) {
-              widget.document.imeHandler.commitIfComposing();
-            }
-
-            widget.document.requestEditorFocus();
-
-            final now = DateTime.now();
-            final isConsecutiveTap = _lastTapTime != null &&
-                now.difference(_lastTapTime!).inMilliseconds < 300 &&
-                _lastTapPosition != null &&
-                (details.globalPosition - _lastTapPosition!).distance < 30;
-
-            if (isConsecutiveTap) {
-              _tapCount++;
-            } else {
-              _tapCount = 1;
-            }
-            _lastTapTime = now;
-            _lastTapPosition = details.globalPosition;
-
-            final renderObject = _renderWidgetKey.currentContext?.findRenderObject();
-            if (renderObject is RenderBox) {
-              final localPosition = renderObject.globalToLocal(details.globalPosition);
-
-              if (_tapCount >= 3) {
-                // Triple tap: select the entire logical line
-                _tapCount = 0;
-                _savedSelection = null;
-                widget.document.eventHandler.onTripleTapWithPosition(
-                  localPosition, renderObject, widget);
-              } else if (_tapCount == 2) {
-                _savedSelection = null;
-                widget.document.eventHandler.onDoubleTapWithPosition(
-                  localPosition, renderObject, widget);
+              if (isConsecutiveTap) {
+                _tapCount++;
               } else {
-                // If this paragraph has an active selection, defer cursor
-                // movement to onTap. This way a long-press does not destroy
-                // the selection before the context menu is shown.
-                final selRange = widget.document.selectionManager.getRangeForNode(widget.node.id);
-                final hasSelection = selRange != null &&
-                    !widget.document.selectionManager.isCollapsed;
-                if (hasSelection) {
-                  _savedSelection = selRange;
-                  // Do not call onTapDownWithPosition – keep selection intact.
-                } else {
+                _tapCount = 1;
+              }
+              _lastTapTime = now;
+              _lastTapPosition = details.globalPosition;
+
+              final renderObject = _renderWidgetKey.currentContext?.findRenderObject();
+              if (renderObject is RenderBox) {
+                final localPosition = renderObject.globalToLocal(details.globalPosition);
+
+                if (_tapCount >= 3) {
+                  _tapCount = 0;
                   _savedSelection = null;
+                  widget.document.eventHandler.onTripleTapWithPosition(
+                    localPosition, renderObject, widget);
+                } else if (_tapCount == 2) {
+                  _savedSelection = null;
+                  widget.document.eventHandler.onDoubleTapWithPosition(
+                    localPosition, renderObject, widget);
+                } else {
+                  final selRange = widget.document.selectionManager.getRangeForNode(widget.node.id);
+                  final hasSelection = selRange != null &&
+                      !widget.document.selectionManager.isCollapsed;
+                  if (hasSelection) {
+                    _savedSelection = selRange;
+                  } else {
+                    _savedSelection = null;
+                    widget.document.eventHandler.onTapDownWithPosition(
+                      localPosition, renderObject, widget);
+                  }
+                }
+              }
+            },
+            onTap: () {
+              if (_isSecondaryTap) {
+                _isSecondaryTap = false;
+                return; // Right-click: preserve selection, do not request focus
+              }
+              widget.document.requestEditorFocus();
+              widget.document.requestMobileKeyboardFocus(context);
+              if (_savedSelection != null && _lastTapPosition != null && mounted) {
+                final renderObject = _renderWidgetKey.currentContext?.findRenderObject();
+                if (renderObject is RenderBox) {
+                  final localPosition = renderObject.globalToLocal(_lastTapPosition!);
                   widget.document.eventHandler.onTapDownWithPosition(
                     localPosition, renderObject, widget);
                 }
+                _savedSelection = null;
               }
-            }
-          },
-          onTap: () {
-            widget.document.requestEditorFocus();
-            // Activate virtual keyboard on mobile (only for confirmed short-taps)
-            widget.document.requestMobileKeyboardFocus(context);
-            // Tap completed inside an active selection: now collapse and move cursor.
-            if (_savedSelection != null && _lastTapPosition != null && mounted) {
-              final renderObject = _renderWidgetKey.currentContext?.findRenderObject();
-              if (renderObject is RenderBox) {
-                final localPosition = renderObject.globalToLocal(_lastTapPosition!);
-                widget.document.eventHandler.onTapDownWithPosition(
-                  localPosition, renderObject, widget);
-              }
-              _savedSelection = null;
-            }
-          },
-          onSecondaryTapUp: (details) {
-            _isSecondaryTap = false;
-            _onSecondaryTap(details);
-          },
-          onLongPressStart: (details) {
-            _onLongPress(details);
-          },
-          child: FParagraphRenderWidget(
-          key: _renderWidgetKey,
-          node: container,
-          registry: widget.document.paragraphRegistry,
-          lineHeight: style?.lineHeight ?? widget.document.pendingLineHeight,
-          textAlign: _parseTextAlign((widget.node as Paragraph).textAlign),
-          shrinkWrap: widget.shrinkWrap,
-          paragraphStyle: style, // Pass the style for fallbacks
-          defaultTextColor: Theme.of(context).colorScheme.onSurface,
-          anchorFragmentId: cursor.anchorId,
-          anchorLocalOffset: cursor.anchorOffset,
-          focusFragmentId: cursor.isCollapsed ? null : cursor.focusId,
-          focusLocalOffset: cursor.isCollapsed ? null : cursor.focusOffset,
-          // Pass the selection from the document (if present for this node)
-          selAnchorFragmentId: selRange?.startFrag,
-          selAnchorLocalOffset: selRange?.startOff,
-          selFocusFragmentId: selRange?.endFrag,
-          selFocusLocalOffset: selRange?.endOff,
-          spellAnnotations: spellAnnotations,
-          commentAnnotations: commentAnnotations,
-          selectedCommentId: selectedCommentId,
-          // IME preedit: only pass if this paragraph hosts the active preedit
-          imePreeditText: widget.document.imeHandler.isPreeditInContainer(nodeId)
-              ? widget.document.imeHandler.preeditText
-              : '',
-          imePreeditFragmentId: widget.document.imeHandler.isPreeditInContainer(nodeId)
-              ? widget.document.imeHandler.preeditFragmentId
-              : '',
-          imePreeditLocalOffset: widget.document.imeHandler.isPreeditInContainer(nodeId)
-              ? widget.document.imeHandler.preeditLocalOffset
-              : 0,
-          children: imageWidgets,
+            },
+            onSecondaryTapUp: (details) {
+              _isSecondaryTap = false;
+              _onSecondaryTap(details);
+            },
+            onLongPressStart: (details) {
+              _onLongPress(details);
+            },
+            child: FParagraphRenderWidget(
+              key: _renderWidgetKey,
+              node: container,
+              registry: widget.document.paragraphRegistry,
+              styleHooks: widget.document.allStyleHooks,
+              suggestionStyleHook: suggestionHook,
+              lineHeight: style?.lineHeight ?? widget.document.pendingLineHeight,
+              textAlign: parseTextAlign((widget.node as Paragraph).textAlign),
+              shrinkWrap: widget.shrinkWrap,
+              paragraphStyle: style, // Pass the style for fallbacks
+              defaultTextColor: Theme.of(context).colorScheme.onSurface,
+              anchorFragmentId: cursor.anchorId,
+              anchorLocalOffset: cursor.anchorOffset,
+              focusFragmentId: cursor.isCollapsed ? null : cursor.focusId,
+              focusLocalOffset: cursor.isCollapsed ? null : cursor.focusOffset,
+              selAnchorFragmentId: selRange?.startFrag,
+              selAnchorLocalOffset: selRange?.startOff,
+              selFocusFragmentId: selRange?.endFrag,
+              selFocusLocalOffset: selRange?.endOff,
+              commentAnnotations: commentAnnotations,
+              selectedCommentId: selectedCommentId,
+              imePreeditText: hasPreedit
+                  ? widget.document.imeHandler.preeditText
+                  : '',
+              imePreeditFragmentId: hasPreedit
+                  ? (widget.document.imeHandler.preeditFragmentId.isNotEmpty
+                      ? widget.document.imeHandler.preeditFragmentId
+                      : (cursor.focusId.isNotEmpty
+                          ? cursor.focusId
+                          : cursor.anchorId))
+                  : '',
+              imePreeditLocalOffset: hasPreedit
+                  ? widget.document.imeHandler.preeditLocalOffset
+                  : 0,
+              isSuggestionMode: isSuggestionMode,
+              children: imageWidgets,
+            ),
+          ),
         ),
       ),
-    ),
-  ),
-);
+    );
   }
 
   void _onSecondaryTap(TapUpDetails details) {
@@ -401,8 +341,6 @@ class FluentParagraphWidgetState<T extends FluentParagraphWidget> extends State<
   }
 
   void _onLongPress(LongPressStartDetails details) {
-    // On mobile the selection has already been collapsed by onTapDown;
-    // pass the snapshot we captured at tap-down time.
     _showContextMenuAt(details.globalPosition, savedSelection: _savedSelection);
     _savedSelection = null;
   }
@@ -419,6 +357,10 @@ class FluentParagraphWidgetState<T extends FluentParagraphWidget> extends State<
     final fragment = widget.document.nodeById(fragmentResult.fragmentId);
     if (fragment == null) return;
 
+    // Release IME before showing context menu so dialogs opened from
+    // menu items get exclusive keyboard focus.
+    widget.document.editorFocusNode.unfocus();
+
     final parentId = widget.document.findParentCached(fragment.id);
     if (parentId != null) {
       final parent = widget.document.nodeById(parentId);
@@ -428,58 +370,23 @@ class FluentParagraphWidgetState<T extends FluentParagraphWidget> extends State<
       }
     }
 
-    _showSpellContextMenu(globalPosition, fragmentResult, savedSelection: savedSelection);
+    _showCommentContextMenu(globalPosition, fragmentResult, savedSelection: savedSelection);
   }
 
-  Future<void> _showSpellContextMenu(
+  Future<void> _showCommentContextMenu(
     Offset globalPosition,
     ({String fragmentId, int localOffset}) fragmentResult, {
     ({String startFrag, int startOff, String endFrag, int endOff})? savedSelection,
   }) async {
     final items = <FluentContextMenuItem>[];
+    final labels = widget.document.labels;
 
-    // Spell-check items (only if there is a misspelled word under the cursor)
-    final spellProvider = _spell;
-    SpellAnnotation? ann;
-    if (spellProvider != null) {
-      final annotations = spellProvider.annotationsForNode(widget.node.id);
-      ann = annotations.firstWhere(
-        (a) => a.covers(fragmentResult.fragmentId, fragmentResult.localOffset),
-        orElse: () => const SpellAnnotation(nodeId: '', fragmentIndex: 0, startOffset: 0, endOffset: 0, suggestions: [], misspelledWord: ''),
-      );
-
-      if (ann.nodeId.isNotEmpty) {
-        final suggestions = await spellProvider.requestSuggestions(ann.misspelledWord);
-        if (suggestions.isNotEmpty) {
-          for (final suggestion in suggestions.take(5)) {
-            items.add(FluentContextMenuItem(
-              label: suggestion,
-              onPressed: () => _applyCorrection(ann!, suggestion),
-            ));
-          }
-          items.add(FluentContextMenuItem(label: '', onPressed: null));
-        }
-        items.add(FluentContextMenuItem(
-          label: 'Aggiungi al dizionario',
-          onPressed: () => spellProvider.addToDictionary(ann!.misspelledWord),
-        ));
-        items.add(FluentContextMenuItem(
-          label: 'Ignora',
-          onPressed: () => spellProvider.ignoreWord(ann!.misspelledWord),
-        ));
-        items.add(FluentContextMenuItem(label: '', onPressed: null));
-      }
-    }
-
-    // Comment item (when there is an active selection in this paragraph)
     final commentProvider = _comment;
     final renderObject = _renderWidgetKey.currentContext?.findRenderObject();
     final selRange = savedSelection ?? widget.document.selectionManager.getRangeForNode(widget.node.id);
     if (commentProvider != null &&
         renderObject is RenderFluentParagraph &&
         selRange != null) {
-      // Compute absolute offsets even when selection crosses paragraph
-      // boundaries (startFrag / endFrag may be empty).
       int? startGlobal;
       int? endGlobal;
 
@@ -495,15 +402,10 @@ class FluentParagraphWidgetState<T extends FluentParagraphWidget> extends State<
         endGlobal = renderObject.resolveGlobalOffset(selRange.endFrag, selRange.endOff);
       }
 
-      // Only show if both offsets resolved and selection is not collapsed.
       if (startGlobal != null && endGlobal != null) {
-        // Normalize offsets: _isAnchorBeforeFocus() compares fragment IDs
-        // lexicographically, but IDs are random nanoids, so start/end can be
-        // reversed when the selection spans multiple fragments.
         final start = startGlobal < endGlobal ? startGlobal : endGlobal;
         final end = startGlobal < endGlobal ? endGlobal : startGlobal;
         if (end > start) {
-          final labels = widget.document.labels;
           items.add(FluentContextMenuItem(
             icon: Icons.add_comment_outlined,
             label: labels?.addCommentLabel ?? 'Add comment',
@@ -513,8 +415,45 @@ class FluentParagraphWidgetState<T extends FluentParagraphWidget> extends State<
       }
     }
 
+    // Always add Insert menu items to the context menu.
+    items.add(FluentContextMenuItem(
+      icon: Icons.link,
+      label: labels?.link ?? 'Link',
+      onPressed: () {
+        widget.document.requestEditorFocus();
+        widget.document.dialogPresenter.handleInsertLink(context);
+      },
+    ));
+    items.add(FluentContextMenuItem(
+      icon: Icons.image,
+      label: labels?.image ?? 'Image',
+      onPressed: () {
+        widget.document.requestEditorFocus();
+        widget.document.dialogPresenter.handleInsertImage(context);
+      },
+    ));
+    items.add(FluentContextMenuItem(
+      icon: Icons.table_chart,
+      label: labels?.table ?? 'Table',
+      onPressed: () {
+        widget.document.requestEditorFocus();
+        widget.document.eventHandler.handleInsertNode('table');
+      },
+    ));
+    items.add(FluentContextMenuItem(
+      icon: Icons.horizontal_rule,
+      label: labels?.horizontalLine ?? 'Horizontal line',
+      onPressed: () {
+        widget.document.requestEditorFocus();
+        widget.document.eventHandler.handleInsertNode('hr');
+      },
+    ));
+
     if (items.isNotEmpty && mounted) {
-      showFluentContextMenu(context: context, globalPosition: globalPosition, items: items);
+      showFluentContextMenu(context: context, globalPosition: globalPosition, items: items)
+          .then((_) {
+        if (mounted) widget.document.requestEditorFocus();
+      });
     }
   }
 
@@ -598,40 +537,17 @@ class FluentParagraphWidgetState<T extends FluentParagraphWidget> extends State<
     );
   }
 
-  void _applyCorrection(SpellAnnotation ann, String correction) {
-    final paragraph = widget.node as Paragraph;
-    // Flatten all text fragments (including those inside Links) in order.
-    final fragments = <Fragment>[];
-    for (final child in paragraph.fragments) {
-      if (child is Fragment) {
-        fragments.add(child);
-      } else if (child is Link) {
-        for (final linkChild in child.fragments) {
-          if (linkChild is Fragment) fragments.add(linkChild);
-        }
-      }
-    }
-    // Map the annotation offset to the correct fragment
-    int currentOffset = 0;
-    for (final frag in fragments) {
-      final fragEnd = currentOffset + frag.text.length;
-      if (ann.startOffset >= currentOffset && ann.startOffset < fragEnd) {
-        final localStart = (ann.startOffset - currentOffset).clamp(0, frag.text.length);
-        final localEnd = (ann.endOffset - currentOffset).clamp(0, frag.text.length);
-        // Adjust indices to avoid cutting through surrogate pairs (emoji)
-        final safeStart = FragmentOperations.adjustIndex(frag.text, localStart);
-        final safeEnd = FragmentOperations.adjustIndex(frag.text, localEnd);
-        final newText = frag.text.replaceRange(safeStart, safeEnd, correction);
-        frag.text = newText;
-        widget.document.updateContent();
-        return;
-      }
-      currentOffset = fragEnd;
-    }
+  void _copyUrlAndNotify(String url, String message) {
+    Clipboard.setData(ClipboardData(text: url));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        duration: const Duration(seconds: 2),
+      ),
+    );
   }
 
   void _showLinkContextMenu(Offset globalPosition, Link link) {
-    // Extract the current link text from fragments
     final currentText = link.fragments
         .whereType<Fragment>()
         .map((f) => f.text)
@@ -647,15 +563,8 @@ class FluentParagraphWidgetState<T extends FluentParagraphWidget> extends State<
           onPressed: () async {
             final uri = Uri.tryParse(link.url);
             if (uri != null) {
-              // On Linux, url_launcher may have channel errors, so copy to clipboard directly
               if (!kIsWeb && Platform.isLinux) {
-                await Clipboard.setData(ClipboardData(text: link.url));
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text('URL copied to clipboard.'),
-                    duration: const Duration(seconds: 2),
-                  ),
-                );
+                _copyUrlAndNotify(link.url, 'URL copied to clipboard.');
                 return;
               }
 
@@ -665,24 +574,10 @@ class FluentParagraphWidgetState<T extends FluentParagraphWidget> extends State<
                   webOnlyWindowName: kIsWeb ? '_blank' : null,
                 );
                 if (!launched) {
-                  // If launch fails, copy URL to clipboard as fallback
-                  await Clipboard.setData(ClipboardData(text: link.url));
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text('Could not open link. URL copied to clipboard.'),
-                      duration: const Duration(seconds: 2),
-                    ),
-                  );
+                  _copyUrlAndNotify(link.url, 'Could not open link. URL copied to clipboard.');
                 }
-              } catch (e) {
-                // Handle platform-specific errors
-                await Clipboard.setData(ClipboardData(text: link.url));
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text('Could not open link. URL copied to clipboard.'),
-                    duration: const Duration(seconds: 2),
-                  ),
-                );
+              } catch (_) {
+                _copyUrlAndNotify(link.url, 'Could not open link. URL copied to clipboard.');
               }
             }
           },
@@ -699,7 +594,6 @@ class FluentParagraphWidgetState<T extends FluentParagraphWidget> extends State<
             );
             if (result != null) {
               link.url = result['url']!;
-              // Update the link text if provided
               final text = result['text'];
               if (text != null && text.isNotEmpty && link.fragments.isNotEmpty) {
                 final firstFrag = link.fragments.first;
@@ -714,11 +608,7 @@ class FluentParagraphWidgetState<T extends FluentParagraphWidget> extends State<
         FluentContextMenuItem(
           icon: Icons.delete,
           label: widget.document.labels?.deleteLink ?? 'Delete',
-          onPressed: () {
-            widget.document.saveState(description: 'Delete link', forceNewAction: true);
-            removeNode(widget.document.content, link);
-            widget.document.updateContent();
-          },
+          onPressed: () => saveAndDeleteNode(widget.document, link, description: 'Delete link'),
         ),
       ],
     );
@@ -729,7 +619,6 @@ class FluentParagraphWidgetState<T extends FluentParagraphWidget> extends State<
     widget.document.cursor.removeListener(_onStateChange);
     widget.document.selectionManager.removeListener(_onStateChange);
     widget.document.removeListener(_onDocumentChange);
-    _spellSubscription?.cancel();
     _commentSubscription?.cancel();
     super.dispose();
   }
@@ -755,6 +644,8 @@ class FParagraphRenderWidget extends MultiChildRenderObjectWidget {
     super.key,
     required this.node,
     required this.registry,
+    this.styleHooks = const [],
+    this.suggestionStyleHook = const SuggestionStyleHook(),
     this.lineHeight = 1.15,
     this.textAlign = TextAlign.left,
     this.shrinkWrap = false,
@@ -768,23 +659,23 @@ class FParagraphRenderWidget extends MultiChildRenderObjectWidget {
     required this.anchorLocalOffset,
     this.focusFragmentId,
     this.focusLocalOffset,
-    // Selection parameters (optional)
     this.selAnchorFragmentId,
     this.selAnchorLocalOffset,
     this.selFocusFragmentId,
     this.selFocusLocalOffset,
-    this.spellAnnotations = const [],
     this.commentAnnotations = const [],
     this.selectedCommentId,
-    // IME preedit
     this.imePreeditText = '',
     this.imePreeditFragmentId = '',
     this.imePreeditLocalOffset = 0,
+    this.isSuggestionMode = false,
     super.children = const [],
   });
 
   final InlineContainerNode node;
   final ParagraphRegistry registry;
+  final List<RenderStyleHook> styleHooks;
+  final SuggestionStyleHook suggestionStyleHook;
   final double lineHeight;
   final TextAlign textAlign;
   final bool shrinkWrap;
@@ -799,18 +690,16 @@ class FParagraphRenderWidget extends MultiChildRenderObjectWidget {
   final int anchorLocalOffset;
   final String? focusFragmentId;
   final int? focusLocalOffset;
-  // Selection
   final String? selAnchorFragmentId;
   final int? selAnchorLocalOffset;
   final String? selFocusFragmentId;
   final int? selFocusLocalOffset;
-  final List<SpellAnnotation> spellAnnotations;
   final List<Map<String, dynamic>> commentAnnotations;
   final String? selectedCommentId;
-  // IME preedit
   final String imePreeditText;
   final String imePreeditFragmentId;
   final int imePreeditLocalOffset;
+  final bool isSuggestionMode;
 
   @override
   RenderObject createRenderObject(BuildContext context) {
@@ -827,6 +716,8 @@ class FParagraphRenderWidget extends MultiChildRenderObjectWidget {
         linkColor: linkColor ?? Theme.of(context).colorScheme.primary,
         imeCompositionColor: imeCompositionColor ?? Theme.of(context).colorScheme.primary,
       )
+      ..styleHooks = styleHooks
+      ..suggestionStyleHook = suggestionStyleHook
       ..setCursorOffsets(
         anchorFragmentId,
         anchorLocalOffset,
@@ -839,17 +730,19 @@ class FParagraphRenderWidget extends MultiChildRenderObjectWidget {
         selFocusFragmentId,
         selFocusLocalOffset,
       )
-      ..spellAnnotations = spellAnnotations
       ..commentAnnotations = commentAnnotations
       ..selectedCommentId = selectedCommentId
       ..imePreeditText = imePreeditText
       ..imePreeditFragmentId = imePreeditFragmentId
-      ..imePreeditLocalOffset = imePreeditLocalOffset;
+      ..imePreeditLocalOffset = imePreeditLocalOffset
+      ..isSuggestionMode = isSuggestionMode;
   }
 
   @override
   void updateRenderObject(BuildContext context, RenderFluentParagraph renderObject) {
     renderObject.container = node;
+    renderObject.styleHooks = styleHooks;
+    renderObject.suggestionStyleHook = suggestionStyleHook;
     renderObject.lineHeight = lineHeight;
     renderObject.textAlign = textAlign;
     renderObject.shrinkWrap = shrinkWrap;
@@ -871,12 +764,12 @@ class FParagraphRenderWidget extends MultiChildRenderObjectWidget {
       selFocusFragmentId,
       selFocusLocalOffset,
     );
-    renderObject.spellAnnotations = spellAnnotations;
     renderObject.commentAnnotations = commentAnnotations;
     renderObject.selectedCommentId = selectedCommentId;
     renderObject.imePreeditText = imePreeditText;
     renderObject.imePreeditFragmentId = imePreeditFragmentId;
     renderObject.imePreeditLocalOffset = imePreeditLocalOffset;
+    renderObject.isSuggestionMode = isSuggestionMode;
   }
 }
 
@@ -912,10 +805,11 @@ class _InlineImageWidgetState extends State<InlineImageWidget> {
   _ResizeHandle? _hoveredHandle;
   Offset? _dragStartPosition;
   
-  // Aspect ratio tracking
   double? _originalAspectRatio;
   bool _aspectRatioConstrained = true;
   static const double _aspectRatioThreshold = 0.1; // 10% deviation threshold
+  String? _cachedImageSrc;
+  ImageProvider? _cachedImageProvider;
 
   void _onTapDown(TapDownDetails details) {
     if (_isDragging) return;
@@ -926,10 +820,8 @@ class _InlineImageWidgetState extends State<InlineImageWidget> {
 
     widget.document.requestEditorFocus();
 
-    // Initialize original aspect ratio if not set
     _initializeAspectRatio();
     
-    // Position the cursor at offset 0 (before) or 1 (after) based on the tap x.
     final box = context.findRenderObject() as RenderBox?;
     final localX = box != null
         ? box.globalToLocal(details.globalPosition).dx
@@ -964,14 +856,12 @@ class _InlineImageWidgetState extends State<InlineImageWidget> {
       return;
     }
     
-    // Detect which handle is near the cursor
     final imgWidth = widget.node.width ?? _defaultImgWidth;
     final imgHeight = widget.node.height ?? _defaultImgHeight;
     final tolerance = _handleSize;
     
     _ResizeHandle? newHoveredHandle;
     
-    // Check corners
     if (localPosition.dx <= tolerance && localPosition.dy <= tolerance) {
       newHoveredHandle = _ResizeHandle.topLeft;
     } else if (localPosition.dx >= imgWidth - tolerance && localPosition.dy <= tolerance) {
@@ -981,7 +871,6 @@ class _InlineImageWidgetState extends State<InlineImageWidget> {
     } else if (localPosition.dx >= imgWidth - tolerance && localPosition.dy >= imgHeight - tolerance) {
       newHoveredHandle = _ResizeHandle.bottomRight;
     }
-    // Check edges
     else if (localPosition.dx <= tolerance) {
       newHoveredHandle = _ResizeHandle.left;
     } else if (localPosition.dx >= imgWidth - tolerance) {
@@ -999,11 +888,11 @@ class _InlineImageWidgetState extends State<InlineImageWidget> {
 
   @override
   Widget build(BuildContext context) {
-    // Use the actual rendered size from the node (which may be stretched)
     final imgWidth = widget.node.width ?? _defaultImgWidth;
     final imgHeight = widget.node.height ?? _defaultImgHeight;
     final cursor = widget.document.cursor;
     final cursorOnImage = cursor.isCollapsed && cursor.anchorId == widget.node.id;
+    final suggestionHook = widget.document.allStyleHooks.whereType<SuggestionStyleHook>().firstOrNull ?? widget.document.suggestionStyleHook;
     final showHandles = cursorOnImage;
 
     return MouseRegion(
@@ -1015,7 +904,6 @@ class _InlineImageWidgetState extends State<InlineImageWidget> {
         onTapDown: _onTapDown,
         onTap: () {
           widget.document.requestEditorFocus();
-          // Handle tap to prevent it from reaching the link
           widget.document.cursor.moveTo(widget.node.id, 0);
         },
         child: FittedBox(
@@ -1027,6 +915,37 @@ class _InlineImageWidgetState extends State<InlineImageWidget> {
             child: Stack(
               children: [
                 Positioned.fill(child: _buildImage(widget.node.src)),
+                if (widget.node.styles?.contains('suggestion_deletion') == true ||
+                    widget.node.styles?.contains('strikethrough') == true)
+                  Positioned.fill(
+                    child: IgnorePointer(
+                      child: Stack(
+                        children: [
+                          ColoredBox(
+                            color: suggestionHook.deletionBackgroundColor ?? Colors.red.withValues(alpha: 0.35),
+                            child: const SizedBox.expand(),
+                          ),
+                          Center(
+                            child: Container(
+                              height: 4,
+                              color: suggestionHook.deletionColor ?? const Color(0xFFE53935),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                if (widget.node.styles?.contains(suggestionHook.additionTag) == true)
+                  Positioned.fill(
+                    child: IgnorePointer(
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: suggestionHook.additionBackgroundColor ?? const Color(0x404CAF50),
+                          border: Border.all(color: suggestionHook.additionColor ?? const Color(0xFF4CAF50), width: 3),
+                        ),
+                      ),
+                    ),
+                  ),
                 if (showHandles) ..._buildResizeHandles(imgWidth, imgHeight),
               ],
             ),
@@ -1037,33 +956,35 @@ class _InlineImageWidgetState extends State<InlineImageWidget> {
   }
 
   Widget _buildImage(String src) {
-    if (src.startsWith('data:')) {
-      // Parse data URI: data:[<mediatype>][;base64],<data>
-      final commaIndex = src.indexOf(',');
-      if (commaIndex != -1) {
-        try {
-          final bytes = base64Decode(src.substring(commaIndex + 1));
-          return Image.memory(bytes, fit: BoxFit.cover, gaplessPlayback: true);
-        } catch (e) {
-          return const SizedBox.shrink();
+    if (_cachedImageSrc != src) {
+      _cachedImageSrc = src;
+      _cachedImageProvider = null;
+      if (src.startsWith('data:')) {
+        final commaIndex = src.indexOf(',');
+        if (commaIndex != -1) {
+          try {
+            _cachedImageProvider = MemoryImage(
+              base64Decode(src.substring(commaIndex + 1)),
+            );
+          } catch (_) {}
         }
+      } else if (src.startsWith('http://') || src.startsWith('https://')) {
+        _cachedImageProvider = NetworkImage(src);
+      } else {
+        _cachedImageProvider = AssetImage(src);
       }
     }
-    if (src.startsWith('http://') || src.startsWith('https://')) {
-      return Image.network(src, fit: BoxFit.cover, gaplessPlayback: true);
-    }
-    return Image.asset(src, fit: BoxFit.cover, gaplessPlayback: true);
+    final provider = _cachedImageProvider;
+    if (provider == null) return const SizedBox.shrink();
+    return Image(image: provider, fit: BoxFit.cover, gaplessPlayback: true);
   }
 
   List<Widget> _buildResizeHandles(double imgWidth, double imgHeight) {
-    // Show all handles for better visibility and usability
     return [
-      // Corner handles
       _buildHandle(0, 0, _ResizeHandle.topLeft, SystemMouseCursors.resizeUpLeft),
       _buildHandle(imgWidth - _handleSize, 0, _ResizeHandle.topRight, SystemMouseCursors.resizeUpRight),
       _buildHandle(0, imgHeight - _handleSize, _ResizeHandle.bottomLeft, SystemMouseCursors.resizeDownLeft),
       _buildHandle(imgWidth - _handleSize, imgHeight - _handleSize, _ResizeHandle.bottomRight, SystemMouseCursors.resizeDownRight),
-      // Edge handles
       _buildHandle(imgWidth / 2 - _handleSize / 2, 0, _ResizeHandle.top, SystemMouseCursors.resizeUpDown),
       _buildHandle(imgWidth / 2 - _handleSize / 2, imgHeight - _handleSize, _ResizeHandle.bottom, SystemMouseCursors.resizeUpDown),
       _buildHandle(0, imgHeight / 2 - _handleSize / 2, _ResizeHandle.left, SystemMouseCursors.resizeLeftRight),
@@ -1082,18 +1003,15 @@ class _InlineImageWidgetState extends State<InlineImageWidget> {
         onPanStart: (details) {
           final box = context.findRenderObject() as RenderBox?;
           if (box != null) {
+            widget.document.saveState(description: 'Resize image', forceNewAction: true);
             setState(() {
               _isDragging = true;
               _activeHandle = handle;
-              // Reset aspect ratio constraint for new drag operations
-              // This allows users to "re-enable" aspect ratio by starting fresh
               _aspectRatioConstrained = true;
-              // Store the handle's initial position relative to the image
               final imgWidth = widget.node.width ?? _defaultImgWidth;
               final imgHeight = widget.node.height ?? _defaultImgHeight;
               _dragStartPosition = _getHandlePosition(handle, imgWidth, imgHeight);
             });
-            // Notify document that image resize is in progress
             widget.document.isResizingImage = true;
           }
         },
@@ -1141,35 +1059,28 @@ class _InlineImageWidgetState extends State<InlineImageWidget> {
               break;
           }
 
-          // Apply max size constraints
           newWidth = math.min(newWidth, _maxSize);
           newHeight = math.min(newHeight, _maxSize);
 
-          // Check if aspect ratio is deviating and disable constraint if needed
           if (_aspectRatioConstrained && _isAspectRatioDeviating(newWidth, newHeight)) {
             _aspectRatioConstrained = false;
           }
 
-          // Apply aspect ratio constraint only if still enabled
           if (_aspectRatioConstrained && _originalAspectRatio != null) {
-            // For corner handles, maintain aspect ratio
             if (_activeHandle == _ResizeHandle.topLeft || 
                 _activeHandle == _ResizeHandle.topRight ||
                 _activeHandle == _ResizeHandle.bottomLeft || 
                 _activeHandle == _ResizeHandle.bottomRight) {
               
-              // Calculate the dimension that changed more
               final widthRatio = newWidth / imgWidth;
               final heightRatio = newHeight / imgHeight;
               
-              // Use the ratio that preserves the constraint better
               if (widthRatio > heightRatio) {
                 newHeight = newWidth / _originalAspectRatio!;
               } else {
                 newWidth = newHeight * _originalAspectRatio!;
               }
             }
-            // For edge handles, adjust the other dimension to maintain aspect ratio
             else if (_activeHandle == _ResizeHandle.left || _activeHandle == _ResizeHandle.right) {
               newHeight = newWidth / _originalAspectRatio!;
             } else if (_activeHandle == _ResizeHandle.top || _activeHandle == _ResizeHandle.bottom) {
@@ -1177,7 +1088,6 @@ class _InlineImageWidgetState extends State<InlineImageWidget> {
             }
           }
 
-          // Apply minimal threshold for smooth but responsive resize
           const double threshold = 1.0;
           
           final widthDiff = (newWidth - imgWidth).abs();
@@ -1195,7 +1105,7 @@ class _InlineImageWidgetState extends State<InlineImageWidget> {
             _activeHandle = null;
             _dragStartPosition = null;
           });
-          // Update document only when drag ends
+          widget.document.isResizingImage = false;
           widget.document.updateContent();
         },
         child: MouseRegion(

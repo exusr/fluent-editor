@@ -1,4 +1,3 @@
-
 import 'package:fluent_editor/core/constants.dart';
 import 'package:fluent_editor/factories.dart';
 import 'package:fluent_editor/fluent_document.dart';
@@ -29,7 +28,6 @@ class CursorOffset {
 
   CursorOffset({required this.id, required this.offset});
 
-  //convert local cursor coords to global position managing boundaries chars
   void _foundForward(FluentDocument document) {
     for (final topLevelNode in document.content.nodes) {
       final flat = document.flattenContainer(topLevelNode);
@@ -55,7 +53,6 @@ class CursorOffset {
     }
   }
 
-  //convert local cursor coords to global position managing boundaries chars
   void _foundBackward(FluentDocument document) {
     for (final topLevelNode in document.content.nodes) {
       final flat = document.flattenContainer(topLevelNode);

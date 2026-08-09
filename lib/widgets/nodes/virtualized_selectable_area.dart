@@ -25,7 +25,7 @@ class VirtualizedSelectableArea extends StatefulWidget {
   final int itemCount;
   final Widget Function(BuildContext context, int index) itemBuilder;
   final ScrollController? scrollController;
-  final ValueChanged<Map<int, double>>? onHeightsChanged;
+  final void Function(int index, double height)? onHeightsChanged;
 
   @override
   State<VirtualizedSelectableArea> createState() => _VirtualizedSelectableAreaState();
@@ -34,12 +34,12 @@ class VirtualizedSelectableArea extends StatefulWidget {
 class _VirtualizedSelectableAreaState extends State<VirtualizedSelectableArea> {
   bool _isSelecting = false;
   Offset? _pointerDownPosition;
+  int _pointerDownButtons = 0;
   final ScrollController _internalScrollController = ScrollController();
 
   ScrollController get _scrollController =>
       widget.scrollController ?? _internalScrollController;
 
-  // ─── Mobile-web gesture detection ─────────────────────────
   /// Tracks the gesture state for distinguishing tap / scroll / drag.
   bool _isDragging = false;
   bool _isScrolling = false;
@@ -53,18 +53,13 @@ class _VirtualizedSelectableAreaState extends State<VirtualizedSelectableArea> {
   /// Timeout for long-press detection (scroll mode on web-mobile)
   static const _kLongPressTimeout = Duration(milliseconds: 400);
 
-  // Performance optimizations for large documents
   final Map<int, double> _itemHeights = {};
   double _averageItemHeight = 40.0;
-  // Running sum of measured heights, kept in sync incrementally so the
-  // average is computed in O(1) instead of O(n) on every measurement.
   double _heightSum = 0.0;
 
-  // Cumulative height cache for O(log n) lookups
   final List<double> _cumulativeHeights = [];
   bool _cumulativeHeightsDirty = true;
 
-  // Selection optimization: throttle updates and cache results
   _FragmentHitResult? _lastSelectionResult;
   Offset? _lastSelectionPosition;
   Timer? _selectionUpdateTimer;
@@ -79,48 +74,32 @@ class _VirtualizedSelectableAreaState extends State<VirtualizedSelectableArea> {
     super.dispose();
   }
 
-  /// Returns true on native mobile (Android/iOS) or on web.
-  bool _isMobilePlatform() {
-    if (kIsWeb) return true;
-    return Platform.isAndroid || Platform.isIOS;
-  }
-
-  // ─── Raw pointer handlers (work on mobile-web where GestureDetector
-  //     is starved by the browser's native scroll). ─────────────────
+  /// Cached at initState: true on native mobile (Android/iOS) or on web.
+  late final bool _isMobile = kIsWeb || Platform.isAndroid || Platform.isIOS;
 
   void _onPointerDown(PointerDownEvent event) {
-    // Ignore pointer events while resizing images
-    if (widget.document.isResizingImage) return;
+    if (widget.document.isResizingImage || widget.document.isResizingTable) return;
 
-    // Commit any active IME composition before processing pointer events
-    // so that selection/cursor movement cannot occur while preedit text
-    // is still uncommitted.
     if (widget.document.imeHandler.isComposing) {
       widget.document.imeHandler.commitIfComposing();
     }
 
     _pointerDownPosition = event.position;
+    _pointerDownButtons = event.buttons;
     _isDragging = false;
     _isSelecting = false;
     _isScrolling = false;
 
-    // Cancel any pending timers
     _tapTimer?.cancel();
     _longPressTimer?.cancel();
     
-    // Start tap timer for keyboard activation
     _tapTimer = Timer(_kTapTimeout, () {
-      // Timer expired while finger is still down → possible long-press
     });
     
-    // On mobile (native and web), start long-press timer for scroll mode.
-    // If user holds without moving much, we enter scroll mode (close keyboard).
-    if (_isMobilePlatform()) {
+    if (_isMobile) {
       _longPressTimer = Timer(_kLongPressTimeout, () {
         if (!_isDragging && _pointerDownPosition != null) {
-          // Long press without drag → enter scroll mode
           _isScrolling = true;
-          // Close keyboard to allow smooth scrolling
           _dismissKeyboard();
         }
       });
@@ -129,15 +108,13 @@ class _VirtualizedSelectableAreaState extends State<VirtualizedSelectableArea> {
   
   /// Dismisses the virtual keyboard on mobile platforms
   void _dismissKeyboard() {
-    if (_isMobilePlatform()) {
-      // Remove focus from any text field to close keyboard
+    if (_isMobile) {
       FocusManager.instance.primaryFocus?.unfocus();
     }
   }
 
   void _onPointerMove(PointerMoveEvent event) {
-    // Ignore pointer events while resizing images
-    if (widget.document.isResizingImage) return;
+    if (widget.document.isResizingImage || widget.document.isResizingTable) return;
     
     final downPos = _pointerDownPosition;
     if (downPos == null) return;
@@ -145,23 +122,17 @@ class _VirtualizedSelectableAreaState extends State<VirtualizedSelectableArea> {
     final distance = (event.position - downPos).distance;
 
     if (!_isDragging && !_isScrolling && distance > _kDragThreshold) {
-      // Finger moved past threshold before long-press timeout
-      // Cancel long-press timer as this is either drag or scroll
       _longPressTimer?.cancel();
       
-      // On mobile with vertical movement, prefer scroll over selection
-      // when the movement is predominantly vertical
       final dx = (event.position.dx - downPos.dx).abs();
       final dy = (event.position.dy - downPos.dy).abs();
       
-      if (_isMobilePlatform() && dy > dx * 1.5) {
-        // Predominantly vertical movement on mobile → scroll mode
+      if (_isMobile && dy > dx * 1.5) {
         _isScrolling = true;
         _dismissKeyboard();
         return; // Don't block scroll, let ListView handle it
       }
       
-      // Diagonal or horizontal movement → drag selection
       _isDragging = true;
       _tapTimer?.cancel();
       setState(() {});
@@ -174,8 +145,7 @@ class _VirtualizedSelectableAreaState extends State<VirtualizedSelectableArea> {
   }
 
   void _onPointerUp(PointerUpEvent event) {
-    // Ignore pointer events while resizing images (but still clean up)
-    if (widget.document.isResizingImage) {
+    if (widget.document.isResizingImage || widget.document.isResizingTable) {
       _tapTimer?.cancel();
       _longPressTimer?.cancel();
       _isDragging = false;
@@ -188,37 +158,29 @@ class _VirtualizedSelectableAreaState extends State<VirtualizedSelectableArea> {
     _tapTimer?.cancel();
     _longPressTimer?.cancel();
 
-    if (!_isDragging && !_isScrolling) {
-      // It was a tap (finger never moved past the threshold).
+    if (!_isDragging && !_isScrolling && _pointerDownButtons != kSecondaryMouseButton) {
       _handleTapAt(event.position);
     }
 
     final wasDragging = _isDragging;
     final wasScrolling = _isScrolling;
 
-    // Clean-up shared state.
     _isDragging = false;
     _isScrolling = false;
     _isSelecting = false;
     _pointerDownPosition = null;
+    _pointerDownButtons = 0;
     _selectionUpdateTimer?.cancel();
     _lastSelectionResult = null;
     _lastSelectionPosition = null;
 
     if (wasDragging) {
       setState(() {});
-      // Sync the IME buffer with the new selection so the platform IME
-      // knows about the selected range. Without this, the buffer remains
-      // stale from the previous typing session and IME suggestions produce
-      // incorrect text (e.g., inserting content from the old paragraph).
       widget.document.cursorOnlyUpdate();
-      // Open keyboard after drag selection on mobile.
-      if (_isMobilePlatform()) {
+      if (_isMobile) {
         widget.document.requestMobileKeyboardFocus(context);
       }
     } else if (wasScrolling) {
-      // After scroll, don't automatically reopen keyboard
-      // User can tap to edit when ready
       setState(() {});
     }
   }
@@ -232,8 +194,6 @@ class _VirtualizedSelectableAreaState extends State<VirtualizedSelectableArea> {
     _pointerDownPosition = null;
   }
 
-  // ─── Selection helpers (used by both raw-pointer and gesture paths) ─
-
   void _handleTapAt(Offset position) {
     widget.document.requestEditorFocus();
     final result = _findFragmentAtPosition(position);
@@ -241,7 +201,7 @@ class _VirtualizedSelectableAreaState extends State<VirtualizedSelectableArea> {
       widget.document.selectionManager.clear();
       widget.document.cursor.moveTo(result.fragmentId, result.localOffset);
       widget.document.cursorOnlyUpdate();
-      if (_isMobilePlatform()) {
+      if (_isMobile) {
         widget.document.requestMobileKeyboardFocus(context);
       }
     }
@@ -296,11 +256,6 @@ class _VirtualizedSelectableAreaState extends State<VirtualizedSelectableArea> {
 
   /// Finds the fragment at a position using optimized coordinates
   _FragmentHitResult? _findFragmentAtPosition(Offset globalPosition) {
-    // FAST PRECISE PATH: the pointer is almost always over a currently
-    // rendered paragraph. Hit-test directly against the (few) rendered
-    // paragraphs via the registry — O(visible) and precise — bypassing the
-    // O(n) cumulative-height estimate entirely. This is the hot path during
-    // drag selection on huge documents.
     final hit = widget.document.paragraphRegistry
         .paragraphAtGlobalY(globalPosition.dy);
     if (hit != null) {
@@ -320,23 +275,16 @@ class _VirtualizedSelectableAreaState extends State<VirtualizedSelectableArea> {
 
     final localPosition = renderBox.globalToLocal(globalPosition);
     
-    // Use optimized binary search for item index estimation
     final estimatedItemIndex = _estimateItemIndex(localPosition.dy);
     if (estimatedItemIndex < 0 || estimatedItemIndex >= widget.itemCount) {
       return null;
     }
 
-    // PRECISE PATH (preferred): if the estimated item is currently rendered,
-    // use its RenderBox for exact fragment/offset hit testing. We also probe
-    // the immediate neighbours because the height estimate can be off by one.
     for (final index in _candidateIndices(estimatedItemIndex)) {
       final precise = _preciseHitTest(index, globalPosition);
       if (precise != null) return precise;
     }
 
-    // FALLBACK: the target item is not rendered (off-screen). Use the
-    // coordinate-based heuristic so the selection still anchors somewhere
-    // reasonable until the item scrolls into view.
     return _calculateVirtualizedHitResult(estimatedItemIndex, localPosition);
   }
 
@@ -359,7 +307,6 @@ class _VirtualizedSelectableAreaState extends State<VirtualizedSelectableArea> {
 
     final nodeLocalPosition = box.globalToLocal(globalPosition);
 
-    // Precise text hit testing for paragraphs/links.
     if (box is RenderFluentParagraph) {
       final result = box.getFragmentAtPosition(nodeLocalPosition);
       if (result != null) {
@@ -371,7 +318,6 @@ class _VirtualizedSelectableAreaState extends State<VirtualizedSelectableArea> {
       }
     }
 
-    // Non-text node: only accept the hit if the point is inside its bounds.
     if (nodeLocalPosition.dx >= 0 &&
         nodeLocalPosition.dx <= box.size.width &&
         nodeLocalPosition.dy >= 0 &&
@@ -394,7 +340,6 @@ class _VirtualizedSelectableAreaState extends State<VirtualizedSelectableArea> {
     
     _updateCumulativeHeightsIfNeeded();
     
-    // Binary search in cumulative heights for O(log n) performance
     int left = 0;
     int right = _cumulativeHeights.length - 1;
     
@@ -432,14 +377,13 @@ class _VirtualizedSelectableAreaState extends State<VirtualizedSelectableArea> {
   void _updateItemHeight(int index, double height) {
     if (height <= 0) return;
     final existing = _itemHeights[index];
-    // Ignore sub-pixel changes: avoids invalidating caches on every frame.
     if (existing != null && (existing - height).abs() < 0.5) return;
     if (existing != null) _heightSum -= existing;
     _itemHeights[index] = height;
     _heightSum += height;
     _averageItemHeight = _heightSum / _itemHeights.length;
     _cumulativeHeightsDirty = true;
-    widget.onHeightsChanged?.call(Map.unmodifiable(_itemHeights));
+    widget.onHeightsChanged?.call(index, height);
   }
 
   /// Fallback method for virtualized nodes without RenderBox
@@ -448,10 +392,8 @@ class _VirtualizedSelectableAreaState extends State<VirtualizedSelectableArea> {
     
     final node = widget.document.content.nodes[itemIndex];
     
-    // For paragraphs, try to find a valid fragment
     if (node is Paragraph && node.fragments.isNotEmpty) {
       final fragment = node.fragments.first;
-      // Calculate offset based on horizontal position
       final offset = localPosition.dx > 100 ? 1 : 0; // Simple heuristic
       return _FragmentHitResult(
         nodeId: node.id,
@@ -460,7 +402,6 @@ class _VirtualizedSelectableAreaState extends State<VirtualizedSelectableArea> {
       );
     }
     
-    // For other node types, use the node itself as fragment
     return _FragmentHitResult(
       nodeId: node.id,
       fragmentId: node.id,
@@ -470,7 +411,6 @@ class _VirtualizedSelectableAreaState extends State<VirtualizedSelectableArea> {
 
   @override
   Widget build(BuildContext context) {
-    // When image resize is active, disable text selection cursor and scroll
     final isResizeActive = widget.document.isResizingImage;
     
     return MouseRegion(
@@ -483,14 +423,15 @@ class _VirtualizedSelectableAreaState extends State<VirtualizedSelectableArea> {
         onPointerCancel: _onPointerCancel,
         child: ListView.builder(
           controller: _scrollController,
-          physics: (isResizeActive || _isDragging) 
-              ? const NeverScrollableScrollPhysics() 
+          padding: const EdgeInsets.symmetric(horizontal: 32.0),
+          physics: (isResizeActive || _isDragging)
+              ? const NeverScrollableScrollPhysics()
               : null,
           itemCount: widget.itemCount,
           itemBuilder: (context, index) {
-            // Wrap each item to measure its actual height (only fires when
-            // the size actually changes, see MeasureSize).
+            final node = widget.document.content.nodes[index];
             return _VisibilityTracker(
+              key: ValueKey(node.id),
               document: widget.document,
               index: index,
               child: MeasureSize(
@@ -512,6 +453,7 @@ class _VirtualizedSelectableAreaState extends State<VirtualizedSelectableArea> {
 /// paragraphs are visible without an expensive scroll-computation pass.
 class _VisibilityTracker extends StatefulWidget {
   const _VisibilityTracker({
+    super.key,
     required this.document,
     required this.index,
     required this.child,
@@ -555,8 +497,6 @@ class _VisibilityTrackerState extends State<_VisibilityTracker> {
     }
     final node = widget.document.content.nodes[widget.index];
     if (node is InlineContainerNode) return node.id;
-    // Tables and lists have nested containers; we do not track them at
-    // the top-level because their paragraphs register themselves.
     return null;
   }
 
@@ -600,7 +540,6 @@ class _MeasureSizeRenderObject extends RenderProxyBox {
     final newSize = child?.size ?? Size.zero;
     if (_oldSize != newSize) {
       _oldSize = newSize;
-      // Defer the callback: mutating state during layout is not allowed.
       WidgetsBinding.instance.addPostFrameCallback((_) => onChange(newSize));
     }
   }

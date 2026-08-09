@@ -1,14 +1,11 @@
-// render_paragraph.dart
-// Single TextPainter for the entire paragraph
-// with tracking of fragment positions for ID ↔ offset conversion
-
 import 'dart:ui' show Picture, PictureRecorder;
 
 import 'package:fluent_editor/core/paragraph_registry.dart';
 import 'package:fluent_editor/factories.dart';
 import 'package:fluent_editor/renderers/render_fluent_node.dart';
-import 'package:fluent_editor/spell_check/spell_annotation.dart';
 import 'package:fluent_editor/styles.dart';
+import 'package:fluent_editor/suggestions/suggestion_style_hook.dart';
+import 'package:fluent_editor/renderers/style_hook.dart';
 import 'package:fluent_editor/utils/color_utils.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
@@ -103,8 +100,10 @@ class RenderFluentParagraph extends RenderFluentNode
   );
 
   final List<_FragmentPosition> _fragmentPositions = [];
-  final List<PlaceholderDimensions> _placeholderDimensions = [];
+  final Map<String, _FragmentPosition> _fragmentPositionMap = {};
+  List<PlaceholderDimensions> _placeholderDimensions = [];
   final List<_ScriptSpanInfo> _scriptSpans = [];
+  int _totalTextLength = 0;
 
   String _anchorFragmentId = '';
   int _anchorLocalOffset = -1;
@@ -116,7 +115,6 @@ class RenderFluentParagraph extends RenderFluentNode
   String? _selFocusFragmentId;
   int? _selFocusLocalOffset;
 
-  // ─── IME preedit state ──────────────────────────────────────────
   /// Preedit text rendered with a blue dashed underline during composition.
   String _imePreeditText = '';
   String get imePreeditText => _imePreeditText;
@@ -143,6 +141,16 @@ class RenderFluentParagraph extends RenderFluentNode
   set imePreeditFragmentId(String value) {
     if (_imePreeditFragmentId != value) {
       _imePreeditFragmentId = value;
+      markNeedsLayout();
+    }
+  }
+
+  /// True when in Track Changes (Suggestion) mode, rendering IME preedit as green suggestion preview.
+  bool _isSuggestionMode = false;
+  bool get isSuggestionMode => _isSuggestionMode;
+  set isSuggestionMode(bool value) {
+    if (_isSuggestionMode != value) {
+      _isSuggestionMode = value;
       markNeedsLayout();
     }
   }
@@ -175,6 +183,24 @@ class RenderFluentParagraph extends RenderFluentNode
       node = value as FNode;
     }
     markNeedsLayout();
+  }
+
+  List<RenderStyleHook> _styleHooks = const [];
+  List<RenderStyleHook> get styleHooks => _styleHooks;
+  set styleHooks(List<RenderStyleHook> value) {
+    if (_styleHooks != value) {
+      _styleHooks = value;
+      markNeedsLayout();
+    }
+  }
+
+  SuggestionStyleHook get suggestionStyleHook =>
+      _styleHooks.whereType<SuggestionStyleHook>().firstOrNull ?? const SuggestionStyleHook();
+  set suggestionStyleHook(SuggestionStyleHook value) {
+    final list = List<RenderStyleHook>.from(_styleHooks);
+    list.removeWhere((h) => h is SuggestionStyleHook);
+    list.add(value);
+    styleHooks = list;
   }
 
   double _lineHeight = 1.15;
@@ -247,16 +273,6 @@ class RenderFluentParagraph extends RenderFluentNode
     }
   }
 
-  List<SpellAnnotation> _spellAnnotations = const [];
-  List<SpellAnnotation> get spellAnnotations => _spellAnnotations;
-  set spellAnnotations(List<SpellAnnotation> value) {
-    if (!listEquals(_spellAnnotations, value)) {
-      _spellAnnotations = value;
-      _cachedSpellBoxes = null;
-      markNeedsPaint();
-    }
-  }
-
   List<Map<String, dynamic>> _commentAnnotations = const [];
   List<Map<String, dynamic>> get commentAnnotations => _commentAnnotations;
   set commentAnnotations(List<Map<String, dynamic>> value) {
@@ -294,22 +310,32 @@ class RenderFluentParagraph extends RenderFluentNode
     }
   }
 
-  // ─── Paint caches ───────────────────────────────────────────────
-  // Cached structures to avoid recomputing expensive TextPainter
-  // queries on every paint (e.g. cursor blink, selection highlight).
-
   List<LineMetrics>? _cachedLineMetrics;
   bool _lineMetricsDirty = true;
 
   ({String? aFrag, int? aOff, String? fFrag, int? fOff})? _lastSelectionKey;
   List<TextBox>? _cachedSelectionBoxes;
 
-  List<List<TextBox>>? _cachedSpellBoxes;
-
   List<List<TextBox>>? _cachedCommentBoxes;
 
+  /// Cached inline images from the last layout. Reused in paint to avoid
+  // re-traversing the container's children on every paint frame.
+  List<FluentImage> _cachedInlineImages = const [];
+  InlineContainerNode? _cachedInlineImagesContainer;
+
+  /// Cache for ColorUtils.parseColor results within a layout pass.
+  // Most documents use few distinct colors, so the hit rate is high.
+  // Cleared at the start of each performLayout.
+  final Map<String, Color?> _colorParseCache = {};
+
+  /// Cache for computeLuminance() results within a layout pass.
+  // isDark flips very rarely (e.g. white text on dark background) so the
+  // hit rate is extremely high on typical documents.
+  // Cleared together with _colorParseCache at the start of each performLayout.
+  final Map<Color, bool> _luminanceCache = {};
+
   /// Cached Picture of the pure text layer. Invalidated on layout changes;
-  /// the overlay layer (selection, caret, spell) is painted on top every frame.
+  /// the overlay layer (selection, caret, comments) is painted on top every frame.
   Picture? _cachedTextPicture;
 
   RenderFluentParagraph({
@@ -336,20 +362,12 @@ class RenderFluentParagraph extends RenderFluentNode
        _imeCompositionColor = imeCompositionColor,
        super(node: container as FNode);
 
-  // ─── System fonts changed (web CanvasKit fallback loading) ────────
-  // CanvasKit loads browser fallback fonts asynchronously. When a CJK
-  // character is first shaped, the font may not be ready yet, producing
-  // tofu glyphs. Once the font loads, PaintingBinding fires the systemFonts
-  // notification. We register/unregister in attach/detach so only live
-  // render objects get notified.
   void _handleSystemFontsChanged() {
     _painter.markNeedsLayout();
     _cachedTextPicture?.dispose();
     _cachedTextPicture = null;
     markNeedsLayout();
   }
-
-  // ─── Lifecycle: automatic registration ──────────────────────────
 
   @override
   void attach(PipelineOwner owner) {
@@ -365,28 +383,21 @@ class RenderFluentParagraph extends RenderFluentNode
     super.detach();
   }
 
-  // ─── Helper for properties with fallback from style ────────────────
-
   /// Returns the effective font family for a fragment,
   /// using the paragraph style as fallback.
   String _getEffectiveFontFamily(Fragment fragment) {
-    // Always use the fragment's font family to respect user's font changes
-    // The paragraph style should only be used as a fallback, not as an override
     if (fragment.fontFamily.isNotEmpty) {
       return fragment.fontFamily;
     }
-    // Fallback to paragraph style if fragment has no font
     if (_paragraphStyle?.fontFamily != null) {
       return _paragraphStyle!.fontFamily!;
     }
-    return 'Arial';
+    return 'DejaVu Sans';
   }
 
   /// Returns the effective font size for a fragment,
   /// using the paragraph style as fallback.
   double _getEffectiveFontSize(Fragment fragment) {
-    // If the style is applied and the fragment has the default size,
-    // use the style size
     if (_paragraphStyle?.fontSize != null &&
         fragment.fontSize == 14.0) {
       return _paragraphStyle!.fontSize!;
@@ -394,19 +405,25 @@ class RenderFluentParagraph extends RenderFluentNode
     return fragment.fontSize;
   }
 
-  /// Returns the effective inline styles for a fragment,
-  /// using the paragraph style as base.
-  List<String> _getEffectiveStyles(Fragment fragment) {
-    // If the style has defined styles and the fragment is empty,
-    // use the style styles
+  /// Returns the effective inline styles for a fragment as a [Set] for O(1) lookups.
+  Set<String> _getEffectiveStyles(Fragment fragment) {
     if (_paragraphStyle?.styles != null &&
         (fragment.styles == null || fragment.styles!.isEmpty)) {
-      return _paragraphStyle!.styles!;
+      return _paragraphStyle!.styles!.toSet();
     }
-    return fragment.styles ?? [];
+    return fragment.styles?.toSet() ?? const {};
   }
 
-  // ─── Public API for the resolver ─────────────────────────────────
+  /// Returns whether [color] is perceived as dark, using a per-layout cache
+  /// to avoid repeated [Color.computeLuminance] calls for the same color.
+  bool _cachedIsDark(Color color) {
+    return _luminanceCache.putIfAbsent(color, () => color.computeLuminance() > 0.5);
+  }
+
+  Color? _cachedParseColor(String? hex) {
+    if (hex == null) return null;
+    return _colorParseCache.putIfAbsent(hex, () => ColorUtils.parseColor(hex));
+  }
 
   /// Offset X that shifts the text for alignment (center/right).
   /// When shrinkWrap is true, alignment is managed by the parent.
@@ -426,9 +443,6 @@ class RenderFluentParagraph extends RenderFluentNode
     final globalOffset = _localToGlobal(fragmentId, localOffset);
     if (globalOffset == null) return null;
 
-    // Use the character box for precise X (left/right of the real box).
-    // More accurate than getOffsetForCaret which can round or be wrong
-    // near fragment borders or WidgetSpan.
     TextBox? charBox;
     final textLength = _painter.text?.toPlainText().length ?? 0;
     if (globalOffset > 0 && globalOffset <= textLength) {
@@ -449,7 +463,6 @@ class RenderFluentParagraph extends RenderFluentNode
       return localToGlobal(Offset(x + xAlign, 0)).dx;
     }
 
-    // Fallback
     final caretOffset = _painter.getOffsetForCaret(
       TextPosition(offset: globalOffset),
       Rect.zero,
@@ -461,7 +474,6 @@ class RenderFluentParagraph extends RenderFluentNode
     final globalOffset = _localToGlobal(fragmentId, localOffset);
     if (globalOffset == null) return null;
 
-    // 1. Find the character box at the caret to identify the line.
     TextBox? charBox;
     final textLength = _painter.text?.toPlainText().length ?? 0;
     if (globalOffset > 0 && globalOffset <= textLength) {
@@ -477,10 +489,6 @@ class RenderFluentParagraph extends RenderFluentNode
     }
 
     if (charBox != null) {
-      // 2. The baseline of the line is identical for ALL characters on the same
-      // visual line, regardless of font size. Find it with
-      // computeLineMetrics looking for the line whose baseline falls within
-      // the vertical range of the character box.
       if (_lineMetricsDirty || _cachedLineMetrics == null) {
         _cachedLineMetrics = _painter.computeLineMetrics();
         _lineMetricsDirty = false;
@@ -491,18 +499,15 @@ class RenderFluentParagraph extends RenderFluentNode
           return localToGlobal(Offset(0, lm.baseline)).dy;
         }
       }
-      // If not found (fallback), use the center of the box
       return localToGlobal(Offset(0, (charBox.top + charBox.bottom) / 2)).dy;
     }
 
-    // Fallback for empty document
     final caretOffset = _painter.getOffsetForCaret(
       TextPosition(offset: globalOffset),
       Rect.zero,
     );
     return localToGlobal(caretOffset).dy;
   }
-
 
   /// Returns a [Rect] in global screen coordinates representing the caret line
   /// at [fragmentId]/[localOffset]. Used to position the IME candidate window
@@ -560,12 +565,10 @@ class RenderFluentParagraph extends RenderFluentNode
           );
         }
       }
-      // Fallback: use charBox bounds
       final tl = localToGlobal(Offset(charBox.left + _alignmentXOffset, charBox.top));
       return Rect.fromLTWH(tl.dx, tl.dy, 1.0, charBox.bottom - charBox.top);
     }
 
-    // Empty paragraph fallback
     final caretOffset = _painter.getOffsetForCaret(
       TextPosition(offset: globalOffset), Rect.zero);
     final globalPt = localToGlobal(Offset(caretOffset.dx + _alignmentXOffset, caretOffset.dy));
@@ -575,19 +578,23 @@ class RenderFluentParagraph extends RenderFluentNode
 
   /// Returns true if this paragraph contains the given fragment.
   bool containsFragment(String fragmentId) =>
-      _fragmentPositions.any((p) => p.id == fragmentId);
-
-  // ─── Layout ───────────────────────────────────────────────────────
+      _fragmentPositionMap.containsKey(fragmentId);
 
   @override
   void performLayout() {
     _fragmentPositions.clear();
+    _fragmentPositionMap.clear();
     _placeholderDimensions.clear();
     _scriptSpans.clear();
+    _colorParseCache.clear();
+    _luminanceCache.clear();
 
-    // 1. Pre-layout of children (inline images): need real sizes
-    //    to set PlaceholderDimensions of TextPainter.
     final childSizes = <Size>[];
+    if (!identical(_cachedInlineImagesContainer, _container)) {
+      _cachedInlineImages = collectInlineImages(_container);
+      _cachedInlineImagesContainer = _container;
+    }
+    final inlineImages = _cachedInlineImages;
     var child = firstChild;
     var placeholderIdx = 0;
     while (child != null) {
@@ -596,15 +603,12 @@ class RenderFluentParagraph extends RenderFluentNode
         parentUsesSize: true,
       );
       
-      // Apply stretch logic to inline images
       var childSize = child.size;
-      final inlineImages = collectInlineImages(_container);
       if (placeholderIdx < inlineImages.length) {
         final image = inlineImages[placeholderIdx];
         final originalWidth = image.width ?? 300.0;
         final availableWidth = constraints.maxWidth;
         
-        // Apply stretch logic
         if (originalWidth > availableWidth && availableWidth > 0 && availableWidth != double.infinity) {
           final aspectRatio = (image.height ?? 300.0) / originalWidth;
           childSize = Size(availableWidth, availableWidth * aspectRatio);
@@ -616,8 +620,6 @@ class RenderFluentParagraph extends RenderFluentNode
       placeholderIdx++;
     }
 
-    // 2. Build the TextSpan and populate _placeholderDimensions using the
-    //    size of children (index 1:1 with visitation order).
     final textSpan = _buildTextSpanAndTrackPositions(_container, childSizes);
 
     _painter.textAlign = textAlign;
@@ -628,15 +630,12 @@ class RenderFluentParagraph extends RenderFluentNode
     _painter.layout(maxWidth: constraints.maxWidth);
     _layoutMaxWidth = constraints.maxWidth;
 
-    // Any layout change invalidates line-metrics and box caches.
     _lineMetricsDirty = true;
     _cachedSelectionBoxes = null;
-    _cachedSpellBoxes = null;
     _cachedCommentBoxes = null;
     _cachedTextPicture?.dispose();
     _cachedTextPicture = null;
 
-    // 3. Position children at offsets calculated by TextPainter.
     final placeholderBoxes = _painter.inlinePlaceholderBoxes ?? const [];
     child = firstChild;
     var i = 0;
@@ -649,25 +648,52 @@ class RenderFluentParagraph extends RenderFluentNode
     }
 
     final width = _shrinkWrap ? _painter.width : constraints.maxWidth;
-    // Ensure empty paragraphs have at least one line of height so they
-    // remain clickable (e.g. empty table cells with a single empty fragment).
     final height = _painter.height > 0
         ? _painter.height
         : _painter.preferredLineHeight;
     size = constraints.constrain(Size(width, height));
+
+    var totalLen = 0;
+    for (final pos in _fragmentPositions) {
+      totalLen += pos.end - pos.start;
+    }
+    _totalTextLength = totalLen;
   }
 
-  /// Builds a TextSpan for the IME preedit text, styled with a blue dashed
-  /// underline. Inherits font properties from [baseStyle].
+  /// Builds a TextSpan for the IME preedit text, styled with rich preview visuals.
+  /// In suggestion mode, renders with a green background and dashed green underline.
+  /// In standard editing mode, renders with a soft blue background and dashed blue underline.
   TextSpan _buildImePreeditSpan(TextStyle? baseStyle) {
     final base = baseStyle ?? const TextStyle();
+    final isDark = base.color != null && base.color!.computeLuminance() > 0.5;
+    if (_isSuggestionMode) {
+      final suggColor = isDark ? const Color(0xFF81C784) : const Color(0xFF1B5E20);
+      final suggBg = isDark ? const Color(0xFF1B5E20).withAlpha(120) : const Color(0xFFC8E6C9);
+      final suggDeco = isDark ? const Color(0xFF66BB6A) : const Color(0xFF2E7D32);
+      return TextSpan(
+        text: _imePreeditText,
+        style: base.copyWith(
+          color: suggColor,
+          backgroundColor: suggBg,
+          decoration: TextDecoration.underline,
+          decorationStyle: TextDecorationStyle.dashed,
+          decorationColor: suggDeco,
+          decorationThickness: 2.0,
+          fontWeight: FontWeight.w600,
+        ),
+      );
+    }
+    final bgAlpha = isDark ? 80 : 50;
     return TextSpan(
       text: _imePreeditText,
       style: base.copyWith(
+        color: isDark ? _imeCompositionColor : _imeCompositionColor,
+        backgroundColor: _imeCompositionColor.withAlpha(bgAlpha),
         decoration: TextDecoration.underline,
         decorationStyle: TextDecorationStyle.dashed,
         decorationColor: _imeCompositionColor,
-        decorationThickness: 1.5,
+        decorationThickness: 2.0,
+        fontWeight: FontWeight.w600,
       ),
     );
   }
@@ -683,7 +709,9 @@ class RenderFluentParagraph extends RenderFluentNode
     GestureRecognizer? recognizer,
   ) {
     final preeditHere = _imePreeditText.isNotEmpty &&
-        _imePreeditFragmentId == fragmentId &&
+        (_imePreeditFragmentId == fragmentId || _imePreeditFragmentId.isEmpty) &&
+        fragmentLocalOffset >= 0 &&
+        fragmentLocalOffset <= text.length;
         fragmentLocalOffset >= 0 &&
         fragmentLocalOffset <= text.length;
     if (!preeditHere) {
@@ -712,7 +740,6 @@ class RenderFluentParagraph extends RenderFluentNode
     void processNode(FNode node, TextStyle? style) {
       switch (node) {
         case FluentList _:
-          // Sublists: rendered separately, do not contribute to text
           break;
 
         case Link link:
@@ -721,23 +748,17 @@ class RenderFluentParagraph extends RenderFluentNode
             decoration: TextDecoration.underline,
             decorationColor: _linkColor,
           );
-          // Check if link contains images - if so, don't add gesture recognizer to allow image gestures
           final hasImages = link.getChildren().any((child) => child is FluentImage);
-          
-          // ignore: avoid_print
-          void onLinkTap() => print('Link tapped: ${link.url}');
-          final recognizer = hasImages ? null : (TapGestureRecognizer()..onTap = onLinkTap);
+
+          final recognizer = hasImages ? null : TapGestureRecognizer();
 
           for (final child in link.getChildren()) {
             if (child is FluentImage) {
-              // Image inside a Link: WidgetSpan placeholder that occupies 1
-              // char (the ZWS) to align with the caret stops rail. The real
-              // drawing happens via the RenderBox children of the paragraph.
               final start = currentOffset;
               final end = currentOffset + child.text.length; // ZWS = 1
-              _fragmentPositions.add(
-                _FragmentPosition(id: child.id, start: start, end: end, isImage: true),
-              );
+              final fp = _FragmentPosition(id: child.id, start: start, end: end, isImage: true);
+              _fragmentPositions.add(fp);
+              _fragmentPositionMap[child.id] = fp;
               final childSize = placeholderIdx < childSizes.length
                   ? childSizes[placeholderIdx]
                   : const Size(1, 1);
@@ -757,63 +778,65 @@ class RenderFluentParagraph extends RenderFluentNode
               final text = child.renderText;
               final start = currentOffset;
               final end = currentOffset + text.length;
-              _fragmentPositions.add(
-                _FragmentPosition(id: child.id, start: start, end: end),
+              final fp = _FragmentPosition(id: child.id, start: start, end: end);
+              _fragmentPositions.add(fp);
+              _fragmentPositionMap[child.id] = fp;
+              final childStyles = child.styles?.toSet() ?? const <String>{};
+              // Collect decoration flags in one pass.
+              final hasBold = childStyles.contains('bold');
+              final hasItalic = childStyles.contains('italic');
+              final hasUnderline = childStyles.contains('underline');
+              final hasStrike = childStyles.contains('strikethrough');
+              final hasSmallcaps = childStyles.contains('smallcaps');
+              final TextDecoration? decoration = (hasUnderline || hasStrike)
+                  ? TextDecoration.combine([
+                      linkStyle.decoration ?? TextDecoration.none,
+                      if (hasUnderline) TextDecoration.underline,
+                      if (hasStrike) TextDecoration.lineThrough,
+                    ])
+                  : null;
+              var effectiveStyle = linkStyle.copyWith(
+                fontWeight: hasBold ? FontWeight.bold : null,
+                fontStyle: hasItalic ? FontStyle.italic : null,
+                decoration: decoration,
+                fontFeatures: hasSmallcaps
+                    ? [...(linkStyle.fontFeatures ?? []), const FontFeature.enable('smcp')]
+                    : null,
+                fontFamily: _getEffectiveFontFamily(child),
+                fontFamilyFallback: const ['NotoColorEmoji', 'Roboto'],
+                fontSize: _getEffectiveFontSize(child),
+                color: _cachedParseColor(child.color) ?? linkStyle.color,
+                backgroundColor: _cachedParseColor(child.highlightColor),
               );
-              var effectiveStyle = linkStyle;
-              final childStyles = child.styles;
-              if (childStyles != null && childStyles.isNotEmpty) {
-                if (childStyles.contains('bold')) {
-                  effectiveStyle = effectiveStyle.copyWith(fontWeight: FontWeight.bold);
-                }
-                if (childStyles.contains('italic')) {
-                  effectiveStyle = effectiveStyle.copyWith(fontStyle: FontStyle.italic);
-                }
-                if (childStyles.contains('underline')) {
-                  effectiveStyle = effectiveStyle.copyWith(
-                    decoration: TextDecoration.combine([
-                      effectiveStyle.decoration ?? TextDecoration.none,
-                      TextDecoration.underline,
-                    ]),
-                  );
-                }
-                if (childStyles.contains('strikethrough')) {
-                  effectiveStyle = effectiveStyle.copyWith(
-                    decoration: TextDecoration.combine([
-                      effectiveStyle.decoration ?? TextDecoration.none,
-                      TextDecoration.lineThrough,
-                    ]),
-                  );
-                }
-                if (childStyles.contains('smallcaps')) {
-                  effectiveStyle = effectiveStyle.copyWith(
-                    fontFeatures: [...(effectiveStyle.fontFeatures ?? []), const FontFeature.enable('smcp')],
+
+              TextStyle activeChildStyle = effectiveStyle;
+              final isDark = _cachedIsDark(activeChildStyle.color ?? defaultTextColor);
+              final activeHooks = _styleHooks;
+              for (final hook in activeHooks) {
+                if (hook.appliesTo(child.styles, child)) {
+                  activeChildStyle = hook.resolveStyle(
+                    activeChildStyle,
+                    isDark: isDark,
+                    fragment: child,
+                    styles: child.styles ?? const [],
+                    document: null,
                   );
                 }
               }
-              effectiveStyle = effectiveStyle.copyWith(
-                fontFamily: _getEffectiveFontFamily(child),
-                fontSize: _getEffectiveFontSize(child),
-                color: ColorUtils.parseColor(child.color) ?? effectiveStyle.color,
-                backgroundColor: ColorUtils.parseColor(child.highlightColor),
-              );
+              effectiveStyle = activeChildStyle;
               
-              // Handle superscript/subscript: insert transparent text for space, paint with offset later
               if (childStyles != null && (childStyles.contains('superscript') || childStyles.contains('subscript'))) {
                 final fontSize = effectiveStyle.fontSize ?? 14;
                 final isSuperscript = childStyles.contains('superscript');
-                // Ensure the style has a color (inherit from defaultTextColor if child.color is null)
                 final scriptColor = effectiveStyle.color ?? defaultTextColor;
                 final adjustedStyle = effectiveStyle.copyWith(
                   fontSize: fontSize * 0.65,
                   color: scriptColor,
                 );
-                // Insert transparent text so it occupies the right space
                 final transparentStyle = adjustedStyle.copyWith(color: const Color(0x00000000));
                 spans.add(
                   TextSpan(text: text, style: transparentStyle, recognizer: recognizer),
                 );
-                // Track for custom paint
                 _scriptSpans.add(_ScriptSpanInfo(
                   globalStart: start,
                   globalEnd: end,
@@ -836,9 +859,9 @@ class RenderFluentParagraph extends RenderFluentNode
         case FluentImage image:
           final start = currentOffset;
           final end = currentOffset + image.text.length; // ZWS = 1
-          _fragmentPositions.add(
-            _FragmentPosition(id: image.id, start: start, end: end, isImage: true),
-          );
+          final fp = _FragmentPosition(id: image.id, start: start, end: end, isImage: true);
+          _fragmentPositions.add(fp);
+          _fragmentPositionMap[image.id] = fp;
           final childSize = placeholderIdx < childSizes.length
               ? childSizes[placeholderIdx]
               : const Size(1, 1);
@@ -866,47 +889,55 @@ class RenderFluentParagraph extends RenderFluentNode
           final text = fragment.renderText;
           final start = currentOffset;
           final end = currentOffset + text.length;
-          _fragmentPositions.add(
-            _FragmentPosition(id: fragment.id, start: start, end: end),
-          );
-          TextStyle? effectiveStyle = style;
+          final fp = _FragmentPosition(id: fragment.id, start: start, end: end);
+          _fragmentPositions.add(fp);
+          _fragmentPositionMap[fragment.id] = fp;
+          // Use Set for O(1) style lookups.
           final styles = _getEffectiveStyles(fragment);
-          if (styles.isNotEmpty) {
-            effectiveStyle = effectiveStyle ?? const TextStyle();
-            if (styles.contains('bold')) {
-              effectiveStyle = effectiveStyle.copyWith(fontWeight: FontWeight.bold);
-            }
-            if (styles.contains('italic')) {
-              effectiveStyle = effectiveStyle.copyWith(fontStyle: FontStyle.italic);
-            }
-            if (styles.contains('underline')) {
-              effectiveStyle = effectiveStyle.copyWith(decoration: TextDecoration.underline);
-            }
-            if (styles.contains('strikethrough')) {
-              effectiveStyle = effectiveStyle.copyWith(
-                decoration: TextDecoration.combine([
-                  effectiveStyle.decoration ?? TextDecoration.none,
-                  TextDecoration.lineThrough,
-                ]),
-              );
-            }
-            if (styles.contains('smallcaps')) {
-              effectiveStyle = effectiveStyle.copyWith(
-                fontFeatures: [...(effectiveStyle.fontFeatures ?? []), const FontFeature.enable('smcp')],
+          // Collect decoration flags in one pass.
+          final hasBold = styles.contains('bold');
+          final hasItalic = styles.contains('italic');
+          final hasUnderline = styles.contains('underline');
+          final hasStrike = styles.contains('strikethrough');
+          final hasSmallcaps = styles.contains('smallcaps');
+          final baseStyle = style ?? const TextStyle();
+          final TextDecoration? decoration = (hasUnderline || hasStrike)
+              ? TextDecoration.combine([
+                  baseStyle.decoration ?? TextDecoration.none,
+                  if (hasUnderline) TextDecoration.underline,
+                  if (hasStrike) TextDecoration.lineThrough,
+                ])
+              : null;
+          TextStyle effectiveStyle = baseStyle.copyWith(
+            fontWeight: hasBold ? FontWeight.bold : null,
+            fontStyle: hasItalic ? FontStyle.italic : null,
+            decoration: decoration,
+            fontFeatures: hasSmallcaps
+                ? [...(baseStyle.fontFeatures ?? []), const FontFeature.enable('smcp')]
+                : null,
+            fontFamily: _getEffectiveFontFamily(fragment),
+            fontFamilyFallback: const ['NotoColorEmoji', 'Roboto'],
+            fontSize: _getEffectiveFontSize(fragment),
+            color: _cachedParseColor(fragment.color),
+            backgroundColor: _cachedParseColor(fragment.highlightColor),
+          );
+
+          TextStyle activeStyle = effectiveStyle;
+          final isDark = _cachedIsDark(activeStyle.color ?? defaultTextColor);
+          final activeHooks = _styleHooks;
+          for (final hook in activeHooks) {
+            if (hook.appliesTo(fragment.styles, fragment)) {
+              activeStyle = hook.resolveStyle(
+                activeStyle,
+                isDark: isDark,
+                fragment: fragment,
+                styles: fragment.styles ?? const [],
+                document: null,
               );
             }
           }
-          final fontFamily = _getEffectiveFontFamily(fragment);
-          // Use fontFamily directly - fonts are bundled locally in assets/google_fonts/
-          effectiveStyle = (effectiveStyle ?? const TextStyle()).copyWith(
-            fontFamily: fontFamily,
-            fontSize: _getEffectiveFontSize(fragment),
-            color: ColorUtils.parseColor(fragment.color),
-            backgroundColor: ColorUtils.parseColor(fragment.highlightColor),
-          );
+          effectiveStyle = activeStyle;
 
-          // If underline or strikethrough is present but no explicit decoration color
-          // is set, make the decoration inherit the text color.
           if (effectiveStyle.decoration != null &&
               effectiveStyle.decoration != TextDecoration.none &&
               effectiveStyle.decorationColor == null) {
@@ -915,15 +946,12 @@ class RenderFluentParagraph extends RenderFluentNode
             );
           }
 
-          // Handle superscript/subscript: insert transparent text for space, paint with offset later
           if (styles.contains('superscript') || styles.contains('subscript')) {
             final fontSize = effectiveStyle.fontSize ?? 14;
             final isSuperscript = styles.contains('superscript');
             final adjustedStyle = effectiveStyle.copyWith(fontSize: fontSize * 0.65);
-            // Insert transparent text so it occupies the right space
             final transparentStyle = adjustedStyle.copyWith(color: const Color(0x00000000));
             spans.add(TextSpan(text: text, style: transparentStyle));
-            // Track for custom paint
             _scriptSpans.add(_ScriptSpanInfo(
               globalStart: start,
               globalEnd: end,
@@ -952,19 +980,19 @@ class RenderFluentParagraph extends RenderFluentNode
 
     return TextSpan(
       children: spans,
-      style: TextStyle(height: lineHeight, color: _defaultTextColor),
+      style: TextStyle(
+        height: lineHeight,
+        color: _defaultTextColor,
+        fontFamilyFallback: const ['NotoColorEmoji'],
+      ),
     );
   }
 
-  // ─── Local ↔ global conversions ─────────────────────────────────
-
   int? _localToGlobal(String fragmentId, int localOffset) {
-    for (final pos in _fragmentPositions) {
-      if (pos.id == fragmentId) {
-        final global = pos.toGlobal(localOffset);
-        if (global >= pos.start && global <= pos.end) return global;
-        return null;
-      }
+    final pos = _fragmentPositionMap[fragmentId];
+    if (pos != null) {
+      final global = pos.toGlobal(localOffset);
+      if (global >= pos.start && global <= pos.end) return global;
     }
     return null;
   }
@@ -976,7 +1004,6 @@ class RenderFluentParagraph extends RenderFluentNode
       }
     }
 
-    // If the offset is beyond the last fragment, return the end of the last
     if (_fragmentPositions.isNotEmpty) {
       final lastPos = _fragmentPositions.last;
       final totalLength = _getTotalTextLength();
@@ -1002,28 +1029,15 @@ class RenderFluentParagraph extends RenderFluentNode
     );
   }
 
-  // ─── Hit testing (tap/click) ──────────────────────────────────────
-
   ({String fragmentId, int localOffset})? getFragmentAtPosition(
     Offset position,
   ) {
-    // The TextPainter works in coordinates relative to the text (x=0).
-    // Subtract the alignment offset to map the local position
-    // of the render object to TextPainter coordinates.
     final adjustedPosition = position - Offset(_alignmentXOffset, 0);
 
-    // FAST PATH: TextPainter.getPositionForOffset does a binary search
-    // internally (O(log n)) and returns the closest text position. This
-    // replaces the O(n) character-by-character loop that called
-    // getBoxesForSelection once per character — a major bottleneck during
-    // drag selection on long paragraphs (1000+ characters).
     final textPosition = _painter.getPositionForOffset(adjustedPosition);
     final result = _globalToLocal(textPosition.offset);
     if (result != null) return result;
 
-    // FALLBACK: if getPositionForOffset returns an offset that does not
-    // map to any fragment (should be rare), use line metrics to find the
-    // nearest character on the target line.
     if (_lineMetricsDirty || _cachedLineMetrics == null) {
       _cachedLineMetrics = _painter.computeLineMetrics();
       _lineMetricsDirty = false;
@@ -1051,12 +1065,25 @@ class RenderFluentParagraph extends RenderFluentNode
     final targetLineBottom =
         targetLineMetric.baseline + targetLineMetric.descent;
 
+    // Limit the scan to only the character range of the target line,
+    // instead of iterating every character of every fragment.
+    final lineStartOffset = targetLine > 0
+        ? (lineMetrics[targetLine - 1].baseline + lineMetrics[targetLine - 1].descent).round()
+        : 0;
+    final lineBoundary = _painter.getLineBoundary(TextPosition(offset: lineStartOffset));
+    final scanStart = lineBoundary.start;
+    final scanEnd = lineBoundary.end;
+
     String? bestFragmentId;
     int bestLocalOffset = 0;
     double bestXDistance = double.infinity;
 
     for (final fragment in _fragmentPositions) {
-      for (int offset = 0; offset < fragment.textLength; offset++) {
+      // Skip fragments entirely outside the target line's offset range
+      if (fragment.end <= scanStart || fragment.start >= scanEnd) continue;
+      final fragScanStart = fragment.start > scanStart ? fragment.start : scanStart;
+      final fragScanEnd = fragment.end < scanEnd ? fragment.end : scanEnd;
+      for (int offset = fragScanStart - fragment.start; offset < fragScanEnd - fragment.start; offset++) {
         final globalOffset = fragment.start + offset;
 
         final boxes = _painter.getBoxesForSelection(
@@ -1101,8 +1128,6 @@ class RenderFluentParagraph extends RenderFluentNode
       return (fragmentId: bestFragmentId, localOffset: bestLocalOffset);
     }
 
-    // Fallback for empty paragraphs (e.g. empty table cells): return the
-    // first fragment at offset 0 so taps still place the cursor.
     if (_fragmentPositions.isNotEmpty) {
       return (fragmentId: _fragmentPositions.first.id, localOffset: 0);
     }
@@ -1133,14 +1158,18 @@ class RenderFluentParagraph extends RenderFluentNode
     );
   }
 
-  // ─── Cursor / Selection setters ───────────────────────────────────
-
   void setCursorOffsets(
     String anchorFragmentId,
     int anchorLocal,
     String? focusFragmentId,
     int? focusLocal,
   ) {
+    if (_anchorFragmentId == anchorFragmentId &&
+        _anchorLocalOffset == anchorLocal &&
+        _focusFragmentId == focusFragmentId &&
+        _focusLocalOffset == focusLocal) {
+      return;
+    }
     _anchorFragmentId = anchorFragmentId;
     _anchorLocalOffset = anchorLocal;
     _focusFragmentId = focusFragmentId;
@@ -1154,9 +1183,6 @@ class RenderFluentParagraph extends RenderFluentNode
     String? focusFragmentId,
     int? focusLocalOffset,
   ) {
-    // Skip repaint when the range is identical — crucial during key-hold
-    // where _syncSelectionManager touches every visible paragraph but
-    // only a few actually changed.
     if (_selAnchorFragmentId == anchorFragmentId &&
         _selAnchorLocalOffset == anchorLocalOffset &&
         _selFocusFragmentId == focusFragmentId &&
@@ -1171,8 +1197,6 @@ class RenderFluentParagraph extends RenderFluentNode
     markNeedsPaint();
   }
 
-  // ─── Paint ────────────────────────────────────────────────────────
-
   @override
   void paint(PaintingContext context, Offset offset) {
     final xOffset = _shrinkWrap
@@ -1184,74 +1208,32 @@ class RenderFluentParagraph extends RenderFluentNode
           };
     final alignedOffset = offset + Offset(xOffset, 0);
 
-    // Build the static text Picture on first paint after layout.
-    _cachedTextPicture ??= _buildTextPicture(alignedOffset);
+    _cachedTextPicture ??= _buildTextPicture();
 
-    // 1. Selection "under" the text (classic look)
     _paintSelection(context.canvas, alignedOffset);
-    // 1.5 Comment highlights (under the text)
     _paintCommentHighlights(context.canvas, alignedOffset);
-    // 2. Text (cached Picture — avoids re-executing Skia text rasterisation)
+    context.canvas.save();
+    context.canvas.translate(alignedOffset.dx, alignedOffset.dy);
     context.canvas.drawPicture(_cachedTextPicture!);
-    // 3. Inline images (RenderBox children) above placeholders
+    context.canvas.restore();
     var child = firstChild;
     while (child != null) {
       final parentData = child.parentData as FluentInlineParentData;
       context.paintChild(child, alignedOffset + parentData.offset);
       child = parentData.nextSibling;
     }
-    // 4. Selection overlay above images
     _paintSelectionOverlayOnImages(context.canvas, alignedOffset);
-    // 5. Spell check wavy underline
-    _paintSpellErrors(context.canvas, alignedOffset);
-    // 6. Cursor on top of everything
     _paintCursor(context.canvas, alignedOffset);
   }
 
   /// Records the pure text + script spans into a [Picture] so they are
   /// rasterised once per layout instead of on every paint frame.
-  Picture _buildTextPicture(Offset offset) {
+  Picture _buildTextPicture() {
     final recorder = PictureRecorder();
     final canvas = Canvas(recorder);
-    _painter.paint(canvas, offset);
-    _paintScriptSpans(canvas, offset);
+    _painter.paint(canvas, Offset.zero);
+    _paintScriptSpans(canvas, Offset.zero);
     return recorder.endRecording();
-  }
-
-  /// Paints red wavy underlines for each spell annotation.
-  /// Amplitude 2 px, wavelength 4 px, 1.5 px below the baseline.
-  void _paintSpellErrors(Canvas canvas, Offset offset) {
-    if (_spellAnnotations.isEmpty) return;
-
-    final paint = Paint()
-      ..color = const Color(0xFFE53935)
-      ..strokeWidth = 1.2
-      ..style = PaintingStyle.stroke;
-
-    _cachedSpellBoxes ??= _spellAnnotations.map((ann) {
-      return _painter.getBoxesForSelection(
-        TextSelection(baseOffset: ann.startOffset, extentOffset: ann.endOffset),
-      );
-    }).toList();
-
-    for (int i = 0; i < _spellAnnotations.length; i++) {
-      final boxes = _cachedSpellBoxes![i];
-      for (final box in boxes) {
-        final rect = box.toRect().translate(offset.dx, offset.dy);
-        final baselineY = rect.bottom + 1.5;
-        final path = Path();
-        const amplitude = 2.0;
-        const wavelength = 4.0;
-        var x = rect.left;
-        path.moveTo(x, baselineY);
-        while (x < rect.right) {
-          x += wavelength / 2;
-          final y = ((x ~/ wavelength) % 2 == 0) ? baselineY - amplitude : baselineY + amplitude;
-          path.lineTo(x.clamp(rect.left, rect.right), y);
-        }
-        canvas.drawPath(path, paint);
-      }
-    }
   }
 
   /// Paints yellow/orange semi-transparent rectangles under commented text.
@@ -1289,7 +1271,6 @@ class RenderFluentParagraph extends RenderFluentNode
   /// Paints superscript/subscript fragments with vertical offset.
   void _paintScriptSpans(Canvas canvas, Offset offset) {
     for (final info in _scriptSpans) {
-      // Find the position of the first character of the span in TextPainter
       final boxes = _painter.getBoxesForSelection(
         TextSelection(baseOffset: info.globalStart, extentOffset: info.globalEnd),
       );
@@ -1297,10 +1278,8 @@ class RenderFluentParagraph extends RenderFluentNode
 
       final box = boxes.first;
       final fontSize = info.style.fontSize ?? 14;
-      // Superscript: shift up; Subscript: shift down
       final yShift = info.isSuperscript ? -(fontSize * 0.45) : (fontSize * 0.25);
       
-      // Ensure the style has a color
       final scriptColor = info.style.color ?? defaultTextColor;
       final scriptStyle = info.style.copyWith(color: scriptColor);
       
@@ -1320,15 +1299,14 @@ class RenderFluentParagraph extends RenderFluentNode
   }
 
   int? _fragmentOffsetToGlobal(String fragmentId, int localOffset) {
-    for (final pos in _fragmentPositions) {
-      if (pos.id == fragmentId) {
-        final effectiveOffset =
-            (localOffset < 0 || localOffset > pos.textLength)
-            ? pos.textLength
-            : localOffset;
-        final global = pos.start + effectiveOffset;
-        if (global >= pos.start && global <= pos.end) return global;
-      }
+    final pos = _fragmentPositionMap[fragmentId];
+    if (pos != null) {
+      final effectiveOffset =
+          (localOffset < 0 || localOffset > pos.textLength)
+          ? pos.textLength
+          : localOffset;
+      final global = pos.start + effectiveOffset;
+      if (global >= pos.start && global <= pos.end) return global;
     }
     return null;
   }
@@ -1402,20 +1380,14 @@ class RenderFluentParagraph extends RenderFluentNode
     final end = baseGlobal < extentGlobal ? extentGlobal : baseGlobal;
 
     final placeholderBoxes = _painter.inlinePlaceholderBoxes ?? const [];
-    final inlineImages = collectInlineImages(_container);
+    final inlineImages = _cachedInlineImages;
 
-    // The order of placeholderBoxes matches that of inlineImages.
     final overlayPaint = Paint()
       ..color = selectionColor.withValues(alpha: 0.4);
     for (var i = 0; i < placeholderBoxes.length && i < inlineImages.length; i++) {
-      // Find the global position of the image
       final imgId = inlineImages[i].id;
-      _FragmentPosition? pos;
-      for (final p in _fragmentPositions) {
-        if (p.id == imgId) { pos = p; break; }
-      }
+      final pos = _fragmentPositionMap[imgId];
       if (pos == null) continue;
-      // If the placeholder is entirely inside the selection
       if (pos.start >= start && pos.end <= end) {
         canvas.drawRect(
           placeholderBoxes[i].toRect().translate(offset.dx, offset.dy),
@@ -1425,13 +1397,7 @@ class RenderFluentParagraph extends RenderFluentNode
     }
   }
 
-  int _getTotalTextLength() {
-    var length = 0;
-    for (final pos in _fragmentPositions) {
-      length += pos.end - pos.start;
-    }
-    return length;
-  }
+  int _getTotalTextLength() => _totalTextLength;
 
   void _paintCursor(Canvas canvas, Offset offset) {
     String fragmentId;
@@ -1449,19 +1415,9 @@ class RenderFluentParagraph extends RenderFluentNode
 
     if (focusGlobal == null || focusGlobal < 0) return;
 
-    // Blink: the editor's periodic timer toggles registry.caretVisible and
-    // resets it to true on movement. Skip painting while in the hidden phase.
     if (!registry.caretVisible) return;
 
-    // If the cursor is on an inline image, draw vertical lines at the borders
-    // of the placeholder instead of the thin text line.
-    _FragmentPosition? fragPos;
-    for (final p in _fragmentPositions) {
-      if (p.id == fragmentId) {
-        fragPos = p;
-        break;
-      }
-    }
+    _FragmentPosition? fragPos = _fragmentPositionMap[fragmentId];
     if (fragPos != null && fragPos.isImage) {
       final boxes = _painter.getBoxesForSelection(
         TextSelection(baseOffset: fragPos.start, extentOffset: fragPos.end),
@@ -1481,8 +1437,6 @@ class RenderFluentParagraph extends RenderFluentNode
       }
     }
 
-    // Use the character box to correctly position the cursor
-    // both in height and vertically, adapting to the real font size.
     TextBox? charBox;
     final textLength = _painter.text?.toPlainText().length ?? 0;
     if (focusGlobal > 0 && focusGlobal <= textLength) {
@@ -1511,7 +1465,6 @@ class RenderFluentParagraph extends RenderFluentNode
       return;
     }
 
-    // Fallback for empty document
     final cursorOffset = _painter.getOffsetForCaret(
       TextPosition(offset: focusGlobal),
       Rect.zero,

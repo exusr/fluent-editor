@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:fluent_editor/factories.dart';
 import 'package:fluent_editor/fluent_document.dart';
 import 'package:fluent_editor/undo_redo/document_delta.dart';
+import 'package:flutter/foundation.dart';
 
 /// Lightweight snapshot of top-level nodes used to build deltas.
 /// Stores only node VERSIONS (integers) for O(n) dirty detection,
@@ -11,12 +12,9 @@ class _PendingSnapshot {
   String description;
   final DateTime timestamp;
 
-  /// Version of every top-level node at the time of capture.
-  /// Used for O(1) dirty detection in commitSaveState.
-  final List<int> oldVersions;
-
-  /// Full JSON of every top-level node. Only the changed ones
-  /// are actually read; the rest are discarded after commit.
+  /// Full JSON of every top-level node at capture time.
+  /// Reused from [_jsonCache] when possible to avoid re-serializing
+  /// unchanged nodes on every beginSaveState call.
   final List<Map<String, dynamic>> oldTopLevelNodes;
 
   final CursorSnapshot oldCursor;
@@ -24,10 +22,21 @@ class _PendingSnapshot {
   _PendingSnapshot({
     required this.description,
     required this.timestamp,
-    required this.oldVersions,
     required this.oldTopLevelNodes,
     required this.oldCursor,
   });
+}
+
+/// Result of committing a document saveState operation.
+enum SaveStateResult {
+  /// A new delta was created and pushed to the undo stack.
+  created,
+
+  /// The changes were merged into the previous delta on the undo stack.
+  merged,
+
+  /// No changes were detected; no delta was created or merged.
+  noChange,
 }
 
 /// Undo/Redo system manager using node-level deltas instead of
@@ -51,12 +60,15 @@ class UndoRedoManager {
   /// [commitSaveState] (called from [updateContent]).
   _PendingSnapshot? _pending;
 
+  /// Cache of nodeId → JSON from the last committed state.
+  /// Lets beginSaveState reuse the pre-mutation JSON without
+  /// re-serializing unchanged nodes (O(changed) instead of O(n)).
+  final Map<String, Map<String, dynamic>> _jsonCache = {};
+
   bool get canUndo => _undoStack.isNotEmpty;
   bool get canRedo => _redoStack.isNotEmpty;
   int get undoCount => _undoStack.length;
   int get redoCount => _redoStack.length;
-
-  // ─── Capture / Commit (called by FluentDocument) ──────────────────
 
   /// Called BEFORE a mutation. Captures the old state of all top-level
   /// nodes so [commitSaveState] can compute a minimal delta afterwards.
@@ -69,9 +81,6 @@ class UndoRedoManager {
 
     final now = DateTime.now();
 
-    // If we already have a pending snapshot and the description is the
-    // same and within the grouping window, just extend the timer — the
-    // old pending snapshot is still valid because no mutation happened yet.
     if (!forceNewAction &&
         _pending != null &&
         !_forceNewAction &&
@@ -79,27 +88,36 @@ class UndoRedoManager {
         description == _currentGroupDescription &&
         _lastActionTime != null &&
         now.difference(_lastActionTime!) <= _groupingTimeout) {
-      // Same burst: update timer but keep the SAME old snapshot.
       _pending!.description = description;
       _groupingTimer?.cancel();
       _groupingTimer = Timer(_groupingTimeout, _resetGrouping);
       return;
     }
 
-    // If there's a stale pending snapshot that was never committed,
-    // drop it silently (can happen if a programmatic change skipped
-    // updateContent).
     if (_pending != null) {
       _pending = null;
     }
 
-    // Capture the old state of every top-level node.
     final nodes = document.content.nodes;
+    final currentIds = <String>{};
+    final oldJsonList = <Map<String, dynamic>>[];
+    for (final node in nodes) {
+      currentIds.add(node.id);
+      final cached = _jsonCache[node.id];
+      if (cached != null) {
+        oldJsonList.add(cached);
+      } else {
+        final json = _deepCopyJsonMap(node.toJson());
+        _jsonCache[node.id] = json;
+        oldJsonList.add(json);
+      }
+    }
+    // Evict stale entries for nodes no longer in the document.
+    _jsonCache.removeWhere((id, _) => !currentIds.contains(id));
     _pending = _PendingSnapshot(
       description: description,
       timestamp: now,
-      oldVersions: nodes.map((n) => n.contentVersion).toList(),
-      oldTopLevelNodes: nodes.map((n) => n.toJson()).toList(),
+      oldTopLevelNodes: oldJsonList,
       oldCursor: CursorSnapshot.fromDocument(document),
     );
 
@@ -113,9 +131,10 @@ class UndoRedoManager {
   /// Called AFTER a mutation (from [FluentDocument.updateContent]).
   /// Compares the current top-level nodes with the pending snapshot,
   /// builds a minimal [DocumentDelta], and pushes it onto the undo stack.
-  void commitSaveState(FluentDocument document) {
-    if (_isRestoringState) return;
-    if (_pending == null) return; // no pending snapshot = nothing to commit
+  /// Returns a [SaveStateResult] indicating whether a new delta was created,
+  /// merged into an existing delta, or if no changes occurred.
+  SaveStateResult commitSaveState(FluentDocument document) {
+    if (_isRestoringState || _pending == null) return SaveStateResult.noChange;
 
     final pending = _pending!;
     final newNodes = document.content.nodes;
@@ -124,71 +143,41 @@ class UndoRedoManager {
     final changes = <NodeChange>[];
 
     if (newNodes.length == oldNodes.length) {
-      // Same node count: fast path for Paragraphs using text-length check.
-      // Only serialise nodes whose text changed or whose text is the same
-      // but styles may have changed (rare).
       for (int i = 0; i < oldNodes.length; i++) {
         final oldJson = oldNodes[i];
         final newNode = newNodes[i];
 
-        // Fast path: Paragraphs whose text length changed are definitely dirty.
-        if (newNode is Paragraph) {
-          final oldText = oldJson['text'] as String? ?? '';
-          if (newNode.text.length != oldText.length || newNode.text != oldText) {
-            changes.add(NodeChange(
-              index: i,
-              oldJson: oldJson,
-              newJson: newNode.toJson(),
-            ));
-            continue;
-          }
-          // Text is identical: check alignment/indent/styles quickly.
-          if (oldJson['textAlign'] != newNode.textAlign ||
-              oldJson['indent'] != newNode.indent ||
-              oldJson['styleName'] != newNode.styleName) {
-            changes.add(NodeChange(
-              index: i,
-              oldJson: oldJson,
-              newJson: newNode.toJson(),
-            ));
-            continue;
-          }
-          // Paragraph text and meta are identical: skip serialisation.
-          continue;
-        }
-
-        // Non-paragraph nodes: serialise and compare (rare case).
         final newJson = newNode.toJson();
         if (!_mapsEqual(oldJson, newJson)) {
+          final frozenNewJson = _deepCopyJsonMap(newJson);
           changes.add(NodeChange(
             index: i,
             oldJson: oldJson,
-            newJson: newJson,
+            newJson: frozenNewJson,
           ));
         }
       }
     } else {
-      // Node count changed: must compare by serialising each new node.
       final maxLen = oldNodes.length > newNodes.length
           ? oldNodes.length
           : newNodes.length;
       for (int i = 0; i < maxLen; i++) {
         final oldJson = i < oldNodes.length ? oldNodes[i] : null;
-        final newJson = i < newNodes.length ? newNodes[i].toJson() : null;
+        final newNode = i < newNodes.length ? newNodes[i] : null;
+        final newJson = newNode?.toJson();
         if (oldJson == null || newJson == null || !_mapsEqual(oldJson, newJson)) {
           changes.add(NodeChange(
             index: i,
             oldJson: oldJson ?? <String, dynamic>{},
-            newJson: newJson ?? <String, dynamic>{},
+            newJson: newJson != null ? _deepCopyJsonMap(newJson) : <String, dynamic>{},
           ));
         }
       }
     }
 
-    // If nothing actually changed, discard the pending snapshot.
     if (changes.isEmpty) {
       _pending = null;
-      return;
+      return SaveStateResult.noChange;
     }
 
     final delta = NodeReplaceDelta(
@@ -199,8 +188,6 @@ class UndoRedoManager {
       newCursor: CursorSnapshot.fromDocument(document),
     );
 
-    // Merge with the last delta if we are still in the same group
-    // and the action was not forced.
     if (_currentGroupDescription != null &&
         _currentGroupDescription == pending.description &&
         _undoStack.isNotEmpty &&
@@ -215,7 +202,6 @@ class UndoRedoManager {
         for (final c in delta.changes) {
           final existing = mergedChanges[c.index];
           if (existing != null) {
-            // Keep the oldest oldJson and the newest newJson.
             mergedChanges[c.index] = NodeChange(
               index: c.index,
               oldJson: existing.oldJson,
@@ -235,18 +221,19 @@ class UndoRedoManager {
         _undoStack.last = mergedDelta;
         _pending = null;
         _redoStack.clear();
+        _updateJsonCacheFromChanges(document, mergedChanges.values.toList());
         _enforceMemoryLimit();
-        return;
+        return SaveStateResult.merged;
       }
     }
 
     _undoStack.add(delta);
     _redoStack.clear();
     _pending = null;
+    _updateJsonCacheFromChanges(document, changes);
     _enforceMemoryLimit();
+    return SaveStateResult.created;
   }
-
-  // ─── Undo / Redo ────────────────────────────────────────────────
 
   bool undo(FluentDocument document) {
     if (!canUndo) return false;
@@ -258,16 +245,15 @@ class UndoRedoManager {
     try {
       delta.revert(document);
     } catch (e, st) {
-      print('[UNDO_ERROR] revert failed: $e\n$st');
-      // Remove the corrupted delta so it doesn't crash again.
+      debugPrint('[UNDO_ERROR] revert failed: $e\n$st');
       _redoStack.removeLast();
       return false;
     } finally {
       _isRestoringState = false;
     }
-    // Notify only the widgets whose nodes were touched by this delta.
     final affectedIds = _collectAffectedIds(delta, document);
     document.notifyDocumentChanged(affectedIds: affectedIds);
+    _updateJsonCache(document);
     _resetGrouping();
     return true;
   }
@@ -282,15 +268,15 @@ class UndoRedoManager {
     try {
       delta.apply(document);
     } catch (e, st) {
-      print('[UNDO_ERROR] apply failed: $e\n$st');
+      debugPrint('[UNDO_ERROR] apply failed: $e\n$st');
       _undoStack.removeLast();
       return false;
     } finally {
       _isRestoringState = false;
     }
-    // Notify only the widgets whose nodes were touched by this delta.
     final affectedIds = _collectAffectedIds(delta, document);
     document.notifyDocumentChanged(affectedIds: affectedIds);
+    _updateJsonCache(document);
     _resetGrouping();
     return true;
   }
@@ -309,8 +295,6 @@ class UndoRedoManager {
         ids.add(document.content.nodes[delta.index].id);
       }
     } else if (delta is NodeDeleteDelta) {
-      // After delete, the node is gone; no ID to invalidate.
-      // The neighbouring nodes (if any) are the best approximation.
       if (delta.index < document.content.nodes.length) {
         ids.add(document.content.nodes[delta.index].id);
       }
@@ -321,12 +305,11 @@ class UndoRedoManager {
     return ids;
   }
 
-  // ─── Helpers ────────────────────────────────────────────────────
-
   void clear() {
     _undoStack.clear();
     _redoStack.clear();
     _pending = null;
+    _jsonCache.clear();
     _resetGrouping();
   }
 
@@ -368,6 +351,46 @@ class UndoRedoManager {
     _lastActionTime = null;
   }
 
+  /// Refreshes [_jsonCache] with the current state of all top-level nodes.
+  /// Called after undo/redo so the next beginSaveState can reuse the cached
+  /// JSON for unchanged nodes.
+  void _updateJsonCache(FluentDocument document) {
+    _jsonCache.clear();
+    for (final node in document.content.nodes) {
+      _jsonCache[node.id] = node.toJson();
+    }
+  }
+
+  /// Incrementally updates [_jsonCache] using the [changes] from a commit.
+  /// Only changed nodes are re-serialized; unchanged entries are kept.
+  /// Ceiling: O(changed_nodes) instead of O(all_nodes). Upgrade path: if
+  /// the document grows very large, this is already optimal per-commit.
+  void _updateJsonCacheFromChanges(
+    FluentDocument document,
+    List<NodeChange> changes,
+  ) {
+    final newNodes = document.content.nodes;
+    final currentIds = <String>{};
+    for (final node in newNodes) {
+      currentIds.add(node.id);
+    }
+    // Remove deleted nodes from cache
+    final deletedIds = <String>[];
+    _jsonCache.forEach((id, _) {
+      if (!currentIds.contains(id)) deletedIds.add(id);
+    });
+    for (final id in deletedIds) {
+      _jsonCache.remove(id);
+    }
+    // Update changed nodes from pre-serialized newJson
+    for (final change in changes) {
+      if (change.index < newNodes.length) {
+        final node = newNodes[change.index];
+        _jsonCache[node.id] = change.newJson;
+      }
+    }
+  }
+
   void dispose() {
     _groupingTimer?.cancel();
     clear();
@@ -404,4 +427,35 @@ bool _mapsEqual(Map<String, dynamic> a, Map<String, dynamic> b) {
     }
   }
   return true;
+}
+
+Map<String, dynamic> _deepCopyJsonMap(Map<String, dynamic> map) {
+  final copy = <String, dynamic>{};
+  for (final entry in map.entries) {
+    final value = entry.value;
+    if (value is Map<String, dynamic>) {
+      copy[entry.key] = _deepCopyJsonMap(value);
+    } else if (value is Map) {
+      copy[entry.key] = _deepCopyJsonMap(value.cast<String, dynamic>());
+    } else if (value is List) {
+      copy[entry.key] = _deepCopyJsonList(value);
+    } else {
+      copy[entry.key] = value;
+    }
+  }
+  return copy;
+}
+
+List<dynamic> _deepCopyJsonList(List list) {
+  return list.map((item) {
+    if (item is Map<String, dynamic>) {
+      return _deepCopyJsonMap(item);
+    } else if (item is Map) {
+      return _deepCopyJsonMap(item.cast<String, dynamic>());
+    } else if (item is List) {
+      return _deepCopyJsonList(item);
+    } else {
+      return item;
+    }
+  }).toList();
 }

@@ -5,7 +5,7 @@
 
 set -e
 
-ASSETS_DIR="$(dirname "$0")/../assets/google_fonts"
+ASSETS_DIR="$(dirname "$0")/../assets/fonts"
 REPO_URL="https://github.com/google/fonts/raw/main"
 
 # Create assets directory if it doesn't exist

@@ -5,14 +5,14 @@ import 'package:flutter/services.dart';
 import 'package:fluent_editor/factories.dart';
 import 'package:fluent_editor/fluent_document.dart';
 import 'package:fluent_editor/utils/fragment_operations.dart';
-import 'package:fluent_editor/utils/resolve_selection.dart';
+import 'package:fluent_editor/utils/handler_helpers.dart';
 import 'package:flutter/material.dart';
 
 const _channel = MethodChannel('com.fluenteditor/fonts');
 
 /// Fallback for unsupported platforms or in case of error.
 const _fallbackFonts = <String>[
-  'Arial',
+  'DejaVu Sans',
   'Calibri',
   'Cambria',
   'Comic Sans MS',
@@ -29,7 +29,7 @@ const _fallbackFonts = <String>[
 ];
 
 /// Curated list of popular Google Fonts for web.
-/// These fonts are bundled locally in assets/google_fonts/.
+/// These fonts are bundled locally in assets/fonts/.
 /// To add more fonts, place .ttf files in that directory and update this list.
 const _googleFontsForWeb = <String>[
   'DejaVu Sans',
@@ -40,40 +40,30 @@ const _googleFontsForWeb = <String>[
   'Titillium Web',
 ];
 
-// ─── Font names to exclude (symbols, icons, internal system fonts) ──────
-
 /// Fonts to always exclude, regardless of platform.
 const _blocklist = <String>{
-  // Symbols and dingbats
   'Wingdings', 'Wingdings 2', 'Wingdings 3',
   'Webdings', 'Symbol', 'Marlett',
   'MT Extra', 'Bookshelf Symbol 7',
-  // Windows system fonts (internal UI, not for documents)
   'MS UI Gothic', 'Microsoft Sans Serif',
   'Small Fonts', 'Terminal', 'Fixedsys', 'System', 'Modern', 'Roman', 'Script',
-  // macOS system fonts
   '.AppleSystemUIFont', '.SF NS', 'Apple Braille', 'Apple Color Emoji',
   'Apple SD Gothic Neo', 'Apple Symbols',
   'LastResort', 'Keyboard', 'Zapf Dingbats',
-  // Common Linux system fonts
   'cursor', 'fixed',
 };
 
 /// Prefixes that identify internal/hidden operating system fonts.
 final _internalPrefixes = ['.', '#'];
 
-// ─── Regex to identify non-Latin scripts ─────────────────────────────────
-
 /// Typical Unicode characters of non-Latin scripts in the font *name*.
 /// Note: it's not necessary to filter CJK fonts by name on fc-list —
 /// fc-list already returns families like "Noto Sans CJK SC"; we exclude them
 /// with the ASCII name pattern, not searching for Unicode characters in the name.
 final _nonLatinNamePatterns = <RegExp>[
-  // Names with CJK, Devanagari, Arabic, Hangul etc. characters in the name itself
   RegExp(r'[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af\u0600-\u06ff'
       r'\u0590-\u05ff\u0900-\u097f\u0e00-\u0e7f]'),
   
-  // ASCII names that explicitly indicate a non-Latin script (CORRECTED HERE)
   RegExp(
     r'\b(CJK|Noto\s+(?:Sans|Serif)\s+(?:SC|TC|HK|JP|KR|Mono)|'
     r'SimSun|SimHei|SimKai|FangSong|KaiTi|'
@@ -87,15 +77,19 @@ final _nonLatinNamePatterns = <RegExp>[
   ),
 ];
 
-// ─── Font retrieval by platform ───────────────────────────────────────────
-
 /// Returns the list of Google Fonts bundled locally for web.
 /// These fonts are registered in pubspec.yaml and loaded from
-/// assets/google_fonts/ without network requests.
+/// assets/fonts/ without network requests.
 List<String> _getWebFonts() {
-  // Return the curated list directly - fonts are registered in pubspec.yaml
   return _googleFontsForWeb;
 }
+
+/// Fonts bundled with the fluent_editor package, always available.
+const _bundledFonts = <String>[
+  'DejaVu Sans', 'DejaVu Serif', 'DejaVu Sans Mono',
+  'Crimson Text', 'Fira Sans', 'Lato', 'Poppins', 'Titillium Web',
+  'Barlow', 'SpaceMono',
+];
 
 /// Retrieves available font families on the current system.
 /// Returns an ordered, deduplicated, and filtered list.
@@ -116,19 +110,21 @@ Future<List<String>> getSystemFonts() async {
     return _fallbackFonts;
   }
 
-  if (raw.isEmpty) return _fallbackFonts;
+  if (raw.isEmpty) return [..._bundledFonts, ..._fallbackFonts];
 
-  return _postProcess(raw);
+  return _postProcess([..._bundledFonts, ...raw]);
 }
 
-/// Mobile: uses Platform Channel; fallback to minimal list.
+/// Mobile: uses Platform Channel; fallback to bundled + common fonts.
 Future<List<String>> _getMobileFonts() async {
   try {
     final List<dynamic> fonts = await _channel.invokeMethod('getSystemFonts');
     return fonts.cast<String>();
   } catch (_) {
     return const [
-      'Arial', 'Roboto', 'Courier New', 'Georgia',
+      'DejaVu Sans', 'DejaVu Serif', 'DejaVu Sans Mono',
+      'Crimson Text', 'Fira Sans', 'Lato', 'Poppins', 'Titillium Web',
+      'DejaVu Sans', 'Roboto', 'Courier New', 'Georgia',
       'Times New Roman', 'Verdana', 'Tahoma',
     ];
   }
@@ -138,7 +134,6 @@ Future<List<String>> _getMobileFonts() async {
 /// Example output: "DejaVu Sans,DejaVu Sans Book:style=Book,..."
 Future<List<String>> _getLinuxFonts() async {
   try {
-    // Get system locale (e.g., "it_IT" -> "it")
     final locale = Platform.localeName.split('_').first;
     final result = await Process.run('fc-list', [':lang=$locale', 'family']);
     if (result.exitCode == 0 && (result.stdout as String).isNotEmpty) {
@@ -150,7 +145,6 @@ Future<List<String>> _getLinuxFonts() async {
 
 /// macOS: try fc-list first (Homebrew), then CTFontManager via system_profiler.
 Future<List<String>> _getMacOSFonts() async {
-  // Attempt 1: fc-list (available if installed with Homebrew)
   try {
     final locale = Platform.localeName.split('_').first;
     final result = await Process.run('fc-list', [':lang=$locale', 'family']);
@@ -159,7 +153,6 @@ Future<List<String>> _getMacOSFonts() async {
     }
   } catch (_) {}
 
-  // Attempt 2: system_profiler (natively available on macOS)
   try {
     final result = await Process.run(
       'system_profiler', ['SPFontsDataType', '-json'],
@@ -201,8 +194,6 @@ Future<List<String>> _getWindowsFonts() async {
   return [];
 }
 
-// ─── Parsers for different output formats ──────────────────────────────────
-
 /// Parses the output of `fc-list : family`.
 /// Each line can contain multiple names separated by comma (e.g. localized names).
 /// We take the first name per line (usually the ASCII/Latin one).
@@ -211,7 +202,6 @@ List<String> _parseFcList(String output) {
   for (final line in output.split('\n')) {
     final trimmed = line.trim();
     if (trimmed.isEmpty) continue;
-    // fc-list separates alternative names with comma
     final name = trimmed.split(',').first.trim();
     if (name.isNotEmpty) families.add(name);
   }
@@ -222,12 +212,10 @@ List<String> _parseFcList(String output) {
 /// Searches for "family" (preferred) or "name" fields in the raw JSON.
 List<String> _parseSystemProfiler(String output) {
   final families = <String>{};
-  // First look for the "family" field (direct family name)
   final familyRegex = RegExp(r'"family"\s*:\s*"([^"]+)"');
   for (final m in familyRegex.allMatches(output)) {
     families.add(m.group(1)!);
   }
-  // If nothing found, fallback to the "name" field
   if (families.isEmpty) {
     final nameRegex = RegExp(r'"name"\s*:\s*"([^"]+)"');
     for (final m in nameRegex.allMatches(output)) {
@@ -237,36 +225,27 @@ List<String> _parseSystemProfiler(String output) {
   return families.toList();
 }
 
-// ─── Common post-processing ───────────────────────────────────────────────────
-
 /// Applies all filters and returns an ordered and deduplicated list.
 List<String> _postProcess(List<String> raw) {
   final seen = <String>{};   // key: lowercase for deduplication
   final result = <String>[];
 
-  // Pre-trim to use for variant detection
   final allFonts = raw.map((f) => f.trim()).where((f) => f.isNotEmpty).toList();
 
   for (final font in raw) {
     final trimmed = font.trim();
     if (trimmed.isEmpty) continue;
 
-    // 1. Filter hidden internal fonts (names starting with '.' or '#')
     if (_internalPrefixes.any((p) => trimmed.startsWith(p))) continue;
 
-    // 2. Filter by exact blocklist
     if (_blocklist.contains(trimmed)) continue;
 
-    // 3. Filter fonts with names containing non-Latin scripts or known patterns
     if (_isNonLatinFont(trimmed)) continue;
 
-    // 4. Filter symbol fonts recognizable by name
     if (_isSymbolFont(trimmed)) continue;
 
-    // 5. Filter style variants (e.g. "Cascadia Mono Light" when "Cascadia Mono" exists)
     if (_isStyleVariant(trimmed, allFonts)) continue;
 
-    // 6. Case-insensitive deduplication
     final key = trimmed.toLowerCase();
     if (!seen.add(key)) continue;
 
@@ -308,8 +287,6 @@ bool _isStyleVariant(String font, List<String> allFonts) {
   return false;
 }
 
-// ─── Widget ──────────────────────────────────────────────────────────────────
-
 class FluentFontSelectorWidget extends StatefulWidget {
   final FluentDocument document;
 
@@ -321,7 +298,7 @@ class FluentFontSelectorWidget extends StatefulWidget {
 }
 
 class _FluentFontSelectorWidgetState extends State<FluentFontSelectorWidget> {
-  String _currentFont = 'Arial';
+  String _currentFont = 'DejaVu Sans';
   List<String> _availableFonts = _fallbackFonts;
 
   _FluentFontSelectorWidgetState() {
@@ -367,42 +344,26 @@ class _FluentFontSelectorWidgetState extends State<FluentFontSelectorWidget> {
   void _updateFont() {
     final font = _resolveCurrentFont();
     if (font != _currentFont) {
-      setState(() => _currentFont = font.isEmpty ? 'Arial' : font);
+      setState(() => _currentFont = font.isEmpty ? 'DejaVu Sans' : font);
     }
   }
 
   String _resolveCurrentFont() {
     final document = widget.document;
     final cursor = document.cursor;
-    final root = document.content;
 
     if (cursor.anchorId != cursor.focusId ||
         cursor.anchorOffset != cursor.focusOffset) {
-      final selection = resolveSelection(
-        root,
-        cursor.anchorId,
-        cursor.anchorOffset,
-        cursor.focusId,
-        cursor.focusOffset,
-        cachedStops: document.caretStops,
-        cachedLines: document.logicalLines,
-      );
+      final selection = resolveSelectionFromCursor(document);
       if (selection != null) {
         final fonts = <String?>{};
         for (final node in selection.nodes) {
-          final leaves =
-              FragmentOperations.collectLeafFragments(node.container as FNode);
-          bool inRange = false;
-          for (final leaf in leaves) {
-            if (leaf.id == node.startFragment.id) inRange = true;
-            if (inRange && leaf is! FluentImage) {
-              fonts.add(leaf.fontFamily);
-            }
-            if (leaf.id == node.endFragment.id) inRange = false;
+          for (final leaf in FragmentOperations.collectLeavesInRange(node)) {
+            fonts.add(leaf.fontFamily);
           }
         }
-        if (fonts.length == 1) return fonts.single ?? 'Arial';
-        return 'Arial';
+        if (fonts.length == 1) return fonts.single ?? 'DejaVu Sans';
+        return 'DejaVu Sans';
       }
     }
 
@@ -412,56 +373,57 @@ class _FluentFontSelectorWidgetState extends State<FluentFontSelectorWidget> {
   }
 
   /// Returns the safe value for the DropdownButton.
-  /// Priority: current font → Arial → first available font → null.
+  /// Priority: current font → DejaVu Sans → first available font → null.
   String? _getDropdownValue() {
     if (_availableFonts.contains(_currentFont)) return _currentFont;
-    if (_availableFonts.contains('Arial')) return 'Arial';
+    if (_availableFonts.contains('DejaVu Sans')) return 'DejaVu Sans';
     return _availableFonts.isNotEmpty ? _availableFonts.first : null;
   }
 
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final isDisabled = widget.document.registry.isFormattingDisabled(widget.document);
 
     return MouseRegion(
-      cursor: SystemMouseCursors.click,
+      cursor: isDisabled ? SystemMouseCursors.basic : SystemMouseCursors.click,
       child: ConstrainedBox(
         constraints: const BoxConstraints(minWidth: 150),
         child: Container(
           height: 32,
           padding: const EdgeInsets.symmetric(horizontal: 8),
           decoration: BoxDecoration(
-            color: colorScheme.surfaceContainerHighest.withAlpha(100),
+            color: colorScheme.surfaceContainerHighest.withAlpha(isDisabled ? 40 : 100),
             borderRadius: BorderRadius.circular(4),
             border: Border.all(
-              color: colorScheme.outline.withAlpha(100),
+              color: colorScheme.outline.withAlpha(isDisabled ? 40 : 100),
             ),
           ),
           child: DropdownButtonHideUnderline(
             child: DropdownButton<String>(
               value: _getDropdownValue(),
               isDense: true,
-              icon: const Icon(Icons.arrow_drop_down, size: 18),
+              icon: Icon(Icons.arrow_drop_down, size: 18, color: isDisabled ? colorScheme.onSurface.withAlpha(90) : null),
               style: TextStyle(
                 fontSize: 13,
-                color: colorScheme.onSurface,
+                color: isDisabled ? colorScheme.onSurface.withAlpha(90) : colorScheme.onSurface,
               ),
               selectedItemBuilder: (context) {
-                // Use TextStyle with fontFamily to avoid network requests
-                // Fonts are loaded from local assets/google_fonts/
                 return _availableFonts.map((font) {
                   return Center(
                     child: Text(
                       _currentFont,
                       overflow: TextOverflow.ellipsis,
-                      style: TextStyle(fontFamily: _currentFont, fontSize: 13),
+                      style: TextStyle(
+                        fontFamily: _currentFont,
+                        fontSize: 13,
+                        color: isDisabled ? colorScheme.onSurface.withAlpha(90) : null,
+                      ),
                     ),
                   );
                 }).toList();
               },
               items: _availableFonts.map((String font) {
-                // Use TextStyle with fontFamily to avoid network requests
-                // Fonts are loaded from local assets/google_fonts/
                 return DropdownMenuItem<String>(
                   value: font,
                   child: Text(
@@ -470,14 +432,16 @@ class _FluentFontSelectorWidgetState extends State<FluentFontSelectorWidget> {
                   ),
                 );
               }).toList(),
-              onChanged: (String? newValue) {
-                if (newValue != null) {
-                  widget.document.eventHandler.handleFontFamily(newValue);
-                  if (kIsWeb || !(Platform.isAndroid || Platform.isIOS)) {
-                    widget.document.requestEditorFocus();
-                  }
-                }
-              },
+              onChanged: widget.document.registry.isFormattingDisabled(widget.document)
+                  ? null
+                  : (String? newValue) {
+                      if (newValue != null) {
+                        widget.document.eventHandler.handleFontFamily(newValue);
+                        if (kIsWeb || !(Platform.isAndroid || Platform.isIOS)) {
+                          widget.document.requestEditorFocus();
+                        }
+                      }
+                    },
             ),
           ),
         ),

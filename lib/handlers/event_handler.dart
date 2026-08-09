@@ -2,7 +2,6 @@ import 'dart:io';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:fluent_editor/fluent_document.dart';
 import 'package:fluent_editor/factories.dart';
-import 'package:fluent_editor/handlers/arrow_key_repeater.dart';
 import 'package:fluent_editor/handlers/handle_arrow_key.dart';
 import 'package:fluent_editor/handlers/handle_backspace.dart';
 import 'package:fluent_editor/handlers/handle_delete.dart';
@@ -24,8 +23,6 @@ import 'package:fluent_editor/renderers/render_paragraph.dart';
 import 'package:fluent_editor/styles.dart';
 import 'package:fluent_editor/utils/cursor_utils.dart';
 import 'package:fluent_editor/utils/cursor_navigation.dart';
-import 'package:fluent_editor/widgets/editor/fluent_link_dialog.dart';
-import 'package:fluent_editor/widgets/dialogs/image_insert_dialog.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'handle_insert_character.dart';
@@ -38,30 +35,16 @@ class EventHandler {
 
   late FluentDocument document;
 
-  // ─── Manual repeat handling for arrow keys (Linux workaround) ─────
-  //
-  // See arrow_key_repeater.dart for details. On non-Linux platforms
-  // this is inert and native KeyRepeatEvent is handled normally.
-
-  late final ArrowKeyRepeater _arrowRepeater = ArrowKeyRepeater(
-    (event) => handleKeyDown(event, document),
-  );
-
-  // Move cursor to tap position (simple tap, collapse selection)
   void onTapDown(TapDownDetails details, BuildContext context, Widget widget) {
     final localOffset = resolvePositionGestureDetails(details, context, widget);
     if (localOffset != null) {
       document.cursor.moveTo(localOffset.id, localOffset.offset);
-      // Collapse global selection
       document.selectionManager.collapse();
       document.syncPendingFontWithCursor();
-      // Tap does NOT mutate content: use cursor-only update to avoid
-      // invalidating caches and committing an empty undo delta.
       document.cursorOnlyUpdate();
     }
   }
 
-  // Version with pre-calculated position (uses coordinates relative to RenderBox)
   void onTapDownWithPosition(
     Offset localPosition,
     RenderBox renderBox,
@@ -71,15 +54,12 @@ class EventHandler {
     final fragmentResult = paragraph.getFragmentAtPosition(localPosition);
     if (fragmentResult != null) {
       document.cursor.moveTo(fragmentResult.fragmentId, fragmentResult.localOffset);
-      // Collapse global selection
       document.selectionManager.collapse();
       document.syncPendingFontWithCursor();
-      // Tap does NOT mutate content: use cursor-only update.
       document.cursorOnlyUpdate();
     }
   }
 
-  // Double-tap to select word
   void onDoubleTapWithPosition(
     Offset localPosition,
     RenderBox renderBox,
@@ -93,37 +73,27 @@ class EventHandler {
         final text = node.text;
         final offset = fragmentResult.localOffset;
 
-        // Find word boundaries
         int start = offset;
         int end = offset;
 
-        // Find start of word
         while (start > 0 && _isWordChar(text[start - 1])) {
           start--;
         }
 
-        // Find end of word
         while (end < text.length && _isWordChar(text[end])) {
           end++;
         }
 
-        // Set selection to the word
         document.cursor.moveTo(node.id, start);
         document.cursor.focusTo(node.id, end);
 
-        // Sync SelectionManager to show visual selection
-        _syncSelectionManager(document);
+        syncSelectionManager(document);
 
-        // Double-tap does NOT mutate content: cursor-only update.
         document.cursorOnlyUpdate();
       }
     }
   }
 
-  // Triple-tap to select the entire logical line.
-  // Uses RenderFluentParagraph.getLineBoundsAtOffset which performs
-  // an O(log n) TextPainter lookup instead of building all logical
-  // lines of the document (O(n_documento)).
   void onTripleTapWithPosition(
     Offset localPosition,
     RenderBox renderBox,
@@ -136,9 +106,8 @@ class EventHandler {
     document.cursor.moveTo(bounds.startFrag, bounds.startOff);
     document.cursor.focusTo(bounds.endFrag, bounds.endOff);
 
-    _syncSelectionManager(document);
+    syncSelectionManager(document);
     document.syncPendingFontWithCursor();
-    // Triple-tap does NOT mutate content: cursor-only update.
     document.cursorOnlyUpdate();
   }
 
@@ -149,40 +118,6 @@ class EventHandler {
 
   bool _isWordChar(String char) {
     return _wordCharRe.hasMatch(char);
-  }
-
-  /// Synchronizes SelectionManager with the current cursor state.
-  /// Called after every movement, with or without shift.
-  void _syncSelectionManager(FluentDocument document) {
-    final cursor = document.cursor;
-
-    if (cursor.isCollapsed) {
-      // No selection: collapse
-      document.selectionManager.collapse();
-      return;
-    }
-
-    final anchorNodeId = document.findLogicalContainerId(cursor.anchorId);
-    final focusNodeId  = document.findLogicalContainerId(cursor.focusId);
-
-    if (anchorNodeId == null || focusNodeId == null) {
-      document.selectionManager.collapse();
-      return;
-    }
-
-    // Start selection with anchor
-    document.selectionManager.startSelection(
-      anchorNodeId,
-      cursor.anchorId,
-      cursor.anchorOffset,
-    );
-
-    // Update focus
-    document.selectionManager.updateFocus(
-      focusNodeId,
-      cursor.focusId,
-      cursor.focusOffset,
-    );
   }
 
   void updateModifiers(KeyEvent event) {
@@ -198,71 +133,54 @@ class EventHandler {
   }
 
   void handleInsertNode(String nodeType, [Map<String, dynamic>? options]) {
-    options ??= <String, dynamic>{
+    final opts = options ?? <String, dynamic>{
       'rows': 2,
       'cells': 2,
       'url': 'https://google.com',
       'src': 'https://picsum.photos/200/300',
     };
 
-    // Save state before node insertion
+    if (document.registry.dispatchInsertNode(document, nodeType, opts)) return;
+
     document.saveState(description: 'Insert $nodeType', forceNewAction: true);
-    handleInsertNodeExceution(nodeType, document, options);
+    handleInsertNodeExceution(nodeType, document, opts);
   }
 
-  void handle(dynamic event, FluentDocument document) {
-    if (event is KeyEvent) {
-      if (event is KeyDownEvent) {
-        updateModifiers(event);
-      }
-      if (event is KeyUpEvent) {
-        updateModifiers(event);
-        if (_arrowRepeater.isActive && _arrowRepeater.supportsRepeat(event.logicalKey)) {
-          _arrowRepeater.stop();
-        }
-      }
-      if (event is KeyRepeatEvent) {
-        updateModifiers(event);
-        // On Linux, arrow key native autorepeat is ignored: repetition is
-        // driven manually by ArrowKeyRepeater instead, to work around
-        // missing repaint during OS-level key autorepeat.
-        if (_arrowRepeater.isActive && _arrowRepeater.supportsRepeat(event.logicalKey)) {
-          return;
-        }
-      }
-      if (event is KeyDownEvent || event is KeyRepeatEvent) {
-        handleKeyDown(event, document);
-      }
-      if (event is KeyDownEvent &&
-          _arrowRepeater.isActive &&
-          _arrowRepeater.supportsRepeat(event.logicalKey)) {
-        this.document = document;
-        _arrowRepeater.start(event, fast: isShiftPressed);
-      }
-    }
-  }
-
-  void handleKeyDown(KeyEvent event, FluentDocument document) {
+  bool handle(dynamic event, FluentDocument document) {
+    if (event is! KeyEvent) return false;
     this.document = document;
-    if (handleBackspaceKey(event)) return;
-    if (handleDeleteKey(event)) return;
-    if (handleMetaActions(event)) return;
-    if (handleEnterKey(event)) return;
-    if (handleTabKey(event)) return;
-    if (handleArrowKeys(event)) return;
-    if (handleHomeKey(event)) return;
-    if (handleEndKey(event)) return;
-    if (handlePageUpKey(event)) return;
-    if (handlePageDownKey(event)) return;
-    handleCharacterInput(event);
+    updateModifiers(event);
+    if (document.registry.dispatchKeyEvent(event, document)) return true;
+    if (handleBackspaceKey(event)) return true;
+    if (handleDeleteKey(event)) return true;
+    if (handleMetaActions(event)) return true;
+    if (handleEnterKey(event)) return true;
+    if (handleTabKey(event)) return true;
+    if (handleArrowKeys(event)) return true;
+    if (handleHomeKey(event)) return true;
+    if (handleEndKey(event)) return true;
+    if (handlePageUpKey(event)) return true;
+    if (handlePageDownKey(event)) return true;
+    return handleCharacterInput(event);
   }
 
   bool handleCharacterInput(KeyEvent event) {
+    if (document.imeHandler.isConnectionActive) {
+      // Let the OS send a TextEditingDelta. Manual insertion kills the OS IME composing session.
+      return false;
+    }
+    
     if (event.character != null && event.character!.isNotEmpty) {
+      if (document.imeHandler.isComposing) {
+        return false;
+      }
       final character = event.character!;
+      final isSpace = character == ' ' || character == '\n' || character == '\r';
 
-      // Save state before modification
-      document.saveState(description: 'Type character: $character');
+      document.saveState(
+        description: 'Type',
+        forceNewAction: isSpace,
+      );
 
       if (document.cursor.isCollapsed) {
         executeHandleInsertCharacter(character, document);
@@ -276,7 +194,14 @@ class EventHandler {
 
   bool handleEnterKey(KeyEvent event) {
     if (event.logicalKey == LogicalKeyboardKey.enter) {
-      // Save state before enter
+      if (document.imeHandler.isComposing) {
+        return false;
+      }
+      if (document.imeHandler.state.justCommittedComposition) {
+        document.imeHandler.state.justCommittedComposition = false;
+        return false;
+      }
+      if (document.registry.dispatchEnter(document)) return true;
       document.saveState(description: 'Enter', forceNewAction: true);
       executeHandleEnter(document);
       return true;
@@ -286,11 +211,10 @@ class EventHandler {
 
   bool handleBackspaceKey(KeyEvent event) {
     if (event.logicalKey == LogicalKeyboardKey.backspace) {
-      // Save state before deletion
-      document.saveState(description: 'Delete', forceNewAction: true);
-      // On macOS Cmd+Backspace deletes to beginning of line; physical
-      // Ctrl+Backspace deletes word. The meta/ctrl keys are swapped in
-      // updateModifiers on macOS, so isCtrlPressed here means Cmd.
+      if (document.imeHandler.isComposing) {
+        return false;
+      }
+      document.saveState(description: 'Delete', forceNewAction: false);
       final isApple = !kIsWeb && (Platform.isMacOS || Platform.isIOS);
       final lineStart = isApple && isCtrlPressed;
       final wordDelete = isApple ? isMetaPressed : isCtrlPressed;
@@ -302,8 +226,7 @@ class EventHandler {
 
   bool handleDeleteKey(KeyEvent event) {
     if (event.logicalKey == LogicalKeyboardKey.delete) {
-      // Save state before deletion
-      document.saveState(description: 'Delete', forceNewAction: true);
+      document.saveState(description: 'Delete', forceNewAction: false);
       executeHandleDelete(document, ctrl: isCtrlPressed);
       return true;
     }
@@ -322,13 +245,12 @@ class EventHandler {
       if (result.position != null) {
         if (isShiftPressed) {
           cursor.focusTo(result.position!.fragmentId, result.position!.offset);
-          _syncSelectionManager(document);
+          syncSelectionManager(document);
         } else {
           cursor.moveTo(result.position!.fragmentId, result.position!.offset);
           document.selectionManager.collapse();
         }
         document.syncPendingFontWithCursor();
-        // Home/End do NOT mutate content: cursor-only update.
         document.cursorOnlyUpdate();
       }
       return true;
@@ -348,7 +270,7 @@ class EventHandler {
       if (result.position != null) {
         if (isShiftPressed) {
           cursor.focusTo(result.position!.fragmentId, result.position!.offset);
-          _syncSelectionManager(document);
+          syncSelectionManager(document);
         } else {
           cursor.moveTo(result.position!.fragmentId, result.position!.offset);
           document.selectionManager.collapse();
@@ -379,7 +301,7 @@ class EventHandler {
       if (result.position != null) {
         if (isShiftPressed) {
           cursor.focusTo(result.position!.fragmentId, result.position!.offset);
-          _syncSelectionManager(document);
+          syncSelectionManager(document);
         } else {
           cursor.moveTo(result.position!.fragmentId, result.position!.offset);
           document.selectionManager.collapse();
@@ -411,7 +333,7 @@ class EventHandler {
       if (result.position != null) {
         if (isShiftPressed) {
           cursor.focusTo(result.position!.fragmentId, result.position!.offset);
-          _syncSelectionManager(document);
+          syncSelectionManager(document);
         } else {
           cursor.moveTo(result.position!.fragmentId, result.position!.offset);
           document.selectionManager.collapse();
@@ -430,6 +352,9 @@ class EventHandler {
         event.logicalKey == LogicalKeyboardKey.arrowRight ||
         event.logicalKey == LogicalKeyboardKey.arrowUp ||
         event.logicalKey == LogicalKeyboardKey.arrowDown) {
+      if (document.imeHandler.isComposing) {
+        return false;
+      }
       return executeHandleArrowKey(
         event.logicalKey,
         document,
@@ -442,6 +367,10 @@ class EventHandler {
 
   bool handleTabKey(KeyEvent event) {
     if (event.logicalKey == LogicalKeyboardKey.tab) {
+      if (document.imeHandler.isComposing) {
+        return false;
+      }
+      if (document.registry.dispatchTab(document, isShiftPressed: isShiftPressed)) return true;
       document.saveState(description: isShiftPressed ? 'Outdent' : 'Indent', forceNewAction: true);
       return executeHandleTab(document, shift: isShiftPressed);
     }
@@ -461,7 +390,6 @@ class EventHandler {
       return true;
     }
     if (key == LogicalKeyboardKey.keyV) {
-      // Save state before paste
       document.saveState(description: 'Paste', forceNewAction: true);
       if (isShiftPressed) {
         executeHandlePastePlain(document);
@@ -471,23 +399,19 @@ class EventHandler {
       return true;
     }
     if (key == LogicalKeyboardKey.keyX) {
-      // Save state before cut
       document.saveState(description: 'Cut', forceNewAction: true);
       executeHandleCut(document);
       return true;
     }
     if (key == LogicalKeyboardKey.keyZ) {
       if (isShiftPressed) {
-        // Handle redo (Ctrl+Shift+Z)
         document.redo();
         return true;
       } else {
-        // Handle undo (Ctrl+Z)
         document.undo();
         return true;
       }
     }
-    // Formatting shortcuts
     if (key == LogicalKeyboardKey.keyB) {
       document.saveState(description: 'Bold', forceNewAction: true);
       handleBold();
@@ -507,51 +431,60 @@ class EventHandler {
   }
 
   bool handleBold() {
+    if (document.registry.isFormattingDisabled(document)) return false;
     executeHandleBold(document);
     return true;
   }
 
   bool handleItalic() {
+    if (document.registry.isFormattingDisabled(document)) return false;
     executeHandleItalic(document);
     return true;
   }
 
   bool handleUnderline() {
+    if (document.registry.isFormattingDisabled(document)) return false;
     executeHandleUnderline(document);
     return true;
   }
 
   bool handleStrikethrough() {
+    if (document.registry.isFormattingDisabled(document)) return false;
     document.saveState(description: 'Strikethrough', forceNewAction: true);
     executeHandleStrikethrough(document);
     return true;
   }
 
   bool handleSmallCaps() {
+    if (document.registry.isFormattingDisabled(document)) return false;
     document.saveState(description: 'Small caps', forceNewAction: true);
     executeHandleSmallCaps(document);
     return true;
   }
 
   bool handleSuperscript() {
+    if (document.registry.isFormattingDisabled(document)) return false;
     document.saveState(description: 'Superscript', forceNewAction: true);
     executeHandleSuperscript(document);
     return true;
   }
 
   bool handleSubscript() {
+    if (document.registry.isFormattingDisabled(document)) return false;
     document.saveState(description: 'Subscript', forceNewAction: true);
     executeHandleSubscript(document);
     return true;
   }
 
   bool handleFontFamily(String fontFamily) {
+    if (document.registry.isFormattingDisabled(document)) return false;
     document.saveState(description: 'Change font to $fontFamily');
     executeHandleFontFamily(document, fontFamily);
     return true;
   }
 
   bool handleFontSize(double fontSize) {
+    if (document.registry.isFormattingDisabled(document)) return false;
     document.saveState(description: 'Change font size', forceNewAction: true);
     executeHandleFontSize(document, fontSize);
     return true;
@@ -562,6 +495,7 @@ class EventHandler {
     double? spacingBefore,
     double? spacingAfter,
   }) {
+    if (document.registry.isFormattingDisabled(document)) return false;
     document.saveState(description: 'Change paragraph spacing', forceNewAction: true);
     executeHandleParagraphSpacing(document,
         lineHeight: lineHeight,
@@ -571,12 +505,14 @@ class EventHandler {
   }
 
   bool handleTextColor(String? color) {
+    if (document.registry.isFormattingDisabled(document)) return false;
     document.saveState(description: 'Change text color', forceNewAction: true);
     executeHandleTextColor(document, color);
     return true;
   }
 
   bool handleHighlightColor(String? color) {
+    if (document.registry.isFormattingDisabled(document)) return false;
     document.saveState(description: 'Change highlight color', forceNewAction: true);
     executeHandleHighlightColor(document, color);
     return true;
@@ -589,53 +525,28 @@ class EventHandler {
   }
 
   bool handleTab() {
+    if (document.registry.dispatchTab(document, isShiftPressed: false)) return true;
     document.saveState(description: 'Indent');
     executeHandleTab(document, shift: false);
     return true;
   }
 
   bool handleShiftTab() {
+    if (document.registry.dispatchTab(document, isShiftPressed: true)) return true;
     document.saveState(description: 'Outdent');
     executeHandleTab(document, shift: true);
     return true;
   }
 
   bool handleClearFormatting() {
+    if (document.registry.isFormattingDisabled(document)) return false;
     executeHandleClearFormatting(document);
     return true;
   }
 
-  /// Shows the dialog to insert a link and inserts it if confirmed.
-  void handleInsertLink(BuildContext context) async {
-    final result = await showFluentLinkDialog(context, labels: document.labels);
-    if (result != null) {
-      final url = result['url']!;
-      final text = result['text']!;
-      document.saveState(description: 'Insert link', forceNewAction: true);
-      handleInsertNodeExceution(
-        'link',
-        document,
-        {'url': url, 'text': text},
-      );
-    }
-  }
-
-  /// Shows the dialog to insert an image and inserts it if confirmed.
-  void handleInsertImage(BuildContext context) async {
-    final result = await showImageInsertDialog(context, labels: document.labels);
-    if (result != null) {
-      final src = result['src']!;
-      document.saveState(description: 'Insert image', forceNewAction: true);
-      handleInsertNodeExceution(
-        'image',
-        document,
-        {'src': src},
-      );
-    }
-  }
-
   /// Applies a paragraph style to the current paragraph or selection.
   bool handleParagraphStyle(ParagraphStyle style) {
+    if (document.registry.isFormattingDisabled(document)) return false;
     document.saveState(description: 'Apply paragraph style', forceNewAction: true);
     executeHandleParagraphStyle(document, style);
     return true;

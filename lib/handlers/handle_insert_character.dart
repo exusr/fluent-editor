@@ -1,7 +1,6 @@
 import 'package:fluent_editor/factories.dart';
 import 'package:fluent_editor/fluent_document.dart';
 import 'package:fluent_editor/utils/cursor_utils.dart';
-import 'package:fluent_editor/utils/editor_utils.dart';
 import 'package:fluent_editor/utils/fragment_operations.dart';
 import 'package:fluent_editor/utils/node_operations.dart';
 
@@ -10,18 +9,13 @@ import 'package:fluent_editor/utils/node_operations.dart';
 void executeHandleInsertText(String text, FluentDocument document) {
   if (text.isEmpty) return;
   
-  // Iterate through the text by UTF-16 code units, but preserve surrogate pairs
-  // by checking if we're in the middle of a surrogate pair
   int i = 0;
   while (i < text.length) {
     int charCode = text.codeUnitAt(i);
     
-    // Check if this is a high surrogate (start of emoji)
     if (charCode >= 0xD800 && charCode <= 0xDBFF && i + 1 < text.length) {
       int nextCharCode = text.codeUnitAt(i + 1);
-      // Check if next is a low surrogate
       if (nextCharCode >= 0xDC00 && nextCharCode <= 0xDFFF) {
-        // This is a complete surrogate pair (emoji), insert as one character
         final emoji = text.substring(i, i + 2);
         executeHandleInsertCharacter(emoji, document);
         i += 2;
@@ -29,13 +23,14 @@ void executeHandleInsertText(String text, FluentDocument document) {
       }
     }
     
-    // Regular single code unit character
     executeHandleInsertCharacter(text[i], document);
     i++;
   }
 }
 
 void executeHandleInsertCharacter(String character, FluentDocument document) {
+  if (document.registry.dispatchInsertCharacter(character, document)) return;
+
   final node = getNodeAtCursor(document.eventHandler);
   bool inserted = false;
   bool needsForward = true;
@@ -47,7 +42,6 @@ void executeHandleInsertCharacter(String character, FluentDocument document) {
       indent: document.pendingIndent,
       styleName: document.pendingStyle.name,
     );
-    // Apply style properties to fragments
     final style = document.pendingStyle;
     final firstFrag = newParagraph.fragments.first as Fragment;
     firstFrag.fontFamily = style.fontFamily ?? document.pendingFontFamily;
@@ -61,10 +55,8 @@ void executeHandleInsertCharacter(String character, FluentDocument document) {
     needsForward = false;
   }
 
-  // HorizontalRule: behaves like block-level FluentImage. The character
-  // is inserted in a Paragraph before or after the HR.
   if (node is HorizontalRule) {
-    final parent = findParent(document.content, node);
+    final parent = findParentCached(document, node);
     if (parent != null) {
       final newFrag = FragmentOperations.createFragmentWithPendingStyles(document, character);
       final offset = document.cursor.anchorOffset;
@@ -88,16 +80,11 @@ void executeHandleInsertCharacter(String character, FluentDocument document) {
     }
   }
 
-  // Image: insert a new fragment before or after the image.
-  // If the image is inline (parent Paragraph/Link), insert a naked Fragment.
-  // If it's block-level (parent Root/ListItem/FluentCell/etc.), wrap the
-  // fragment in a Paragraph otherwise it won't be renderable.
   if (node is FluentImage) {
-    final parent = findParent(document.content, node);
+    final parent = findParentCached(document, node);
     if (parent != null) {
       final newFrag = FragmentOperations.createFragmentWithPendingStyles(document, character);
       final offset = document.cursor.anchorOffset;
-      // Inline context: Paragraph or Link accept naked fragments
       final isInlineContext = parent is Paragraph &&
           parent is! FluentList && parent is! FluentTable && parent is! FluentRow;
       if (isInlineContext) {
@@ -109,13 +96,11 @@ void executeHandleInsertCharacter(String character, FluentDocument document) {
           insertAfter(parent, node, newFrag);
         }
       } else {
-        // Block context: wrap in Paragraph
         final wrapper = Paragraph(
           textAlign: document.pendingTextAlign,
           indent: document.pendingIndent,
           styleName: document.pendingStyle.name,
         )..fragments.add(newFrag);
-        // Apply style properties to the fragment
         final style = document.pendingStyle;
         newFrag.fontFamily = style.fontFamily ?? document.pendingFontFamily;
         newFrag.fontSize = style.fontSize ?? document.pendingFontSize;
@@ -141,42 +126,29 @@ void executeHandleInsertCharacter(String character, FluentDocument document) {
         _insertWithPendingFont(document, character, frag, offset);
         return;
       }
-      inserted = insertCharacterInFragment(
-        character,
-        frag,
-        offset,
-      );
+      inserted = FragmentOperations.insertTextInFragment(frag, offset, character);
     }
-  }
-
-  if (node is Fragment && node is! FluentImage && node is! HorizontalRule) {
+  } else if (node is Fragment && node is! FluentImage && node is! HorizontalRule) {
     final frag = node;
     final offset = document.cursor.anchorOffset;
     if (_shouldApplyPendingFont(document, frag)) {
       _insertWithPendingFont(document, character, frag, offset);
       return;
     }
-    inserted = insertCharacterInFragment(
-      character,
-      frag,
-      offset,
-    );
+    inserted = FragmentOperations.insertTextInFragment(frag, offset, character);
   }
 
   if (inserted) {
     if (needsForward) {
-      // Advance cursor by the actual length of the inserted character
-      // (1 for regular chars, 2 for emoji/surrogate pairs)
       final advanceAmount = character.length;
       document.cursor.focusOffset += advanceAmount;
       document.cursor.anchorOffset += advanceAmount;
     }
     document.updateContent();
 
-    // Notify comment system of the text mutation.
     final fragId = document.cursor.anchorId;
     final frag = document.nodeById(fragId);
-    final parent = frag != null ? findParent(document.content, frag) : null;
+    final parent = frag != null ? findParentCached(document, frag) : null;
     if (parent is Paragraph) {
       final globalOffset = document.getGlobalOffsetInParagraph(
         parent.id,
@@ -200,10 +172,10 @@ bool _shouldApplyPendingFont(FluentDocument document, Fragment frag) {
 
 bool _stylesEqual(List<String> a, List<String> b) {
   if (a.length != b.length) return false;
-  final sortedA = List<String>.from(a)..sort();
-  final sortedB = List<String>.from(b)..sort();
-  for (var i = 0; i < sortedA.length; i++) {
-    if (sortedA[i] != sortedB[i]) return false;
+  // Styles lists are typically 0-3 items; linear contains is cheaper
+  // than allocating + sorting two lists on every keystroke.
+  for (final s in a) {
+    if (!b.contains(s)) return false;
   }
   return true;
 }
@@ -217,11 +189,10 @@ void _insertWithPendingFont(
   Fragment frag,
   int offset,
 ) {
-  final parent = findParent(document.content, frag);
+  final parent = findParentCached(document, frag);
   if (parent == null) return;
 
   if (offset == 0) {
-    // Insert the new character BEFORE the current fragment
     final newFrag = FragmentOperations.createFragmentWithPendingStyles(document, character);
     insertBefore(parent, frag, newFrag);
     document.cursor.moveTo(newFrag.id, character.length);
@@ -230,7 +201,6 @@ void _insertWithPendingFont(
   }
 
   if (offset == frag.text.length) {
-    // Insert the new character AFTER the current fragment
     final newFrag = FragmentOperations.createFragmentWithPendingStyles(document, character);
     insertAfter(parent, frag, newFrag);
     document.cursor.moveTo(newFrag.id, character.length);
@@ -238,7 +208,6 @@ void _insertWithPendingFont(
     return;
   }
 
-  // Offset in middle: split into before/after, insert character in middle
   final before = frag.text.substring(0, offset);
   final after = frag.text.substring(offset);
   frag.text = before;

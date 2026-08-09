@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fluent_editor/factories.dart';
+import 'package:fluent_editor/utils/fragment_operations.dart';
 import 'package:fluent_editor/utils/node_operations.dart';
 
 void main() {
@@ -206,7 +207,7 @@ void main() {
         Paragraph(text: 'a'),
         Link(url: 'https://x.com', text: 'b'),
       ]);
-      final fragments = collectAllFragments(root);
+      final fragments = FragmentOperations.collectLeafFragments(root);
       expect(fragments.length, 2);
       expect(fragments[0].text, 'a');
       expect(fragments[1].text, 'b');
@@ -220,7 +221,7 @@ void main() {
           ]),
         ]),
       ]);
-      final fragments = collectAllFragments(root);
+      final fragments = FragmentOperations.collectLeafFragments(root);
       expect(fragments.length, 1);
       expect(fragments.first.text, 'cell');
     });

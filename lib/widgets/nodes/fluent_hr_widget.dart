@@ -63,7 +63,6 @@ class _FluentHrWidgetState extends State<FluentHrWidget> {
   }
 
   void _rebuild() {
-    // Skip rebuild if this node was not touched by the last document change.
     if (!widget.document.isNodeDirty(widget.node.id)) return;
     setState(() {});
   }
@@ -92,17 +91,23 @@ class _FluentHrWidgetState extends State<FluentHrWidget> {
     final cursorBefore = cursorOnHr && cursor.anchorOffset == 0;
     final cursorAfter  = cursorOnHr && cursor.anchorOffset == 1;
 
-    bool isSelected = false;
-    if (!cursor.isCollapsed) {
-      final stops = widget.document.caretStops;
-      final anchorIdx = findStopIndex(stops, cursor.anchorId, cursor.anchorOffset);
-      final focusIdx  = findStopIndex(stops, cursor.focusId,  cursor.focusOffset);
-      final hr0Idx    = findStopIndex(stops, node.id, 0);
-      final hr1Idx    = findStopIndex(stops, node.id, 1);
-      if (anchorIdx >= 0 && focusIdx >= 0 && hr0Idx >= 0 && hr1Idx >= 0) {
-        final lo = anchorIdx < focusIdx ? anchorIdx : focusIdx;
-        final hi = anchorIdx < focusIdx ? focusIdx  : anchorIdx;
-        isSelected = lo <= hr0Idx && hr1Idx <= hi;
+    final isSelected = isNodeInSelectionRange(widget.document.caretStops, cursor, node.id);
+
+    Color? bgTint;
+    Color? hrColor;
+    Border? border;
+
+    for (final hook in widget.document.allStyleHooks) {
+      final res = hook.resolveHrStyle(
+        node,
+        context: context,
+        document: widget.document,
+        isSelected: isSelected,
+      );
+      if (res != null) {
+        if (res.bgTint != null) bgTint = res.bgTint;
+        if (res.hrColor != null) hrColor = res.hrColor;
+        if (res.border != null) border = res.border;
       }
     }
 
@@ -110,17 +115,28 @@ class _FluentHrWidgetState extends State<FluentHrWidget> {
       onTapDown: _onTapDown,
       child: Stack(
         clipBehavior: Clip.none,
+        alignment: Alignment.center,
         children: [
           Container(
             margin: const EdgeInsets.symmetric(vertical: 8),
+            padding: const EdgeInsets.symmetric(vertical: 4),
             decoration: BoxDecoration(
-              color: isSelected
-                  ? Theme.of(context).colorScheme.primary.withValues(alpha: 0.4)
-                  : null,
-              borderRadius: BorderRadius.circular(2),
+              color: bgTint,
+              borderRadius: BorderRadius.circular(4),
+              border: border,
             ),
-            child: const Divider(thickness: 2, height: 18),
+            child: Divider(
+              thickness: 2,
+              height: 18,
+              color: hrColor ?? Theme.of(context).dividerColor,
+            ),
           ),
+          for (final hook in widget.document.allStyleHooks)
+            ...hook.buildNodeOverlayWidgets(
+              node,
+              context: context,
+              document: widget.document,
+            ),
           if (cursorBefore)
             const Positioned(left: 0, top: 0, bottom: 0, child: _CaretLine()),
           if (cursorAfter)

@@ -5,11 +5,9 @@ import 'dart:typed_data';
 
 import 'package:archive/archive.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
-// ignore: unused_import
 import 'package:fluent_editor/factories.dart';
 import 'package:fluent_editor/fluent_document.dart';
 import 'package:fluent_editor/styles.dart';
-import 'package:fluent_editor/utils/editor_utils.dart';
 
 class _CommentSeg {
   final int start;
@@ -34,42 +32,41 @@ class DocxExporter {
 
   final StringBuffer _body = StringBuffer();
 
-  // Relationships (images + hyperlinks): rId -> (type, target, mode)
   final Map<String, _Rel> _rels = {};
   int _relCounter = 1;
 
-  // Embedded images: src -> media file name.
   final Map<String, String> _media = {};
   final Map<String, Uint8List> _mediaBytes = {};
   int _mediaCounter = 0;
   int _docPrId = 1;
 
-  // Fonts used in the document (for embedding).
   final Set<String> _fonts = {};
 
-  // List numbering: FluentList.id -> numId assigned in numbering.xml
   final Map<String, int> _listNumIds = {};
   final List<_NumDef> _numDefs = [];
   int _numIdCounter = 1;
   int _abstractNumIdCounter = 0;
 
-  // Native DOCX comment export state.
   final List<Map<String, dynamic>> _docxComments = [];
   int _commentIdCounter = 0;
   final Map<String, int> _commentIdMap = {};
   final Map<String, int> _replyDocxIds = {}; // "${parentId}_$index" -> replyDocxId
   final Map<String, String> _paragraphParaIds = {}; // paragraph.id -> paraId
+  final Map<String, String> _commentParaIds = {}; // comment internal id -> 8-char hex paraId
+  final Map<String, String> _replyParaIds = {}; // "${commentId}_$replyIndex" -> 8-char hex paraId
 
   Future<Uint8List> build() async {
-    // Pre-assegna gli ID a tutti i commenti e le reply
     final allComments = document.commentProvider?.exportComments() ?? [];
     for (final c in allComments) {
       if (c['resolved'] == true || c['orphan'] == true) continue;
       final docxId = _ensureDocxCommentId(c);
+      final commentId = c['id'] as String;
+      _commentParaIds[commentId] = _generateParaId();
       final replies = (c['replies'] as List<dynamic>?) ?? [];
       for (var ri = 0; ri < replies.length; ri++) {
         final replyId = _commentIdCounter++;
         _replyDocxIds['${docxId}_$ri'] = replyId;
+        _replyParaIds['${commentId}_$ri'] = _generateParaId();
       }
     }
 
@@ -80,7 +77,6 @@ class DocxExporter {
 
     final archive = Archive();
 
-    // Embed system fonts
     for (final fontName in _fonts) {
       final bytes = await _findSystemFontBytes(fontName);
       if (bytes != null) {
@@ -124,7 +120,7 @@ class DocxExporter {
 
   /// Attempts to find a TTF/OTF file for [fontName] on the current OS.
   Future<Uint8List?> _findSystemFontBytes(String fontName) async {
-    if (kIsWeb) return null; // Web doesn't have file system access
+    if (kIsWeb) return null;
 
     final lower = fontName.toLowerCase().replaceAll(' ', '');
     final candidates = <String>[];
@@ -164,7 +160,6 @@ class DocxExporter {
       }
     }
 
-    // Deep search on Windows
     if (Platform.isWindows) {
       final windir = Platform.environment['WINDIR'] ?? r'C:\Windows';
       final fontsDir = Directory('$windir\\Fonts');
@@ -192,8 +187,6 @@ class DocxExporter {
     final b = utf8.encode(content);
     a.addFile(ArchiveFile(path, b.length, b));
   }
-
-  // ─── Nodi ───────────────────────────────────────────────────────────
 
   void _writeNode(FNode node, {int extraIndent = 0}) {
     if (node is FluentImage) {
@@ -313,7 +306,6 @@ class DocxExporter {
       _body.write('</w:tr>');
     }
     _body.write('</w:tbl>');
-    // Empty paragraph after the table (required by Word).
     _body.write('<w:p/>');
   }
 
@@ -333,8 +325,6 @@ class DocxExporter {
     }
     if (!wrote) _body.write('<w:p/>');
   }
-
-  // ─── Inline ─────────────────────────────────────────────────────────
 
   List<_TextSeg> _extractSegments(
       String text, int baseOffset, List<_CommentSeg> segs) {
@@ -396,38 +386,23 @@ class DocxExporter {
       segs.sort((a, b) => a.start.compareTo(b.start));
     }
 
-    // Track which comment IDs have already emitted their Start marker so that
-    // comments spanning multiple fragments do not produce duplicate anchors.
     final startedCommentIds = <int>{};
-    // Track comments that need their End+Reference emitted once the last
-    // overlapping fragment has been processed.  Maps commentId -> comment data.
-    // We emit End markers at the boundary where the comment no longer overlaps.
-    // Simpler approach: collect all comment IDs that overlap with each fragment
-    // range and emit Start only on first encounter, End only when the comment
-    // range ends before or at the current fragment's end.
-    // We use per-comment "last fragment end offset" tracking instead.
 
     void _emitCommentStarts(
         Map<String, dynamic> comment, int docxId, List<dynamic> replies) {
       if (startedCommentIds.contains(docxId)) return;
       startedCommentIds.add(docxId);
       _body.write('<w:commentRangeStart w:id="$docxId"/>');
-      for (var ri = 0; ri < replies.length; ri++) {
-        final replyId = _replyDocxIds['${docxId}_$ri']!;
-        startedCommentIds.add(replyId);
-        _body.write('<w:commentRangeStart w:id="$replyId"/>');
-      }
     }
 
     void _emitCommentEnds(
         Map<String, dynamic> comment, int docxId, List<dynamic> replies) {
-      for (var ri = replies.length - 1; ri >= 0; ri--) {
-        final replyId = _replyDocxIds['${docxId}_$ri']!;
-        _body.write('<w:commentRangeEnd w:id="$replyId"/>');
-        _body.write('<w:r><w:commentReference w:id="$replyId"/></w:r>');
-      }
       _body.write('<w:commentRangeEnd w:id="$docxId"/>');
       _body.write('<w:r><w:commentReference w:id="$docxId"/></w:r>');
+      for (var ri = 0; ri < replies.length; ri++) {
+        final replyId = _replyDocxIds['${docxId}_$ri']!;
+        _body.write('<w:r><w:commentReference w:id="$replyId"/></w:r>');
+      }
     }
 
     for (final frag in fragments) {
@@ -442,7 +417,6 @@ class DocxExporter {
         final overlapping =
             segs.where((s) => s.start < linkEnd && s.end > linkStart).toList();
 
-        // Emit Start markers for comments beginning in this link range.
         for (final seg in overlapping) {
           final cid = _ensureDocxCommentId(seg.comment);
           final replies = (seg.comment['replies'] as List<dynamic>?) ?? [];
@@ -465,14 +439,14 @@ class DocxExporter {
               _body.write(_run(child, pStyle,
                   forceLink: true,
                   text: sub.text,
-                  isCommented: sub.comment != null));
+                  isCommented: sub.comment != null,
+                  containerId: paragraphId));
             }
             linkOffset += child.text.length;
           }
         }
         _body.write('</w:hyperlink>');
 
-        // Emit End markers for comments whose range ends within this link.
         for (final seg in overlapping) {
           if (seg.end <= linkEnd) {
             final cid = _ensureDocxCommentId(seg.comment);
@@ -496,11 +470,11 @@ class DocxExporter {
             _emitCommentStarts(sub.comment!, cid, replies);
           }
           _body.write(_run(frag, pStyle,
-              text: sub.text, isCommented: sub.comment != null));
+              text: sub.text,
+              isCommented: sub.comment != null,
+              containerId: paragraphId));
         }
 
-        // After writing all sub-segments of this fragment, emit End markers
-        // for every comment whose range ends at or before this fragment's end.
         for (final seg in segs) {
           if (seg.end > fragStart && seg.end <= fragEnd) {
             final cid = _ensureDocxCommentId(seg.comment);
@@ -513,20 +487,17 @@ class DocxExporter {
       }
     }
 
-    // Emit End markers for any comments that extended past the last fragment.
     for (final seg in segs) {
       final cid = _ensureDocxCommentId(seg.comment);
       if (startedCommentIds.contains(cid)) {
-        // Only emit End if it hasn't been emitted yet (i.e., comment end was
-        // beyond the paragraph boundary — shouldn't happen normally but guard
-        // against orphan ranges).
-        // We track emitted ends via a local set.
       }
     }
   }
 
+  int _revisionIdCounter = 1;
+
   String _run(Fragment f, ParagraphStyle pStyle,
-      {bool forceLink = false, String? text, bool isCommented = false}) {
+      {bool forceLink = false, String? text, bool isCommented = false, String? containerId}) {
     final fs = f.styles ?? [];
     final ps = pStyle.styles ?? [];
     final bold = fs.contains('bold') || ps.contains('bold');
@@ -536,6 +507,8 @@ class DocxExporter {
     final sup = fs.contains('superscript');
     final sub = fs.contains('subscript');
     final smallcaps = fs.contains('smallcaps');
+    final isAddition = fs.contains(document.suggestionStyleHook.additionTag);
+    final isDeletion = fs.contains(document.suggestionStyleHook.deletionTag);
 
     double fontSize = f.fontSize;
     if (fontSize == 14.0 && pStyle.fontSize != null) {
@@ -581,10 +554,39 @@ class DocxExporter {
     rpr.write('</w:rPr>');
 
     final runText = text ?? f.text;
-    return '<w:r>${rpr.toString()}<w:t xml:space="preserve">${_esc(runText)}</w:t></w:r>';
-  }
+    final textXml = isDeletion
+        ? '<w:delText xml:space="preserve">${_esc(runText)}</w:delText>'
+        : '<w:t xml:space="preserve">${_esc(runText)}</w:t>';
+    final runXml = '<w:r>${rpr.toString()}$textXml</w:r>';
 
-  // ─── Paragraph properties ───────────────────────────────────────────
+    if (isAddition || isDeletion) {
+      Map<String, dynamic>? matchingSug;
+      final suggestionProvider = document.suggestionProvider;
+      if (suggestionProvider != null && containerId != null) {
+        final sugs = suggestionProvider.suggestionsForNode(containerId);
+        final targetType = isAddition ? 'addition' : 'deletion';
+        for (final s in sugs) {
+          if (s['type'] == targetType) {
+            matchingSug = s;
+            break;
+          }
+        }
+      }
+      final author = matchingSug?['authorName'] as String? ?? document.authorName;
+      final dateStr = matchingSug?['createdAt'] != null
+          ? matchingSug!['createdAt'].toString()
+          : DateTime.now().toIso8601String();
+      final revId = _revisionIdCounter++;
+
+      if (isAddition) {
+        return '<w:ins w:id="$revId" w:author="${_esc(author)}" w:date="${_esc(dateStr)}">$runXml</w:ins>';
+      } else {
+        return '<w:del w:id="$revId" w:author="${_esc(author)}" w:date="${_esc(dateStr)}">$runXml</w:del>';
+      }
+    }
+
+    return runXml;
+  }
 
   String _pPr(Paragraph p, ParagraphStyle pStyle, {int extraIndent = 0, String? paraId}) {
     final jc = _docxAlign(p.textAlign);
@@ -622,8 +624,6 @@ class DocxExporter {
     return b.toString();
   }
 
-  // ─── Images ───────────────────────────────────────────────────────
-
   String? _imageRun(FluentImage img) {
     final bytes = _bytesOf(img.src);
     if (bytes == null) return null;
@@ -648,7 +648,6 @@ class DocxExporter {
     }
     wPx ??= 300;
     hPx ??= 200;
-    // Limit to useful width (~620px = 16.4cm).
     const maxPx = 620.0;
     if (wPx > maxPx) {
       final scale = maxPx / wPx;
@@ -721,8 +720,6 @@ class DocxExporter {
     return id;
   }
 
-  // ─── Support XML ────────────────────────────────────────────────
-
   String _documentXml() {
     return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
         '<w:document '
@@ -730,8 +727,10 @@ class DocxExporter {
         'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" '
         'xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" '
         'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" '
+        'xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" '
         'xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml" '
-        'xmlns:w15="http://schemas.microsoft.com/office/word/2012/wordml">'
+        'xmlns:w15="http://schemas.microsoft.com/office/word/2012/wordml" '
+        'mc:Ignorable="w14 w15">'
         '<w:body>${_body.toString()}'
         '<w:sectPr><w:pgSz w:w="11906" w:h="16838"/>'
         '<w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134" '
@@ -755,23 +754,19 @@ class DocxExporter {
   String _commentsExtendedXml() {
     final b = StringBuffer(
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
-        '<w15:commentsEx xmlns:w15="http://schemas.microsoft.com/office/word/2012/wordml">');
+        '<w15:commentsEx xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" '
+        'xmlns:w15="http://schemas.microsoft.com/office/word/2012/wordml" '
+        'mc:Ignorable="w15">');
 
     for (final c in _docxComments) {
-      final docxId = _commentIdMap[c['id']]!;
-      final paragraphId = c['nodeId'] as String? ?? '';
-      final paraId = _paragraphParaIds[paragraphId] ?? _generateParaId();
+      final commentId = c['id'] as String;
+      final paraId = _commentParaIds[commentId] ?? _generateParaId();
 
-      // Commento principale
-      b.write(
-          '<w15:commentEx w15:id="$docxId" w15:paraId="$paraId" w15:done="1"/>');
-
-      // Risposte
       final replies = (c['replies'] as List<dynamic>?) ?? [];
       for (var ri = 0; ri < replies.length; ri++) {
-        final replyId = _replyDocxIds['${docxId}_$ri']!;
+        final replyParaId = _replyParaIds['${commentId}_$ri'] ?? _generateParaId();
         b.write(
-            '<w15:commentEx w15:id="$replyId" w15:paraId="$paraId" w15:done="1" w15:parent="$docxId"/>');
+            '<w15:commentEx w15:paraId="$replyParaId" w15:paraIdParent="$paraId"/>');
       }
     }
 
@@ -790,20 +785,23 @@ class DocxExporter {
     final b = StringBuffer(
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
         '<w:comments xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" '
-        'xmlns:w15="http://schemas.microsoft.com/office/word/2012/wordml">');
+        'xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" '
+        'xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml" '
+        'xmlns:w15="http://schemas.microsoft.com/office/word/2012/wordml" '
+        'mc:Ignorable="w14 w15">');
 
     for (final c in _docxComments) {
       final docxId = _commentIdMap[c['id']]!;
+      final commentId = c['id'] as String;
+      final cParaId = _commentParaIds[commentId] ?? _generateParaId();
       final author = _esc(c['authorName'] as String? ?? 'Anonimo');
       final date = _esc(_formatDate(c['createdAt'] as String?));
       final text = _esc(c['text'] as String? ?? '');
 
-      // Commento principale
-      b.write('<w:comment w:id="$docxId" w:author="$author" w:date="$date">'
-          '<w:p><w:r><w:t>$text</w:t></w:r></w:p>'
+      b.write('<w:comment w:id="$docxId" w:author="$author" w:date="$date" w:initials="">'
+          '<w:p w14:paraId="$cParaId"><w:pPr><w:overflowPunct w:val="false"/><w:bidi w:val="0"/><w:rPr></w:rPr></w:pPr><w:r><w:annotationRef/></w:r><w:r><w:rPr></w:rPr><w:t>$text</w:t></w:r></w:p>'
           '</w:comment>');
 
-      // Risposte come commenti separati
       final replies = (c['replies'] as List<dynamic>?) ?? [];
       for (var ri = 0; ri < replies.length; ri++) {
         final r = replies[ri];
@@ -812,10 +810,16 @@ class DocxExporter {
         final rDate = _esc(_formatDate(rMap['createdAt'] as String?));
         final rText = _esc(rMap['text'] as String? ?? '');
         final replyId = _replyDocxIds['${docxId}_$ri']!;
+        final rParaId = _replyParaIds['${commentId}_$ri'] ?? _generateParaId();
+
+        final parentAuthor = _esc(c['authorName'] as String? ?? 'Anonimo');
+        final parentDateLocalized = _esc(_formatDateLocalized(c['createdAt'] as String?));
+        final headerText = 'Rispondi a $parentAuthor ($parentDateLocalized): "..."';
 
         b.write(
-            '<w:comment w:id="$replyId" w:author="$rAuthor" w:date="$rDate" w15:parentId="$docxId">'
-            '<w:p><w:r><w:t>$rText</w:t></w:r></w:p>'
+            '<w:comment w:id="$replyId" w:author="$rAuthor" w:date="$rDate" w:initials="">'
+            '<w:p><w:pPr><w:overflowPunct w:val="false"/><w:bidi w:val="0"/><w:rPr></w:rPr></w:pPr><w:r><w:annotationRef/></w:r><w:r><w:rPr><w:i/><w:sz w:val="16"/></w:rPr><w:t>$headerText</w:t></w:r></w:p>'
+            '<w:p w14:paraId="$rParaId"><w:pPr><w:overflowPunct w:val="false"/><w:bidi w:val="0"/><w:rPr></w:rPr></w:pPr><w:r><w:rPr></w:rPr><w:t>$rText</w:t></w:r></w:p>'
             '</w:comment>');
       }
     }
@@ -840,6 +844,26 @@ class DocxExporter {
     }
   }
 
+  /// Formatta la data in formato localizzato (dd/MM/yyyy, HH:mm) per l'intestazione delle risposte.
+  String _formatDateLocalized(String? date) {
+    DateTime d;
+    if (date == null || date.isEmpty) {
+      d = DateTime.now();
+    } else {
+      try {
+        d = DateTime.parse(date);
+      } catch (e) {
+        d = DateTime.now();
+      }
+    }
+    final day = d.day.toString().padLeft(2, '0');
+    final month = d.month.toString().padLeft(2, '0');
+    final year = d.year.toString();
+    final hour = d.hour.toString().padLeft(2, '0');
+    final minute = d.minute.toString().padLeft(2, '0');
+    return '$day/$month/$year, $hour:$minute';
+  }
+
   String _contentTypes() {
     final b = StringBuffer(
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
@@ -853,7 +877,7 @@ class DocxExporter {
         '<Default Extension="ttf" ContentType="application/x-fontdata"/>'
         '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'
         '<Override PartName="/word/comments.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml"/>'
-        '<Override PartName="/word/commentsExtended.xml" ContentType="application/vnd.openxmlformats.microsoftword.commentsExtended+xml"/>'
+        '<Override PartName="/word/commentsExtended.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.commentsExtended+xml"/>'
         '<Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/>');  
     b.write('</Types>');
     return b.toString();
@@ -866,8 +890,6 @@ class DocxExporter {
         'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" '
         'Target="word/document.xml"/></Relationships>';
   }
-
-  // ─── Helper ─────────────────────────────────────────────────────────
 
   int _colCount(FluentTable t) {
     int max = 0;

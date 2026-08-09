@@ -1,4 +1,3 @@
-// Web-specific implementation using HTML5 drag and drop
 import 'dart:async';
 import 'dart:html' as html;
 import 'dart:typed_data';
@@ -30,7 +29,6 @@ class _WebDropTargetState extends State<WebDropTarget> {
   }
 
   void _setupGlobalDragAndDrop() {
-    // Add listeners to the document body to catch all drag events
     _dragOverSubscription = html.document.body?.onDragOver.listen((event) {
       event.preventDefault();
       event.dataTransfer.dropEffect = 'copy';

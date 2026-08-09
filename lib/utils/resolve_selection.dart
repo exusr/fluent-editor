@@ -1,34 +1,7 @@
-// resolve_selection.dart
-//
-// Utility that resolves the active selection into a structured object with
-// references to the involved nodes.
-//
-// MAIN FUNCTION:
-//   resolveSelection(root, anchorFragmentId, anchorOffset,
-//                         focusFragmentId,  focusOffset)
-//     → ResolvedSelection?   (null = collapsed cursor or position not found)
-//
-// DATA MODEL:
-//   ResolvedSelection
-//   ├── anchor: SelectionEndpoint   (reference to fragment + offset)
-//   ├── focus:  SelectionEndpoint
-//   ├── base:   SelectionEndpoint   (the lesser in document order)
-//   ├── extent: SelectionEndpoint   (the greater)
-//   └── nodes:  List<SelectedNode>  (all traversed nodes, in order)
-//
-//   SelectedNode
-//   ├── container:        InlineContainerNode  (Paragraph / ListItem / FluentCell)
-//   ├── startFragment:    Fragment             (first selected fragment in node)
-//   ├── startOffset:      int                  (local offset in startFragment)
-//   ├── endFragment:      Fragment             (last selected fragment)
-//   ├── endOffset:        int                  (local offset in endFragment)
-//   └── isFullySelected:  bool                 (entire node selected)
-
 import 'package:fluent_editor/factories.dart';
+import 'package:fluent_editor/fluent_document.dart';
 import 'package:fluent_editor/utils/cursor_navigation.dart';
 import 'package:fluent_editor/utils/node_operations.dart';
-
-// ─── Modelli ─────────────────────────────────────────────────────────
 
 /// An endpoint of the selection with direct reference to the Fragment.
 class SelectionEndpoint {
@@ -133,8 +106,6 @@ class ResolvedSelection {
       'extent=${extent.fragment.id}:${extent.offset})';
 }
 
-// ─── Funzione principale ──────────────────────────────────────────────
-
 /// Resolves the selection defined by (anchorFragmentId, anchorOffset) →
 /// (focusFragmentId, focusOffset) in the [root] tree.
 ///
@@ -164,15 +135,12 @@ ResolvedSelection? resolveSelection(
   int focusOffset, {
   List<CaretStop>? cachedStops,
   List<LogicalLine>? cachedLines,
+  FluentDocument? document,
 }) {
-  // Collapsed selection: nothing to resolve
   if (anchorFragmentId == focusFragmentId && anchorOffset == focusOffset) {
     return null;
   }
 
-  // Build the stop rail to determine the order in the document.
-  // Use cached values when provided (e.g. from document.caretStops /
-  // document.logicalLines) to avoid O(n) rebuild on every key press.
   final stops = cachedStops ?? buildAllStops(root);
   final lines = cachedLines ?? buildAllLogicalLines(root);
 
@@ -181,19 +149,18 @@ ResolvedSelection? resolveSelection(
 
   if (anchorIdx < 0 || focusIdx < 0) return null;
 
-  // Normalize: base = first in document, extent = after
   final baseIsAnchor = anchorIdx <= focusIdx;
   final baseIdx   = baseIsAnchor ? anchorIdx : focusIdx;
   final extentIdx = baseIsAnchor ? focusIdx  : anchorIdx;
 
-  // Resolve the Fragments (HorizontalRule extends Fragment so it works directly).
-  final anchorFragResolved = findById(root, anchorFragmentId);
-  final focusFragResolved  = findById(root, focusFragmentId);
+  final anchorFragResolved = document?.nodeById(anchorFragmentId) ?? findById(root, anchorFragmentId);
+  final focusFragResolved  = document?.nodeById(focusFragmentId)  ?? findById(root, focusFragmentId);
   if (anchorFragResolved is! Fragment || focusFragResolved is! Fragment) return null;
 
-  // Resolve the containers of the two endpoints
-  final anchorContainer = findLogicalContainer(root, anchorFragmentId);
-  final focusContainer  = findLogicalContainer(root, focusFragmentId);
+  final anchorContainer = document?.findLogicalContainerCached(anchorFragmentId) ??
+      findLogicalContainer(root, anchorFragmentId);
+  final focusContainer  = document?.findLogicalContainerCached(focusFragmentId) ??
+      findLogicalContainer(root, focusFragmentId);
   if (anchorContainer == null || focusContainer == null) return null;
 
   final anchorEndpoint = SelectionEndpoint(
@@ -210,23 +177,21 @@ ResolvedSelection? resolveSelection(
   final baseEndpoint   = baseIsAnchor ? anchorEndpoint : focusEndpoint;
   final extentEndpoint = baseIsAnchor ? focusEndpoint  : anchorEndpoint;
 
-  // Find the LogicalLines involved
-  // A line is involved if it contains at least one stop in the range [baseIdx, extentIdx]
   final selectedNodes = <SelectedNode>[];
 
   for (final line in lines) {
-    // Check if the line has stop in the range
-    bool hasStopInRange = false;
-    for (final stop in line.stops) {
-      final i = findStopIndex(stops, stop.fragmentId, stop.offset);
-      if (i >= baseIdx && i <= extentIdx) {
-        hasStopInRange = true;
-        break;
-      }
-    }
-    if (!hasStopInRange) continue;
+    if (line.stops.isEmpty) continue;
+    final firstStop = line.stops.first;
+    final lastStop = line.stops.last;
+    final firstIdx = findStopIndex(stops, firstStop.fragmentId, firstStop.offset);
+    final lastIdx = findStopIndex(stops, lastStop.fragmentId, lastStop.offset);
 
-    // Determine startFragment/startOffset for this line
+    if (firstIdx < 0 || lastIdx < 0) continue;
+    final lineMinIdx = firstIdx <= lastIdx ? firstIdx : lastIdx;
+    final lineMaxIdx = firstIdx >= lastIdx ? firstIdx : lastIdx;
+
+    if (lineMaxIdx < baseIdx || lineMinIdx > extentIdx) continue;
+
     final Fragment startFrag;
     final int startOff;
 
@@ -238,16 +203,14 @@ ResolvedSelection? resolveSelection(
       startFrag = baseEndpoint.fragment;
       startOff  = baseEndpoint.offset;
     } else {
-      // Line completely selected from the start: take the first fragment
       final firstStop = line.stops.first;
-      final firstNode = findById(root, firstStop.fragmentId);
+      final firstNode = document?.nodeById(firstStop.fragmentId) ?? findById(root, firstStop.fragmentId);
       if (firstNode is! Fragment) continue;
       final frag = firstNode;
       startFrag = frag;
       startOff  = 0;
     }
 
-    // Determine endFragment/endOffset for this line
     final Fragment endFrag;
     final int endOff;
 
@@ -255,9 +218,8 @@ ResolvedSelection? resolveSelection(
       endFrag = extentEndpoint.fragment;
       endOff  = extentEndpoint.offset;
     } else {
-      // Line completely selected until the end: take the last fragment
       final lastStop = line.stops.last;
-      final lastNode = findById(root, lastStop.fragmentId);
+      final lastNode = document?.nodeById(lastStop.fragmentId) ?? findById(root, lastStop.fragmentId);
       if (lastNode is! Fragment) continue;
       final frag = lastNode;
       endFrag = frag;
