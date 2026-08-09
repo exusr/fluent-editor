@@ -171,12 +171,12 @@ class _MyAppState extends State<MyApp> {
       title: 'Fluent Editor',
       theme: ThemeData(
         useMaterial3: true,
-        colorSchemeSeed: Colors.green,
+        colorSchemeSeed: const Color(0xFF1d2d2c),
         brightness: Brightness.light,
       ),
       darkTheme: ThemeData(
         useMaterial3: true,
-        colorSchemeSeed: Colors.green,
+        colorSchemeSeed: const Color(0xFF1d2d2c),
         brightness: Brightness.dark,
       ),
       themeMode: _themeMode,

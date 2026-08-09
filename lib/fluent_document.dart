@@ -18,7 +18,6 @@ import 'package:fluent_editor/factories.dart';
 import 'package:fluent_editor/handlers/event_handler.dart';
 import 'package:fluent_editor/handlers/dialog_presenter.dart';
 import 'package:fluent_editor/core/paragraph_registry.dart';
-import 'package:fluent_editor/undo_redo/undo_redo_manager.dart';
 export 'package:fluent_editor/undo_redo/undo_redo_manager.dart';
 import 'package:fluent_editor/input/ime_handler.dart';
 import 'package:fluent_editor/localization/fluent_editor_labels.dart';
@@ -92,7 +91,8 @@ class FluentDocument extends ChangeNotifier {
     if (_authorName.isNotEmpty) {
       return _authorName;
     }
-    if (labels?.defaultAuthorName != null && labels!.defaultAuthorName.isNotEmpty) {
+    if (labels?.defaultAuthorName != null &&
+        labels!.defaultAuthorName.isNotEmpty) {
       return labels!.defaultAuthorName;
     }
     return 'Author';
@@ -142,10 +142,7 @@ class FluentDocument extends ChangeNotifier {
   /// The result is cached and reused across frames; invalidated automatically
   /// when hooks are added or removed.
   List<RenderStyleHook> get allStyleHooks {
-    return _cachedAllStyleHooks ??= [
-      ..._styleHooks,
-      ...registry.styleHooks,
-    ];
+    return _cachedAllStyleHooks ??= [..._styleHooks, ...registry.styleHooks];
   }
 
   /// Hook configuration for suggestion addition and deletion styles.
