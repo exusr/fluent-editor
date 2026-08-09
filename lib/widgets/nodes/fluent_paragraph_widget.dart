@@ -173,6 +173,7 @@ class FluentParagraphWidgetState<T extends FluentParagraphWidget> extends State<
 
     final paragraph = widget.node is Paragraph ? widget.node as Paragraph : null;
     final style = paragraph?.getStyle();
+    final suggestionHook = widget.document.allStyleHooks.whereType<SuggestionStyleHook>().firstOrNull ?? widget.document.suggestionStyleHook;
 
     final styleSpacingBefore = style?.spacingBefore ?? 0.0;
     final styleSpacingAfter = style?.spacingAfter ?? 0.0;
@@ -297,7 +298,7 @@ class FluentParagraphWidgetState<T extends FluentParagraphWidget> extends State<
               node: container,
               registry: widget.document.paragraphRegistry,
               styleHooks: widget.document.allStyleHooks,
-              suggestionStyleHook: widget.document.suggestionStyleHook,
+              suggestionStyleHook: suggestionHook,
               lineHeight: style?.lineHeight ?? widget.document.pendingLineHeight,
               textAlign: parseTextAlign((widget.node as Paragraph).textAlign),
               shrinkWrap: widget.shrinkWrap,
@@ -891,6 +892,7 @@ class _InlineImageWidgetState extends State<InlineImageWidget> {
     final imgHeight = widget.node.height ?? _defaultImgHeight;
     final cursor = widget.document.cursor;
     final cursorOnImage = cursor.isCollapsed && cursor.anchorId == widget.node.id;
+    final suggestionHook = widget.document.allStyleHooks.whereType<SuggestionStyleHook>().firstOrNull ?? widget.document.suggestionStyleHook;
     final showHandles = cursorOnImage;
 
     return MouseRegion(
@@ -920,26 +922,26 @@ class _InlineImageWidgetState extends State<InlineImageWidget> {
                       child: Stack(
                         children: [
                           ColoredBox(
-                            color: Colors.red.withValues(alpha: 0.35),
+                            color: suggestionHook.deletionBackgroundColor ?? Colors.red.withValues(alpha: 0.35),
                             child: const SizedBox.expand(),
                           ),
                           Center(
                             child: Container(
                               height: 4,
-                              color: const Color(0xFFE53935),
+                              color: suggestionHook.deletionColor ?? const Color(0xFFE53935),
                             ),
                           ),
                         ],
                       ),
                     ),
                   ),
-                if (widget.node.styles?.contains(widget.document.suggestionStyleHook.additionTag) == true)
+                if (widget.node.styles?.contains(suggestionHook.additionTag) == true)
                   Positioned.fill(
                     child: IgnorePointer(
                       child: Container(
                         decoration: BoxDecoration(
-                          color: const Color(0x404CAF50),
-                          border: Border.all(color: const Color(0xFF4CAF50), width: 3),
+                          color: suggestionHook.additionBackgroundColor ?? const Color(0x404CAF50),
+                          border: Border.all(color: suggestionHook.additionColor ?? const Color(0xFF4CAF50), width: 3),
                         ),
                       ),
                     ),

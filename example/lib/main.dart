@@ -203,7 +203,10 @@ class _MyHomePageState extends State<MyHomePage> {
   FluentToolbarMode _toolbarMode = FluentToolbarMode.fixed;
   final FluentCommentProvider _commentProvider = FluentCommentProvider();
   final FluentSuggestionController _suggestionController =
-      FluentSuggestionController();
+      FluentSuggestionController(
+        additionColor: Colors.teal,
+        deletionColor: Colors.deepOrange,
+      );
 
   @override
   void initState() {

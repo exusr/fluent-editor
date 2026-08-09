@@ -33,6 +33,12 @@ class SuggestionStyleHook extends RenderStyleHook {
   /// Custom deletion background color override (optional).
   final Color? deletionBackgroundColor;
 
+  /// Custom addition highlight color override (optional).
+  final Color? additionColor;
+
+  /// Custom deletion highlight color override (optional).
+  final Color? deletionColor;
+
   const SuggestionStyleHook({
     this.additionTag = 'suggestion_addition',
     this.deletionTag = 'suggestion_deletion',
@@ -41,6 +47,8 @@ class SuggestionStyleHook extends RenderStyleHook {
     this.deletionStyleResolver = defaultDeletionStyleResolver,
     this.additionBackgroundColor,
     this.deletionBackgroundColor,
+    this.additionColor,
+    this.deletionColor,
   });
 
   @override
