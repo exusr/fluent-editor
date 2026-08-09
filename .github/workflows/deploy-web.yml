@@ -21,6 +21,24 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Checkout fluent-editor-comments
+        uses: actions/checkout@v4
+        with:
+          repository: exusr/fluent-editor-comments
+          path: ../fluent-editor-comments
+
+      - name: Checkout fluent-editor-character-map
+        uses: actions/checkout@v4
+        with:
+          repository: exusr/fluent-editor-character-map
+          path: ../fluent-editor-character-map
+
+      - name: Checkout fluent-editor-review
+        uses: actions/checkout@v4
+        with:
+          repository: exusr/fluent-editor-review
+          path: ../fluent-editor-review
+
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
@@ -29,23 +47,23 @@ jobs:
 
       - name: Install dependencies
         run: |
-          cd example
+          cd example_full
           flutter pub get
 
       - name: Configure web platform
         run: |
-          cd example
+          cd example_full
           flutter create . --platforms web
 
       - name: Build web app
         run: |
-          cd example
+          cd example_full
           flutter build web --release --base-href "/fluent-editor/"
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: example/build/web
+          path: example_full/build/web
 
   deploy:
     environment:

@@ -5,6 +5,9 @@ import 'package:flutter/services.dart';
 import 'package:fluent_editor/fluent_editor.dart';
 import 'package:fluent_editor/fluent_document.dart';
 import 'package:fluent_editor/widgets/fluent_document_widget.dart';
+import 'package:fluent_editor_comments/fluent_editor_comments.dart';
+import 'package:fluent_editor_character_map/fluent_editor_character_map.dart';
+import 'package:fluent_editor_review/fluent_editor_review.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -198,6 +201,12 @@ class MyHomePage extends StatefulWidget {
 class _MyHomePageState extends State<MyHomePage> {
   FluentDocument? _document;
   FluentToolbarMode _toolbarMode = FluentToolbarMode.fixed;
+  final FluentCommentProvider _commentProvider = FluentCommentProvider();
+  final FluentSuggestionController _suggestionController =
+      FluentSuggestionController(
+        additionColor: Colors.teal,
+        deletionColor: Colors.deepOrange,
+      );
 
   @override
   void initState() {
@@ -207,6 +216,8 @@ class _MyHomePageState extends State<MyHomePage> {
 
   @override
   void dispose() {
+    _commentProvider.dispose();
+    _suggestionController.dispose();
     super.dispose();
   }
 
@@ -219,6 +230,24 @@ class _MyHomePageState extends State<MyHomePage> {
     } catch (e) {
       // Fallback: create an empty document if loading fails
       doc = FluentDocument();
+    }
+
+    // Attach the comment provider so the editor shows comment highlights
+    // and enables add-comment via right-click context menu.
+    doc.commentProvider = _commentProvider;
+    // If the loaded JSON contains comments, import them.
+    if (doc.commentProvider != null) {
+      try {
+        final jsonMap =
+            jsonDecode(await rootBundle.loadString('assets/example.json'))
+                as Map<String, dynamic>;
+        final comments = jsonMap['comments'];
+        if (comments is List) {
+          _commentProvider.importComments(
+            comments.map((e) => e as Map<String, dynamic>).toList(),
+          );
+        }
+      } catch (_) {}
     }
 
     setState(() {
@@ -268,12 +297,19 @@ class _MyHomePageState extends State<MyHomePage> {
         child: FluentEditor(
           document: _document,
           plugins: [
+            FluentCharacterMapPlugin(),
+            FluentCommentPlugin(provider: _commentProvider),
+            FluentSuggestionPlugin(controller: _suggestionController),
           ],
           toolbarMode: _toolbarMode,
           // Sidebar is automatically resolved from plugins:
           // comments and suggestions are merged into a single unified sidebar
           // with scroll synchronization to document positions.
           bubbleActions: [
+            CommentBubbleAction(
+              document: _document!,
+              provider: _commentProvider,
+            ),
           ],
         ),
       ),

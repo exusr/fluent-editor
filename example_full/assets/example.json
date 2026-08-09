@@ -1,0 +1,1594 @@
+{
+ "nodes": {
+  "id": "mgezIsE7kA0850vnsKwzz",
+  "nodes": [
+   {
+    "id": "QpU6D3a_r7s-vMoOsrj5M",
+    "type": "paragraph",
+    "fragments": [
+     {
+      "id": "nh8A0YHrIAV0FNxlopjsj",
+      "text": "Example Document",
+      "type": "fragment",
+      "styles": [
+       "bold"
+      ],
+      "fontFamily": "DejaVu Sans",
+      "fontSize": 24.0,
+      "color": null,
+      "highlightColor": null
+     }
+    ],
+    "textAlign": "center",
+    "indent": 0,
+    "styleName": null,
+    "text": "Example Document"
+   },
+   {
+    "id": "uNr-erJ1CqUTqQOraMjGh",
+    "type": "paragraph",
+    "fragments": [
+     {
+      "id": "CFkNdOGF0ORho-n4n6IJ5",
+      "text": "A complete document to test all editor functionalities",
+      "type": "fragment",
+      "styles": [
+       "italic"
+      ],
+      "fontFamily": "DejaVu Sans",
+      "fontSize": 16.0,
+      "color": "#666666",
+      "highlightColor": null
+     }
+    ],
+    "textAlign": "center",
+    "indent": 0,
+    "styleName": null,
+    "text": "A complete document to test all editor functionalities"
+   },
+   {
+    "id": "tqUPGT5dwjUWrzsfaXQKq",
+    "type": "paragraph",
+    "fragments": [
+     {
+      "id": "w2TM8ng50luvMaP6wIZ4g",
+      "text": "This is a paragraph with ",
+      "type": "fragment",
+      "styles": null,
+      "fontFamily": "DejaVu Sans",
+      "fontSize": 14.0,
+      "color": null,
+      "highlightColor": null
+     },
+     {
+      "id": "jbQAVIVCRSuJ-aEABuZva",
+      "text": "bold text",
+      "type": "fragment",
+      "styles": [
+       "bold"
+      ],
+      "fontFamily": "DejaVu Sans",
+      "fontSize": 14.0,
+      "color": null,
+      "highlightColor": null
+     },
+     {
+      "id": "lCSQjMZwV4KeSjuoAdpqq",
+      "text": ", ",
+      "type": "fragment",
+      "styles": null,
+      "fontFamily": "DejaVu Sans",
+      "fontSize": 14.0,
+      "color": null,
+      "highlightColor": null
+     },
+     {
+      "id": "QYe5gHJ6bPwLrb_kn6POr",
+      "text": "italic text",
+      "type": "fragment",
+      "styles": [
+       "italic"
+      ],
+      "fontFamily": "DejaVu Sans",
+      "fontSize": 14.0,
+      "color": null,
+      "highlightColor": null
+     },
+     {
+      "id": "C_oTw4th3BHBlHufrdvZL",
+      "text": ", ",
+      "type": "fragment",
+      "styles": null,
+      "fontFamily": "DejaVu Sans",
+      "fontSize": 14.0,
+      "color": null,
+      "highlightColor": null
+     },
+     {
+      "id": "MjGYPoJv0eUqhTnN9EzkJ",
+      "text": "underlined text",
+      "type": "fragment",
+      "styles": [
+       "underline"
+      ],
+      "fontFamily": "DejaVu Sans",
+      "fontSize": 14.0,
+      "color": null,
+      "highlightColor": null
+     },
+     {
+      "id": "kqcu8CrFC6-9fkjAa-wNh",
+      "text": ", ",
+      "type": "fragment",
+      "styles": null,
+      "fontFamily": "DejaVu Sans",
+      "fontSize": 14.0,
+      "color": null,
+      "highlightColor": null
+     },
+     {
+      "id": "NVNO1tC7-C9Qu3ONafZGp",
+      "text": "strikethrough text",
+      "type": "fragment",
+      "styles": [
+       "strikethrough"
+      ],
+      "fontFamily": "DejaVu Sans",
+      "fontSize": 14.0,
+      "color": null,
+      "highlightColor": null
+     },
+     {
+      "id": "32Smon-5Lzbd8T1ZO5I5S",
+      "text": " and ",
+      "type": "fragment",
+      "styles": null,
+      "fontFamily": "DejaVu Sans",
+      "fontSize": 14.0,
+      "color": null,
+      "highlightColor": null
+     },
+     {
+      "id": "HteS934z6vtIm3OzvJVJP",
+      "text": "small caps text",
+      "type": "fragment",
+      "styles": [
+       "smallcaps"
+      ],
+      "fontFamily": "DejaVu Sans",
+      "fontSize": 14.0,
+      "color": null,
+      "highlightColor": null
+     },
+     {
+      "id": "Z9YhQoEpJwLjBA24Qkhxy",
+      "text": ". Also supports ",
+      "type": "fragment",
+      "styles": null,
+      "fontFamily": "DejaVu Sans",
+      "fontSize": 14.0,
+      "color": null,
+      "highlightColor": null
+     },
+     {
+      "id": "kZUa6ObX73x1sjDF77FEI",
+      "text": "superscript",
+      "type": "fragment",
+      "styles": [
+       "superscript"
+      ],
+      "fontFamily": "DejaVu Sans",
+      "fontSize": 14.0,
+      "color": null,
+      "highlightColor": null
+     },
+     {
+      "id": "I6J7Fu0kNYe7jIqwK1n48",
+      "text": " and ",
+      "type": "fragment",
+      "styles": null,
+      "fontFamily": "DejaVu Sans",
+      "fontSize": 14.0,
+      "color": null,
+      "highlightColor": null
+     },
+     {
+      "id": "8TYeRM_hMlO91gSHTFwck",
+      "text": "subscript",
+      "type": "fragment",
+      "styles": [
+       "subscript"
+      ],
+      "fontFamily": "DejaVu Sans",
+      "fontSize": 14.0,
+      "color": null,
+      "highlightColor": null
+     },
+     {
+      "id": "BdkOFcHHIglqBdOpb1Lpx",
+      "text": ".",
+      "type": "fragment",
+      "styles": null,
+      "fontFamily": "DejaVu Sans",
+      "fontSize": 14.0,
+      "color": null,
+      "highlightColor": null
+     }
+    ],
+    "textAlign": "left",
+    "indent": 0,
+    "styleName": null,
+    "text": "This is a paragraph with bold text, italic text, underlined text, strikethrough text and small caps text. Also supports superscript and subscript."
+   },
+   {
+    "type": "hr",
+    "id": "3aqszSZoMqE744Pg1JxaX"
+   },
+   {
+    "id": "9HWry1102Y3hVk84L6Szi",
+    "type": "paragraph",
+    "fragments": [
+     {
+      "id": "xwCWfRQrTkVJBXgtzMVxT",
+      "text": "To learn more, visit the ",
+      "type": "fragment",
+      "styles": null,
+      "fontFamily": "DejaVu Sans",
+      "fontSize": 14.0,
+      "color": null,
+      "highlightColor": null
+     },
+     {
+      "id": "HigD2ZKridUDhVlw4wZUw",
+      "fragments": [
+       {
+        "id": "KeQc55Nl8llxjesXQbvl8",
+        "text": "Flutter official website",
+        "type": "fragment",
+        "styles": null,
+        "fontFamily": "DejaVu Sans",
+        "fontSize": 14.0,
+        "color": null,
+        "highlightColor": null
+       }
+      ],
+      "textAlign": "left",
+      "indent": 0,
+      "styleName": null,
+      "url": "https://flutter.dev",
+      "text": "Flutter official website",
+      "type": "link",
+      "styles": null,
+      "fontFamily": "DejaVu Sans",
+      "fontSize": 14.0,
+      "color": null,
+      "highlightColor": null
+     },
+     {
+      "id": "dc_4zjP8M36AFCXdUzyyB",
+      "text": " or check the online documentation.",
+      "type": "fragment",
+      "styles": null,
+      "fontFamily": "DejaVu Sans",
+      "fontSize": 14.0,
+      "color": null,
+      "highlightColor": null
+     }
+    ],
+    "textAlign": "left",
+    "indent": 0,
+    "styleName": null,
+    "text": "To learn more, visit the Flutter official website or check the online documentation."
+   },
+   {
+    "id": "P-NSAbluztajUcOVWsnDv",
+    "styles": null,
+    "fontFamily": "DejaVu Sans",
+    "fontSize": 14.0,
+    "color": null,
+    "highlightColor": null,
+    "src": "assets/logo.png",
+    "type": "image",
+    "text": "​",
+    "textAlign": "left",
+    "width": 138,
+    "height": 138
+   },
+   {
+    "id": "GjehW2_bzOHj6mUtb3M3t",
+    "fragments": [
+     {
+      "id": "kCHEnRm0jjva2VTvONhYw",
+      "text": "",
+      "type": "fragment",
+      "styles": null,
+      "fontFamily": "DejaVu Sans",
+      "fontSize": 14.0,
+      "color": null,
+      "highlightColor": null
+     }
+    ],
+    "textAlign": "left",
+    "indent": 0,
+    "styleName": null,
+    "type": "list",
+    "listType": "unordered",
+    "items": [
+     {
+      "id": "KvtoxasV-dYtPGhQiIz7D",
+      "bulletType": "unordered",
+      "indexList": [
+       1
+      ],
+      "children": [
+       {
+        "id": "q-1Lk4Bj5aOFYL69EauqH",
+        "type": "paragraph",
+        "fragments": [
+         {
+          "id": "ar50AFSSWu1yRvIroFDQd",
+          "text": "Cross-platform support: Linux, macOS, Windows, Android, iOS and Web",
+          "type": "fragment",
+          "styles": null,
+          "fontFamily": "DejaVu Sans",
+          "fontSize": 14.0,
+          "color": null,
+          "highlightColor": null
+         }
+        ],
+        "textAlign": "left",
+        "indent": 0,
+        "styleName": null,
+        "text": "Cross-platform support: Linux, macOS, Windows, Android, iOS and Web"
+       }
+      ],
+      "fragments": [
+       {
+        "id": "ar50AFSSWu1yRvIroFDQd",
+        "text": "Cross-platform support: Linux, macOS, Windows, Android, iOS and Web",
+        "type": "fragment",
+        "styles": null,
+        "fontFamily": "DejaVu Sans",
+        "fontSize": 14.0,
+        "color": null,
+        "highlightColor": null
+       }
+      ],
+      "text": "Cross-platform support: Linux, macOS, Windows, Android, iOS and Web"
+     },
+     {
+      "id": "KBpTYVg3P2fE3fNu0pUr7",
+      "bulletType": "unordered",
+      "indexList": [
+       2
+      ],
+      "children": [
+       {
+        "id": "pCLScub-mhrBMFy1aWKzD",
+        "type": "paragraph",
+        "fragments": [
+         {
+          "id": "8Yd8KuUsI_PZRYOhoAwHq",
+          "text": "Rich text formatting: bold, italic, underline, strikethrough",
+          "type": "fragment",
+          "styles": null,
+          "fontFamily": "DejaVu Sans",
+          "fontSize": 14.0,
+          "color": null,
+          "highlightColor": null
+         }
+        ],
+        "textAlign": "left",
+        "indent": 0,
+        "styleName": null,
+        "text": "Rich text formatting: bold, italic, underline, strikethrough"
+       }
+      ],
+      "fragments": [
+       {
+        "id": "8Yd8KuUsI_PZRYOhoAwHq",
+        "text": "Rich text formatting: bold, italic, underline, strikethrough",
+        "type": "fragment",
+        "styles": null,
+        "fontFamily": "DejaVu Sans",
+        "fontSize": 14.0,
+        "color": null,
+        "highlightColor": null
+       }
+      ],
+      "text": "Rich text formatting: bold, italic, underline, strikethrough"
+     },
+     {
+      "id": "ov3euUYMdyaxM1VbdM0ly",
+      "bulletType": "unordered",
+      "indexList": [
+       3
+      ],
+      "children": [
+       {
+        "id": "SEv3WtYtvyYd5k3qjdpwE",
+        "type": "paragraph",
+        "fragments": [
+         {
+          "id": "jniYkAo_Bbk4xA0qdtfck",
+          "text": "Image insertion via URL or drag & drop",
+          "type": "fragment",
+          "styles": null,
+          "fontFamily": "DejaVu Sans",
+          "fontSize": 14.0,
+          "color": null,
+          "highlightColor": null
+         }
+        ],
+        "textAlign": "left",
+        "indent": 0,
+        "styleName": null,
+        "text": "Image insertion via URL or drag & drop"
+       }
+      ],
+      "fragments": [
+       {
+        "id": "jniYkAo_Bbk4xA0qdtfck",
+        "text": "Image insertion via URL or drag & drop",
+        "type": "fragment",
+        "styles": null,
+        "fontFamily": "DejaVu Sans",
+        "fontSize": 14.0,
+        "color": null,
+        "highlightColor": null
+       }
+      ],
+      "text": "Image insertion via URL or drag & drop"
+     },
+     {
+      "id": "YBxzM5fk3jPRLFlKAuzY5",
+      "bulletType": "unordered",
+      "indexList": [
+       4
+      ],
+      "children": [
+       {
+        "id": "F9iS-NhormtH-Fq7leDRv",
+        "type": "paragraph",
+        "fragments": [
+         {
+          "id": "paGbSzqUBk2K6C6umZUJM",
+          "text": "Tables with colSpan and rowSpan support",
+          "type": "fragment",
+          "styles": null,
+          "fontFamily": "DejaVu Sans",
+          "fontSize": 14.0,
+          "color": null,
+          "highlightColor": null
+         }
+        ],
+        "textAlign": "left",
+        "indent": 0,
+        "styleName": null,
+        "text": "Tables with colSpan and rowSpan support"
+       }
+      ],
+      "fragments": [
+       {
+        "id": "paGbSzqUBk2K6C6umZUJM",
+        "text": "Tables with colSpan and rowSpan support",
+        "type": "fragment",
+        "styles": null,
+        "fontFamily": "DejaVu Sans",
+        "fontSize": 14.0,
+        "color": null,
+        "highlightColor": null
+       }
+      ],
+      "text": "Tables with colSpan and rowSpan support"
+     }
+    ]
+   },
+   {
+    "id": "vFXkE2aW_ZcN1hdJ5gZRM",
+    "fragments": [
+     {
+      "id": "FyN_7UMvAhqop6dJjzdN9",
+      "text": "",
+      "type": "fragment",
+      "styles": null,
+      "fontFamily": "DejaVu Sans",
+      "fontSize": 14.0,
+      "color": null,
+      "highlightColor": null
+     }
+    ],
+    "textAlign": "left",
+    "indent": 0,
+    "styleName": null,
+    "type": "list",
+    "listType": "ordered",
+    "items": [
+     {
+      "id": "ICOQ3BImwpT1XyUxE8WoF",
+      "bulletType": "ordered",
+      "indexList": [
+       1
+      ],
+      "children": [
+       {
+        "id": "cfiz341W2sXsAByV2Y8ss",
+        "type": "paragraph",
+        "fragments": [
+         {
+          "id": "_UZtpCIAjOYRGBI-HxIXB",
+          "text": "Basic editing",
+          "type": "fragment",
+          "styles": null,
+          "fontFamily": "DejaVu Sans",
+          "fontSize": 14.0,
+          "color": null,
+          "highlightColor": null
+         }
+        ],
+        "textAlign": "left",
+        "indent": 0,
+        "styleName": null,
+        "text": "Basic editing"
+       }
+      ],
+      "fragments": [
+       {
+        "id": "_UZtpCIAjOYRGBI-HxIXB",
+        "text": "Basic editing",
+        "type": "fragment",
+        "styles": null,
+        "fontFamily": "DejaVu Sans",
+        "fontSize": 14.0,
+        "color": null,
+        "highlightColor": null
+       }
+      ],
+      "text": "Basic editing"
+     },
+     {
+      "id": "CiKh1WFbogmjs3_N4S8uS",
+      "bulletType": "ordered",
+      "indexList": [
+       2
+      ],
+      "children": [
+       {
+        "id": "ZpI7ePJiIhD-O8IMGlyMD",
+        "type": "paragraph",
+        "fragments": [
+         {
+          "id": "aHmHe0KCxn-hp5r8vBdiv",
+          "text": "Advanced formatting",
+          "type": "fragment",
+          "styles": null,
+          "fontFamily": "DejaVu Sans",
+          "fontSize": 14.0,
+          "color": null,
+          "highlightColor": null
+         }
+        ],
+        "textAlign": "left",
+        "indent": 0,
+        "styleName": null,
+        "text": "Advanced formatting"
+       },
+       {
+        "id": "lB4EdRkXkllNxiLRRopmn",
+        "fragments": [
+         {
+          "id": "8UDdgwe_bqvgvp-gPyzFN",
+          "text": "",
+          "type": "fragment",
+          "styles": null,
+          "fontFamily": "DejaVu Sans",
+          "fontSize": 14.0,
+          "color": null,
+          "highlightColor": null
+         }
+        ],
+        "textAlign": "left",
+        "indent": 0,
+        "styleName": null,
+        "type": "list",
+        "listType": "ordered",
+        "items": [
+         {
+          "id": "UxH6P36L4YGV0bt8RQb9I",
+          "bulletType": "ordered",
+          "indexList": [
+           2,
+           1
+          ],
+          "children": [
+           {
+            "id": "sPzMKdQ-Oi8KBlLMJU3sD",
+            "type": "paragraph",
+            "fragments": [
+             {
+              "id": "mhAY-putdzFtYV6w4iWTz",
+              "text": "Bold, italic, underline",
+              "type": "fragment",
+              "styles": null,
+              "fontFamily": "DejaVu Sans",
+              "fontSize": 14.0,
+              "color": null,
+              "highlightColor": null
+             }
+            ],
+            "textAlign": "left",
+            "indent": 0,
+            "styleName": null,
+            "text": "Bold, italic, underline"
+           }
+          ],
+          "fragments": [
+           {
+            "id": "mhAY-putdzFtYV6w4iWTz",
+            "text": "Bold, italic, underline",
+            "type": "fragment",
+            "styles": null,
+            "fontFamily": "DejaVu Sans",
+            "fontSize": 14.0,
+            "color": null,
+            "highlightColor": null
+           }
+          ],
+          "text": "Bold, italic, underline"
+         },
+         {
+          "id": "LgIZh8XQhnvAr1vyLSRP0",
+          "bulletType": "ordered",
+          "indexList": [
+           2,
+           2
+          ],
+          "children": [
+           {
+            "id": "E8Zr86il0stJYQ51MCVw7",
+            "type": "paragraph",
+            "fragments": [
+             {
+              "id": "Np0DW9i7m2AelmERUFQuv",
+              "text": "Superscript and subscript",
+              "type": "fragment",
+              "styles": null,
+              "fontFamily": "DejaVu Sans",
+              "fontSize": 14.0,
+              "color": null,
+              "highlightColor": null
+             }
+            ],
+            "textAlign": "left",
+            "indent": 0,
+            "styleName": null,
+            "text": "Superscript and subscript"
+           }
+          ],
+          "fragments": [
+           {
+            "id": "Np0DW9i7m2AelmERUFQuv",
+            "text": "Superscript and subscript",
+            "type": "fragment",
+            "styles": null,
+            "fontFamily": "DejaVu Sans",
+            "fontSize": 14.0,
+            "color": null,
+            "highlightColor": null
+           }
+          ],
+          "text": "Superscript and subscript"
+         },
+         {
+          "id": "GIZIui-zwgXbC46SebEJN",
+          "bulletType": "ordered",
+          "indexList": [
+           2,
+           3
+          ],
+          "children": [
+           {
+            "id": "g0x6pq4qYpRs_jrQUV9Qb",
+            "type": "paragraph",
+            "fragments": [
+             {
+              "id": "M_fgejLfsVdC8ZxCkbA_G",
+              "text": "Colors and highlighting",
+              "type": "fragment",
+              "styles": null,
+              "fontFamily": "DejaVu Sans",
+              "fontSize": 14.0,
+              "color": null,
+              "highlightColor": null
+             }
+            ],
+            "textAlign": "left",
+            "indent": 0,
+            "styleName": null,
+            "text": "Colors and highlighting"
+           }
+          ],
+          "fragments": [
+           {
+            "id": "M_fgejLfsVdC8ZxCkbA_G",
+            "text": "Colors and highlighting",
+            "type": "fragment",
+            "styles": null,
+            "fontFamily": "DejaVu Sans",
+            "fontSize": 14.0,
+            "color": null,
+            "highlightColor": null
+           }
+          ],
+          "text": "Colors and highlighting"
+         }
+        ]
+       }
+      ],
+      "fragments": [
+       {
+        "id": "aHmHe0KCxn-hp5r8vBdiv",
+        "text": "Advanced formatting",
+        "type": "fragment",
+        "styles": null,
+        "fontFamily": "DejaVu Sans",
+        "fontSize": 14.0,
+        "color": null,
+        "highlightColor": null
+       },
+       {
+        "id": "8UDdgwe_bqvgvp-gPyzFN",
+        "text": "",
+        "type": "fragment",
+        "styles": null,
+        "fontFamily": "DejaVu Sans",
+        "fontSize": 14.0,
+        "color": null,
+        "highlightColor": null
+       }
+      ],
+      "text": "Advanced formattingBold, italic, underlineSuperscript and subscriptColors and highlighting"
+     },
+     {
+      "id": "et9GfMT_HO3Se32LF4A4W",
+      "bulletType": "ordered",
+      "indexList": [
+       3
+      ],
+      "children": [
+       {
+        "id": "J8pKWgDoOcDQRHM6xT8hO",
+        "type": "paragraph",
+        "fragments": [
+         {
+          "id": "zsLrCoTPP8l1JVVvKyNUP",
+          "text": "Export and import",
+          "type": "fragment",
+          "styles": null,
+          "fontFamily": "DejaVu Sans",
+          "fontSize": 14.0,
+          "color": null,
+          "highlightColor": null
+         }
+        ],
+        "textAlign": "left",
+        "indent": 0,
+        "styleName": null,
+        "text": "Export and import"
+       }
+      ],
+      "fragments": [
+       {
+        "id": "zsLrCoTPP8l1JVVvKyNUP",
+        "text": "Export and import",
+        "type": "fragment",
+        "styles": null,
+        "fontFamily": "DejaVu Sans",
+        "fontSize": 14.0,
+        "color": null,
+        "highlightColor": null
+       }
+      ],
+      "text": "Export and import"
+     },
+     {
+      "id": "k62UXpIjfvdn0jA1l-loY",
+      "bulletType": "ordered",
+      "indexList": [
+       4
+      ],
+      "children": [
+       {
+        "id": "urrzmJ4bDqQTt2FAKXWH3",
+        "type": "paragraph",
+        "fragments": [
+         {
+          "id": "rh_9nFuIaNfuROZiXtzcH",
+          "text": "",
+          "type": "fragment",
+          "styles": null,
+          "fontFamily": "DejaVu Sans",
+          "fontSize": 14.0,
+          "color": null,
+          "highlightColor": null
+         },
+         {
+          "id": "ZcTlqOgwebc3FaKR99bT2",
+          "text": "Text highlight",
+          "type": "fragment",
+          "styles": [],
+          "fontFamily": "DejaVu Sans",
+          "fontSize": 14.0,
+          "color": null,
+          "highlightColor": "#FFFF00"
+         }
+        ],
+        "textAlign": "left",
+        "indent": 0,
+        "styleName": null,
+        "text": "Text highlight"
+       }
+      ],
+      "fragments": [
+       {
+        "id": "rh_9nFuIaNfuROZiXtzcH",
+        "text": "",
+        "type": "fragment",
+        "styles": null,
+        "fontFamily": "DejaVu Sans",
+        "fontSize": 14.0,
+        "color": null,
+        "highlightColor": null
+       },
+       {
+        "id": "ZcTlqOgwebc3FaKR99bT2",
+        "text": "Text highlight",
+        "type": "fragment",
+        "styles": [],
+        "fontFamily": "DejaVu Sans",
+        "fontSize": 14.0,
+        "color": null,
+        "highlightColor": "#FFFF00"
+       }
+      ],
+      "text": "Text highlight"
+     },
+     {
+      "id": "pwTeCM_M5j2JeEX2g4uEL",
+      "bulletType": "ordered",
+      "indexList": [
+       5
+      ],
+      "children": [
+       {
+        "id": "hsERbVluSmDsIlh9iKp0-",
+        "type": "paragraph",
+        "fragments": [
+         {
+          "id": "f38hWZ4hodT1_0fkCSXZ5",
+          "text": "",
+          "type": "fragment",
+          "styles": null,
+          "fontFamily": "DejaVu Sans",
+          "fontSize": 14.0,
+          "color": null,
+          "highlightColor": null
+         },
+         {
+          "id": "VGFT_XeuUc7vsYQvLAcsj",
+          "text": "Text colors",
+          "type": "fragment",
+          "styles": [],
+          "fontFamily": "DejaVu Sans",
+          "fontSize": 14.0,
+          "color": "#673AB7",
+          "highlightColor": null
+         }
+        ],
+        "textAlign": "left",
+        "indent": 0,
+        "styleName": null,
+        "text": "Text colors"
+       }
+      ],
+      "fragments": [
+       {
+        "id": "f38hWZ4hodT1_0fkCSXZ5",
+        "text": "",
+        "type": "fragment",
+        "styles": null,
+        "fontFamily": "DejaVu Sans",
+        "fontSize": 14.0,
+        "color": null,
+        "highlightColor": null
+       },
+       {
+        "id": "VGFT_XeuUc7vsYQvLAcsj",
+        "text": "Text colors",
+        "type": "fragment",
+        "styles": [],
+        "fontFamily": "DejaVu Sans",
+        "fontSize": 14.0,
+        "color": "#673AB7",
+        "highlightColor": null
+       }
+      ],
+      "text": "Text colors"
+     },
+     {
+      "id": "Ez6M_ysOffrF18FFoRgCb",
+      "bulletType": "ordered",
+      "indexList": [
+       6
+      ],
+      "children": [
+       {
+        "id": "3gZ4R3dHuVpHRhK0TR86w",
+        "type": "paragraph",
+        "fragments": [
+         {
+          "id": "SFEDV9uGEx01U996N32nd",
+          "text": "",
+          "type": "fragment",
+          "styles": null,
+          "fontFamily": "DejaVu Sans",
+          "fontSize": 14.0,
+          "color": null,
+          "highlightColor": null
+         },
+         {
+          "id": "3LrKg8XwY7Y6SHNTwP_LA",
+          "text": "Word and char count",
+          "type": "fragment",
+          "styles": [],
+          "fontFamily": "DejaVu Sans",
+          "fontSize": 14.0,
+          "color": null,
+          "highlightColor": null
+         },
+         {
+          "id": "AtYmlPgYjiO52gVckKcoP",
+          "text": "",
+          "type": "fragment",
+          "styles": [
+           "bold"
+          ],
+          "fontFamily": "DejaVu Sans",
+          "fontSize": 16.0,
+          "color": null,
+          "highlightColor": null
+         },
+         {
+          "id": "rDkyJ8IsA13NUHisYtdhf",
+          "text": "",
+          "type": "fragment",
+          "styles": [],
+          "fontFamily": "DejaVu Sans",
+          "fontSize": 14.0,
+          "color": "#673AB7",
+          "highlightColor": null
+         }
+        ],
+        "textAlign": "left",
+        "indent": 0,
+        "styleName": null,
+        "text": "Word and char count"
+       }
+      ],
+      "fragments": [
+       {
+        "id": "SFEDV9uGEx01U996N32nd",
+        "text": "",
+        "type": "fragment",
+        "styles": null,
+        "fontFamily": "DejaVu Sans",
+        "fontSize": 14.0,
+        "color": null,
+        "highlightColor": null
+       },
+       {
+        "id": "3LrKg8XwY7Y6SHNTwP_LA",
+        "text": "Word and char count",
+        "type": "fragment",
+        "styles": [],
+        "fontFamily": "DejaVu Sans",
+        "fontSize": 14.0,
+        "color": null,
+        "highlightColor": null
+       },
+       {
+        "id": "AtYmlPgYjiO52gVckKcoP",
+        "text": "",
+        "type": "fragment",
+        "styles": [
+         "bold"
+        ],
+        "fontFamily": "DejaVu Sans",
+        "fontSize": 16.0,
+        "color": null,
+        "highlightColor": null
+       },
+       {
+        "id": "rDkyJ8IsA13NUHisYtdhf",
+        "text": "",
+        "type": "fragment",
+        "styles": [],
+        "fontFamily": "DejaVu Sans",
+        "fontSize": 14.0,
+        "color": "#673AB7",
+        "highlightColor": null
+       }
+      ],
+      "text": "Word and char count"
+     }
+    ]
+   },
+   {
+    "id": "vRTNC8rurakH4WvD0OcqI",
+    "rows": [
+     {
+      "id": "4aBOtc3Sce3RinbeIseHU",
+      "cells": [
+       {
+        "id": "VAnSY6b_FHvi2CKMhmb3W",
+        "colSpan": 3,
+        "rowSpan": 1,
+        "children": [
+         {
+          "id": "PHeTdsgEG6KUVN2WvAES9",
+          "type": "paragraph",
+          "fragments": [
+           {
+            "id": "JX2D9TjBZjY01JmiC8Wkt",
+            "text": "Platform Comparison",
+            "type": "fragment",
+            "styles": [
+             "bold"
+            ],
+            "fontFamily": "DejaVu Sans",
+            "fontSize": 16.0,
+            "color": null,
+            "highlightColor": null
+           }
+          ],
+          "textAlign": "left",
+          "indent": 0,
+          "styleName": null,
+          "text": "Platform Comparison"
+         }
+        ],
+        "type": "cell"
+       }
+      ],
+      "type": "row"
+     },
+     {
+      "id": "odx3XVDmPr0GgvcH-tJjw",
+      "cells": [
+       {
+        "id": "Z6MHK8uUwoPW1OetfsPVJ",
+        "colSpan": 1,
+        "rowSpan": 1,
+        "children": [
+         {
+          "id": "OHX6AWJcbAbk_A_pHdfSy",
+          "type": "paragraph",
+          "fragments": [
+           {
+            "id": "cWOPtiI502-31ZTyITG1-",
+            "text": "Platform",
+            "type": "fragment",
+            "styles": [
+             "bold"
+            ],
+            "fontFamily": "DejaVu Sans",
+            "fontSize": 14.0,
+            "color": null,
+            "highlightColor": null
+           }
+          ],
+          "textAlign": "left",
+          "indent": 0,
+          "styleName": null,
+          "text": "Platform"
+         }
+        ],
+        "type": "cell"
+       },
+       {
+        "id": "sEoimwVpAhiHVFjJ5lQsS",
+        "colSpan": 1,
+        "rowSpan": 1,
+        "children": [
+         {
+          "id": "dPkvK-nO4t1cZK0_5uenh",
+          "type": "paragraph",
+          "fragments": [
+           {
+            "id": "29eIuJOfqGXWQ2N2V7EHe",
+            "text": "Drag & Drop",
+            "type": "fragment",
+            "styles": [
+             "bold"
+            ],
+            "fontFamily": "DejaVu Sans",
+            "fontSize": 14.0,
+            "color": null,
+            "highlightColor": null
+           }
+          ],
+          "textAlign": "left",
+          "indent": 0,
+          "styleName": null,
+          "text": "Drag & Drop"
+         }
+        ],
+        "type": "cell"
+       },
+       {
+        "id": "FhtgW_Fyqm-bh_mFYNdHg",
+        "colSpan": 1,
+        "rowSpan": 1,
+        "children": [
+         {
+          "id": "Ly1DwZNyEeRxmiViPjJtd",
+          "type": "paragraph",
+          "fragments": [
+           {
+            "id": "04l4s0OaK8AzIHgqdbJlX",
+            "text": "File Picker",
+            "type": "fragment",
+            "styles": [
+             "bold"
+            ],
+            "fontFamily": "DejaVu Sans",
+            "fontSize": 14.0,
+            "color": null,
+            "highlightColor": null
+           }
+          ],
+          "textAlign": "left",
+          "indent": 0,
+          "styleName": null,
+          "text": "File Picker"
+         }
+        ],
+        "type": "cell"
+       }
+      ],
+      "type": "row"
+     },
+     {
+      "id": "vzcNkuyn2fd81RfnYXcxJ",
+      "cells": [
+       {
+        "id": "CnW-ynBD9t6ADTYExYBXL",
+        "colSpan": 1,
+        "rowSpan": 1,
+        "children": [
+         {
+          "id": "QBEaaLH8rA9xKUs01UF3S",
+          "type": "paragraph",
+          "fragments": [
+           {
+            "id": "SzJ5onwtcJvJVAYThWUGP",
+            "text": "Desktop (Linux/macOS/Windows)",
+            "type": "fragment",
+            "styles": null,
+            "fontFamily": "DejaVu Sans",
+            "fontSize": 14.0,
+            "color": null,
+            "highlightColor": null
+           }
+          ],
+          "textAlign": "left",
+          "indent": 0,
+          "styleName": null,
+          "text": "Desktop (Linux/macOS/Windows)"
+         }
+        ],
+        "type": "cell"
+       },
+       {
+        "id": "h5ZobFy08_LbGDrl4amP9",
+        "colSpan": 1,
+        "rowSpan": 1,
+        "children": [
+         {
+          "id": "FLLZOdpWi1ud7SKxschUp",
+          "type": "paragraph",
+          "fragments": [
+           {
+            "id": "zj2CiXuSXmSoUCxsGK23R",
+            "text": "✓",
+            "type": "fragment",
+            "styles": null,
+            "fontFamily": "DejaVu Sans",
+            "fontSize": 14.0,
+            "color": null,
+            "highlightColor": null
+           }
+          ],
+          "textAlign": "left",
+          "indent": 0,
+          "styleName": null,
+          "text": "✓"
+         }
+        ],
+        "type": "cell"
+       },
+       {
+        "id": "IdN3GAbmafZHiW7wMMmEm",
+        "colSpan": 1,
+        "rowSpan": 1,
+        "children": [
+         {
+          "id": "iRPUGXnQDdwTxpGjbQWwB",
+          "type": "paragraph",
+          "fragments": [
+           {
+            "id": "R7wheGi0II88A_Eddn4sA",
+            "text": "✓",
+            "type": "fragment",
+            "styles": null,
+            "fontFamily": "DejaVu Sans",
+            "fontSize": 14.0,
+            "color": null,
+            "highlightColor": null
+           }
+          ],
+          "textAlign": "left",
+          "indent": 0,
+          "styleName": null,
+          "text": "✓"
+         }
+        ],
+        "type": "cell"
+       }
+      ],
+      "type": "row"
+     },
+     {
+      "id": "S8xutfR_YFIinQntPM3h5",
+      "cells": [
+       {
+        "id": "bZ1398NoVxz1HWmSF4dGe",
+        "colSpan": 1,
+        "rowSpan": 1,
+        "children": [
+         {
+          "id": "fMtRn46Ixj0lmmWcWNLwQ",
+          "type": "paragraph",
+          "fragments": [
+           {
+            "id": "GV6l36l9lD4f72YfPcT7p",
+            "text": "Mobile (Android/iOS)",
+            "type": "fragment",
+            "styles": null,
+            "fontFamily": "DejaVu Sans",
+            "fontSize": 14.0,
+            "color": null,
+            "highlightColor": null
+           }
+          ],
+          "textAlign": "left",
+          "indent": 0,
+          "styleName": null,
+          "text": "Mobile (Android/iOS)"
+         }
+        ],
+        "type": "cell"
+       },
+       {
+        "id": "I-F1hdvKALKLBD6Yei7iv",
+        "colSpan": 1,
+        "rowSpan": 1,
+        "children": [
+         {
+          "id": "MbZ_uOkN90dfrZhA_ruSu",
+          "type": "paragraph",
+          "fragments": [
+           {
+            "id": "-_Fj_9exvyccToFw_ieaj",
+            "text": "—",
+            "type": "fragment",
+            "styles": null,
+            "fontFamily": "DejaVu Sans",
+            "fontSize": 14.0,
+            "color": null,
+            "highlightColor": null
+           }
+          ],
+          "textAlign": "left",
+          "indent": 0,
+          "styleName": null,
+          "text": "—"
+         }
+        ],
+        "type": "cell"
+       },
+       {
+        "id": "-lLUfQCwsYkBfhGBOqWl2",
+        "colSpan": 1,
+        "rowSpan": 1,
+        "children": [
+         {
+          "id": "fq6rO170wW8oCuTrmPkbA",
+          "type": "paragraph",
+          "fragments": [
+           {
+            "id": "hrdof7nxea295BQAFr0Cm",
+            "text": "✓",
+            "type": "fragment",
+            "styles": null,
+            "fontFamily": "DejaVu Sans",
+            "fontSize": 14.0,
+            "color": null,
+            "highlightColor": null
+           }
+          ],
+          "textAlign": "left",
+          "indent": 0,
+          "styleName": null,
+          "text": "✓"
+         }
+        ],
+        "type": "cell"
+       }
+      ],
+      "type": "row"
+     },
+     {
+      "id": "dAlt2FmNdEQ00U5bhF8Ps",
+      "cells": [
+       {
+        "id": "Q_i9E0mk318idUdYGaQ19",
+        "colSpan": 1,
+        "rowSpan": 1,
+        "children": [
+         {
+          "id": "YRhmsXPZVR1D-7zlpfD5n",
+          "type": "paragraph",
+          "fragments": [
+           {
+            "id": "nO44W0odnCIDKn7lnIzzU",
+            "text": "Web",
+            "type": "fragment",
+            "styles": null,
+            "fontFamily": "DejaVu Sans",
+            "fontSize": 14.0,
+            "color": null,
+            "highlightColor": null
+           }
+          ],
+          "textAlign": "left",
+          "indent": 0,
+          "styleName": null,
+          "text": "Web"
+         }
+        ],
+        "type": "cell"
+       },
+       {
+        "id": "EPro_kClx19ts_9C1NrUG",
+        "colSpan": 1,
+        "rowSpan": 1,
+        "children": [
+         {
+          "id": "pnaaEjNdCEP2gC0Vkd2Ss",
+          "type": "paragraph",
+          "fragments": [
+           {
+            "id": "dU_IV5vW7eUt3_ejA2AXM",
+            "text": "—",
+            "type": "fragment",
+            "styles": null,
+            "fontFamily": "DejaVu Sans",
+            "fontSize": 14.0,
+            "color": null,
+            "highlightColor": null
+           }
+          ],
+          "textAlign": "left",
+          "indent": 0,
+          "styleName": null,
+          "text": "—"
+         }
+        ],
+        "type": "cell"
+       },
+       {
+        "id": "EMnOyqmMPj9ueydFl5GTo",
+        "colSpan": 1,
+        "rowSpan": 1,
+        "children": [
+         {
+          "id": "Hie-VLgsdeph1rWuCc4Mr",
+          "type": "paragraph",
+          "fragments": [
+           {
+            "id": "cvWKafADvigMmzivN8PQm",
+            "text": "✓",
+            "type": "fragment",
+            "styles": null,
+            "fontFamily": "DejaVu Sans",
+            "fontSize": 14.0,
+            "color": null,
+            "highlightColor": null
+           }
+          ],
+          "textAlign": "left",
+          "indent": 0,
+          "styleName": null,
+          "text": "✓"
+         }
+        ],
+        "type": "cell"
+       }
+      ],
+      "type": "row"
+     }
+    ],
+    "type": "table"
+   },
+   {
+    "id": "xAiZ8lCE6Jlus2HzAKZGy",
+    "type": "paragraph",
+    "fragments": [
+     {
+      "id": "EKyk3tJWA04HqLBwqZAkC",
+      "text": "Left aligned text (default)",
+      "type": "fragment",
+      "styles": null,
+      "fontFamily": "DejaVu Sans",
+      "fontSize": 14.0,
+      "color": null,
+      "highlightColor": null
+     }
+    ],
+    "textAlign": "left",
+    "indent": 0,
+    "styleName": null,
+    "text": "Left aligned text (default)"
+   },
+   {
+    "id": "X6G-oqATH8VebittGzIlq",
+    "type": "paragraph",
+    "fragments": [
+     {
+      "id": "0oGnSz7pI1WJ5mwzicBOX",
+      "text": "Center aligned text",
+      "type": "fragment",
+      "styles": null,
+      "fontFamily": "DejaVu Sans",
+      "fontSize": 14.0,
+      "color": null,
+      "highlightColor": null
+     }
+    ],
+    "textAlign": "center",
+    "indent": 0,
+    "styleName": null,
+    "text": "Center aligned text"
+   },
+   {
+    "id": "uFzwcTyx1xwhvovqAKWpe",
+    "type": "paragraph",
+    "fragments": [
+     {
+      "id": "E0ek4sk481Jd8QO-4DadQ",
+      "text": "Right aligned text",
+      "type": "fragment",
+      "styles": null,
+      "fontFamily": "DejaVu Sans",
+      "fontSize": 14.0,
+      "color": null,
+      "highlightColor": null
+     }
+    ],
+    "textAlign": "right",
+    "indent": 0,
+    "styleName": null,
+    "text": "Right aligned text"
+   },
+   {
+    "id": "V13zOSC0s3yjAWJ9itkOr",
+    "type": "paragraph",
+    "fragments": [
+     {
+      "id": "3-fFLLOtADb-MaqyUtyIj",
+      "text": "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.",
+      "type": "fragment",
+      "styles": null,
+      "fontFamily": "DejaVu Sans",
+      "fontSize": 14.0,
+      "color": null,
+      "highlightColor": null
+     }
+    ],
+    "textAlign": "left",
+    "indent": 0,
+    "styleName": null,
+    "text": "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum."
+   },
+   {
+    "id": "er42wKWFlaGD8D-7Ddl0g",
+    "type": "paragraph",
+    "fragments": [
+     {
+      "id": "RVi5PVWo1wZjYyUmSyPh4",
+      "text": "",
+      "type": "fragment",
+      "styles": null,
+      "fontFamily": "DejaVu Sans",
+      "fontSize": 14.0,
+      "color": null,
+      "highlightColor": null
+     },
+     {
+      "id": "e6fBs4UeZJRHPKxB0qxgi",
+      "fragments": [],
+      "textAlign": "left",
+      "indent": 0,
+      "styleName": null,
+      "url": "https://picsum.photos",
+      "text": "",
+      "type": "link",
+      "styles": null,
+      "fontFamily": "DejaVu Sans",
+      "fontSize": 14.0,
+      "color": null,
+      "highlightColor": null
+     },
+     {
+      "id": "LHDqDOdOmZz0Pm2QWQwqH",
+      "text": "This paragraph has indentation level 1",
+      "type": "fragment",
+      "styles": null,
+      "fontFamily": "DejaVu Sans",
+      "fontSize": 14.0,
+      "color": null,
+      "highlightColor": null
+     }
+    ],
+    "textAlign": "left",
+    "indent": 1,
+    "styleName": null,
+    "text": "This paragraph has indentation level 1"
+   },
+   {
+    "id": "547dlZTpHtJclDup6KPcq",
+    "type": "paragraph",
+    "fragments": [
+     {
+      "id": "YFkFNKECKr78w-xa0h_qI",
+      "text": "This paragraph has indentation level 2",
+      "type": "fragment",
+      "styles": null,
+      "fontFamily": "DejaVu Sans",
+      "fontSize": 14.0,
+      "color": null,
+      "highlightColor": null
+     }
+    ],
+    "textAlign": "left",
+    "indent": 2,
+    "styleName": null,
+    "text": "This paragraph has indentation level 2"
+   }
+  ],
+  "type": "root"
+ },
+ "settings": {
+  "lineHeight": 1.15,
+  "spacingBefore": 12.0,
+  "spacingAfter": 12.0,
+  "fontFamily": "DejaVu Sans",
+  "fontSize": 14.0,
+  "textAlign": "left",
+  "indent": 0,
+  "color": null,
+  "highlightColor": null,
+  "styles": []
+ }
+}
