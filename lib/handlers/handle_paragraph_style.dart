@@ -21,14 +21,28 @@ bool executeHandleParagraphStyle(
       for (final node in selection.nodes) {
         final container = node.container;
         if (container is Paragraph) {
-          _applyStyleToParagraph(container, style);
+          final handled = document.registry.dispatchParagraphMutation(
+            document,
+            container,
+            (p) => _applyStyleToParagraph(p, style),
+          );
+          if (!handled) {
+            _applyStyleToParagraph(container, style);
+          }
         }
       }
     }
   } else {
     final container = document.findLogicalContainerCached(cursor.anchorId);
     if (container is Paragraph) {
-      _applyStyleToParagraph(container, style);
+      final handled = document.registry.dispatchParagraphMutation(
+        document,
+        container,
+        (p) => _applyStyleToParagraph(p, style),
+      );
+      if (!handled) {
+        _applyStyleToParagraph(container, style);
+      }
     } else {
       document.pendingStyle = style;
       document.updateContent();

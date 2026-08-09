@@ -215,6 +215,15 @@ class FluentDocument extends ChangeNotifier {
     return _parentCache[childId];
   }
 
+  /// Manually update the parent cache for a newly inserted node/fragment.
+  void updateParentCache(String childId, String? parentId) {
+    if (parentId == null) {
+      _parentCache.remove(childId);
+    } else {
+      _parentCache[childId] = parentId;
+    }
+  }
+
   /// O(1) lookup of the top-level index for a node id, or -1 if not found.
   /// Uses [findLogicalContainerId] to resolve fragments to their container.
   int topLevelIndexOf(String fragmentOrNodeId) {

@@ -194,6 +194,11 @@ const int _indentStep = 1;
 /// Increases the paragraph indentation (max 10).
 bool _handleParagraphIndent(FluentDocument document, Paragraph paragraph) {
   if (paragraph.indent < _maxIndent) {
+    if (document.registry.dispatchParagraphMutation(document, paragraph, (p) {
+      p.indent = (p.indent + _indentStep).clamp(0, _maxIndent);
+    })) {
+      return true;
+    }
     paragraph.indent = (paragraph.indent + _indentStep).clamp(0, _maxIndent);
     document.updateContent();
   }
@@ -203,6 +208,11 @@ bool _handleParagraphIndent(FluentDocument document, Paragraph paragraph) {
 /// Decreases the paragraph indentation (min 0).
 bool _handleParagraphOutdent(FluentDocument document, Paragraph paragraph) {
   if (paragraph.indent > 0) {
+    if (document.registry.dispatchParagraphMutation(document, paragraph, (p) {
+      p.indent = (p.indent - _indentStep).clamp(0, _maxIndent);
+    })) {
+      return true;
+    }
     paragraph.indent = (paragraph.indent - _indentStep).clamp(0, _maxIndent);
     document.updateContent();
   }

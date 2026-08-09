@@ -525,12 +525,14 @@ class EventHandler {
   }
 
   bool handleTab() {
+    if (document.registry.dispatchTab(document, isShiftPressed: false)) return true;
     document.saveState(description: 'Indent');
     executeHandleTab(document, shift: false);
     return true;
   }
 
   bool handleShiftTab() {
+    if (document.registry.dispatchTab(document, isShiftPressed: true)) return true;
     document.saveState(description: 'Outdent');
     executeHandleTab(document, shift: true);
     return true;

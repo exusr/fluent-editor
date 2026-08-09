@@ -24,7 +24,25 @@ bool _applyFontFamilyToSelection(
   final result = splitAndApplyToLeaves(
     document,
     selection,
-    modify: (leaf) => leaf.fontFamily = fontFamily,
+    modifyBatch: (leaves) {
+      final res = document.registry.dispatchLeavesStyleMutation(
+        document,
+        leaves,
+        (l) => l.fontFamily = fontFamily,
+      );
+      return res;
+    },
+    modify: (leaf) {
+      final res = document.registry.dispatchStyleMutation(
+        document,
+        leaf,
+        (l) => l.fontFamily = fontFamily,
+      );
+      if (res != null) return res;
+
+      leaf.fontFamily = fontFamily;
+      return leaf;
+    },
   );
 
   if (result.lastModified != null) {

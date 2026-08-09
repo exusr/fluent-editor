@@ -276,6 +276,15 @@ abstract class FluentEditorPlugin {
   /// Intercepts decreasing table cell colspan. Return true if handled.
   bool onDecreaseTableColspan(FluentDocument document, FluentTable table, FluentCell cell) => false;
 
+  /// Intercepts an inline style mutation on a fragment. Return the modified/new fragment if handled, null otherwise.
+  Fragment? onStyleMutation(FluentDocument document, Fragment leaf, void Function(Fragment) mutator) => null;
+
+  /// Intercepts an inline style mutation on a list of fragments. Return the modified/new fragments if handled, null otherwise.
+  List<Fragment>? onLeavesStyleMutation(FluentDocument document, List<Fragment> leaves, void Function(Fragment) mutator) => null;
+
+  /// Intercepts a paragraph mutation. Return true if handled, false otherwise.
+  bool onParagraphMutation(FluentDocument document, Paragraph paragraph, void Function(Paragraph) mutator) => false;
+
   /// Called whenever document text is mutated.
   void onTextMutation(String paragraphId, int fromOffset, int delta) {}
 
@@ -515,6 +524,29 @@ class FluentPluginRegistry {
   ) {
     for (final plugin in plugins) {
       if (plugin.onInsertNode(document, nodeType, options)) return true;
+    }
+    return false;
+  }
+
+  Fragment? dispatchStyleMutation(FluentDocument document, Fragment leaf, void Function(Fragment) mutator) {
+    for (final plugin in plugins) {
+      final res = plugin.onStyleMutation(document, leaf, mutator);
+      if (res != null) return res;
+    }
+    return null;
+  }
+
+  List<Fragment>? dispatchLeavesStyleMutation(FluentDocument document, List<Fragment> leaves, void Function(Fragment) mutator) {
+    for (final plugin in plugins) {
+      final res = plugin.onLeavesStyleMutation(document, leaves, mutator);
+      if (res != null) return res;
+    }
+    return null;
+  }
+
+  bool dispatchParagraphMutation(FluentDocument document, Paragraph paragraph, void Function(Paragraph) mutator) {
+    for (final plugin in plugins) {
+      if (plugin.onParagraphMutation(document, paragraph, mutator)) return true;
     }
     return false;
   }

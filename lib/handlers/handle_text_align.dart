@@ -11,7 +11,7 @@ bool executeHandleTextAlign(FluentDocument document, String align) {
 
   if (selection != null) {
     for (final node in selection.nodes) {
-      _applyToParagraphs(node.container as FNode, align);
+      _applyToParagraphs(document, node.container as FNode, align);
     }
     document.pendingTextAlign = align;
     document.updateContent();
@@ -20,7 +20,7 @@ bool executeHandleTextAlign(FluentDocument document, String align) {
 
   final container = document.findLogicalContainerCached(cursor.anchorId);
   if (container != null) {
-    _applyToParagraphs(container as FNode, align);
+    _applyToParagraphs(document, container as FNode, align);
     document.pendingTextAlign = align;
     document.updateContent();
     return true;
@@ -29,14 +29,19 @@ bool executeHandleTextAlign(FluentDocument document, String align) {
   return false;
 }
 
-void _applyToParagraphs(FNode node, String align) {
+void _applyToParagraphs(FluentDocument document, FNode node, String align) {
   if (node is Paragraph) {
+    if (document.registry.dispatchParagraphMutation(document, node, (p) {
+      p.textAlign = align;
+    })) {
+      return;
+    }
     node.textAlign = align;
   } else if (node is FluentImage) {
     node.textAlign = align;
   } else if (node is InlineContainerNode) {
     for (final child in (node as InlineContainerNode).getChildren()) {
-      _applyToParagraphs(child, align);
+      _applyToParagraphs(document, child, align);
     }
   }
 }

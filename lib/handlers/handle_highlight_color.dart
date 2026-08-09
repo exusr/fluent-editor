@@ -6,5 +6,6 @@ import 'package:fluent_editor/utils/handler_helpers.dart';
 /// Pass [null] or empty string to remove the highlight.
 bool executeHandleHighlightColor(FluentDocument document, String? color) =>
     applyStyleProperty(document, color,
+        description: 'Change highlight color',
         modifyLeaf: (leaf, v) => leaf.highlightColor = v,
         setPending: (doc, v) => doc.pendingHighlightColor = v);

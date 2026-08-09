@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'package:fluent_editor/cursor.dart';
 import 'package:fluent_editor/factories.dart';
 import 'package:fluent_editor/fluent_document.dart';
@@ -53,19 +54,21 @@ void saveAndDeleteNode(FluentDocument document, FNode node, {required String des
 ({Fragment? firstModified, Fragment? lastModified}) splitAndApplyToLeaves(
   FluentDocument document,
   ResolvedSelection selection, {
-  required void Function(Fragment leaf) modify,
+  List<Fragment>? Function(List<Fragment> leaves)? modifyBatch,
+  Fragment? Function(Fragment leaf)? modify,
 }) {
   Fragment? firstModified;
   Fragment? lastModified;
 
   for (final node in selection.nodes) {
     final container = node.container;
-
-    final startParent = findParentCached(document, node.startFragment);
-    final endParent   = findParentCached(document, node.endFragment);
+    if (container == null) continue;
 
     late Fragment actualStartFrag;
     late Fragment actualEndFrag;
+
+    final startParent = findParentCached(document, node.startFragment);
+    final endParent   = findParentCached(document, node.endFragment);
 
     if (node.startFragment.id == node.endFragment.id) {
       final frag = node.startFragment;
@@ -87,10 +90,12 @@ void saveAndDeleteNode(FluentDocument document, FNode node, {required String des
         final after  = frag.text.substring(end);
         frag.text = before;
         final midFrag = FragmentOperations.cloneFragment(frag, text: mid);
-        if (startParent != null) insertAfter(startParent, frag, midFrag);
-        if (after.isNotEmpty && startParent != null) {
+        if (startParent != null) {
+          insertAfter(startParent, frag, midFrag);
+          document.updateParentCache(midFrag.id, startParent.id);
           final afterFrag = FragmentOperations.cloneFragment(frag, text: after);
           insertAfter(startParent, midFrag, afterFrag);
+          document.updateParentCache(afterFrag.id, startParent.id);
         }
         actualStartFrag = midFrag;
         actualEndFrag   = midFrag;
@@ -99,7 +104,10 @@ void saveAndDeleteNode(FluentDocument document, FNode node, {required String des
         final after  = frag.text.substring(start);
         frag.text = before;
         final newFrag = FragmentOperations.cloneFragment(frag, text: after);
-        if (startParent != null) insertAfter(startParent, frag, newFrag);
+        if (startParent != null) {
+          insertAfter(startParent, frag, newFrag);
+          document.updateParentCache(newFrag.id, startParent.id);
+        }
         actualStartFrag = newFrag;
         actualEndFrag   = newFrag;
       } else if (end < len) {
@@ -107,7 +115,10 @@ void saveAndDeleteNode(FluentDocument document, FNode node, {required String des
         final after    = frag.text.substring(end);
         frag.text = selected;
         final afterFrag = FragmentOperations.cloneFragment(frag, text: after);
-        if (startParent != null) insertAfter(startParent, frag, afterFrag);
+        if (startParent != null) {
+          insertAfter(startParent, frag, afterFrag);
+          document.updateParentCache(afterFrag.id, startParent.id);
+        }
         actualStartFrag = frag;
         actualEndFrag   = frag;
       } else {
@@ -115,30 +126,42 @@ void saveAndDeleteNode(FluentDocument document, FNode node, {required String des
         actualEndFrag   = frag;
       }
     } else {
+      // Different fragments: split first at startOffset, and last at endOffset
       final first = node.startFragment;
-      final firstLen = first.text.length;
-      final sOffset = node.startOffset.clamp(0, firstLen);
-      if (sOffset > 0 && sOffset < firstLen) {
+      final last = node.endFragment;
+      
+      final sOffset = node.startOffset.clamp(0, first.text.length);
+      if (sOffset > 0 && sOffset < first.text.length) {
         final before = first.text.substring(0, sOffset);
-        final after  = first.text.substring(sOffset);
+        final selected = first.text.substring(sOffset);
+        
         first.text = before;
-        final newFrag = FragmentOperations.cloneFragment(first, text: after);
-        if (startParent != null) insertAfter(startParent, first, newFrag);
-        actualStartFrag = newFrag;
+        final selectedFrag = FragmentOperations.cloneFragment(first, text: selected);
+        if (startParent != null) {
+          insertAfter(startParent, first, selectedFrag);
+          document.updateParentCache(selectedFrag.id, startParent.id);
+        }
+        actualStartFrag = selectedFrag;
+      } else if (sOffset == first.text.length) {
+        actualStartFrag = first; // Handled below by advancing startIdx
       } else {
         actualStartFrag = first;
       }
-
-      final last = node.endFragment;
-      final lastLen = last.text.length;
-      final eOffset = node.endOffset.clamp(0, lastLen);
-      if (eOffset > 0 && eOffset < lastLen) {
+      
+      final eOffset = node.endOffset.clamp(0, last.text.length);
+      if (eOffset > 0 && eOffset < last.text.length) {
         final selected = last.text.substring(0, eOffset);
-        final after    = last.text.substring(eOffset);
+        final after = last.text.substring(eOffset);
+        
         last.text = selected;
         final afterFrag = FragmentOperations.cloneFragment(last, text: after);
-        if (endParent != null) insertAfter(endParent, last, afterFrag);
+        if (endParent != null) {
+          insertAfter(endParent, last, afterFrag);
+          document.updateParentCache(afterFrag.id, endParent.id);
+        }
         actualEndFrag = last;
+      } else if (eOffset == 0) {
+        actualEndFrag = last; // Handled below by retracting endIdx
       } else {
         actualEndFrag = last;
       }
@@ -151,24 +174,37 @@ void saveAndDeleteNode(FluentDocument document, FNode node, {required String des
     if (node.startFragment.id != node.endFragment.id) {
       final sOffset = node.startOffset.clamp(0, node.startFragment.text.length);
       final eOffset = node.endOffset.clamp(0, node.endFragment.text.length);
-      // If we didn't split but the selection starts at the end of the start fragment, skip it.
       if (sOffset >= node.startFragment.text.length && actualStartFrag.id == node.startFragment.id) {
         startIdx++;
       }
-      // If we didn't split but the selection ends at the start of the end fragment, skip it.
       if (eOffset <= 0 && actualEndFrag.id == node.endFragment.id) {
         endIdx--;
       }
     }
 
     if (startIdx <= endIdx && startIdx >= 0 && endIdx < leaves.length) {
+      final leavesToModify = <Fragment>[];
       for (int i = startIdx; i <= endIdx; i++) {
         final leaf = leaves[i];
         if (leaf is! FluentImage) {
           if (leaf.styles?.contains(document.suggestionStyleHook.deletionTag) != true) {
-            modify(leaf);
-            firstModified ??= leaf;
-            lastModified = leaf;
+            leavesToModify.add(leaf as Fragment);
+          }
+        }
+      }
+
+      if (leavesToModify.isNotEmpty) {
+        final res = modifyBatch?.call(leavesToModify);
+        if (res != null && res.isNotEmpty) {
+          firstModified ??= res.first;
+          lastModified = res.last;
+        } else {
+          for (final leaf in leavesToModify) {
+            final modLeaf = modify?.call(leaf);
+            if (modLeaf != null) {
+              firstModified ??= modLeaf;
+              lastModified = modLeaf;
+            }
           }
         }
       }
@@ -364,16 +400,41 @@ bool applyStyleProperty<T>(
   T value, {
   required void Function(Fragment leaf, T value) modifyLeaf,
   required void Function(FluentDocument document, T value) setPending,
+  String? description,
 }) {
+  document.saveState(description: description ?? 'Change style property');
   final selection = resolveSelectionFromCursor(document);
   if (selection != null) {
     final cursor = document.cursor;
     final result = splitAndApplyToLeaves(
       document,
       selection,
-      modify: (leaf) => modifyLeaf(leaf, value),
+      modifyBatch: (leaves) {
+        final res = document.registry.dispatchLeavesStyleMutation(
+          document,
+          leaves,
+          (l) => modifyLeaf(l, value),
+        );
+        return res;
+      },
+      modify: (leaf) {
+        final res = document.registry.dispatchStyleMutation(
+          document,
+          leaf,
+          (l) => modifyLeaf(l, value),
+        );
+        if (res != null) return res;
+
+        modifyLeaf(leaf, value);
+        return leaf;
+      },
     );
-    if (result.lastModified != null) {
+    if (result.firstModified != null && result.lastModified != null) {
+      cursor.anchorId = result.firstModified!.id;
+      cursor.anchorOffset = 0;
+      cursor.focusId = result.lastModified!.id;
+      cursor.focusOffset = result.lastModified!.text.length;
+    } else if (result.lastModified != null) {
       cursor.moveTo(result.lastModified!.id, result.lastModified!.text.length);
     }
     setPending(document, value);

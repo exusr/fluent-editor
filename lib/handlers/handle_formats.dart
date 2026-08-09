@@ -95,7 +95,26 @@ bool _applyStyleToSelection(FluentDocument document, ResolvedSelection selection
   final result = splitAndApplyToLeaves(
     document,
     selection,
-    modify: (leaf) => _toggleStyle(leaf, styleName),
+    modifyBatch: (leaves) {
+      final res = document.registry.dispatchLeavesStyleMutation(
+        document,
+        leaves,
+        (l) => _toggleStyle(l, styleName),
+      );
+      return res;
+    },
+    modify: (leaf) {
+      final res = document.registry.dispatchStyleMutation(
+        document,
+        leaf,
+        (l) => _toggleStyle(l, styleName),
+      );
+      if (res != null) {
+        return res;
+      }
+      _toggleStyle(leaf, styleName);
+      return leaf;
+    },
   );
 
   if (result.firstModified != null && result.lastModified != null) {

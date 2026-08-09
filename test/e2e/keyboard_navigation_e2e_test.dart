@@ -51,7 +51,7 @@ void _keyDown(FluentDocument doc, LogicalKeyboardKey key,
   doc.eventHandler.isCtrlPressed = ctrl;
   doc.eventHandler.isShiftPressed = shift;
   doc.eventHandler.isMetaPressed = meta;
-  doc.eventHandler.handleKeyDown(event, doc);
+  doc.eventHandler.handle(event, doc);
 }
 
 void main() {
@@ -622,7 +622,7 @@ void main() {
       // Since we bypass updateModifiers, we set isCtrlPressed=true
       // (which represents Cmd on macOS after the swap).
       doc.eventHandler.isCtrlPressed = true;
-      doc.eventHandler.handleKeyDown(event, doc);
+      doc.eventHandler.handle(event, doc);
       expect(frag.isBold, isTrue);
     });
   });
