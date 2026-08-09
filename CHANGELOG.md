@@ -1,3 +1,9 @@
+## 1.1.0
+
+* **Plugin Architecture**: Introduced a new modular plugin system (`FluentEditorPlugin`), allowing developers to easily extend the editor's capabilities.
+* **Unified Sidebar**: Added automatic anchoring and scroll synchronization for plugin sidebar elements relative to the document text.
+* **General Bugfixes**: Fixed layout overflows, improved `ListItem` node boundary calculations, resolved UI flickering in the positioned sidebar, and optimized node offset computations.
+
 ## 1.0.7
 
 * Added native IME composition support with preedit text isolation for CJK input (iOS, macOS, Windows, Android, web)
