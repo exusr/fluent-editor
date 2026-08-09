@@ -15,7 +15,6 @@ import 'package:fluent_editor/widgets/editor/fluent_toolbar_widget.dart';
 import 'package:fluent_editor/widgets/editor/fluent_bubble_toolbar.dart';
 import 'package:fluent_editor/widgets/nodes/virtualized_selectable_area.dart';
 import 'package:fluent_editor/widgets/editor/fluent_unified_sidebar.dart';
-import 'package:fluent_editor/plugins/plugin_api.dart';
 
 /// Toolbar display mode.
 enum FluentToolbarMode { fixed, bubble }
@@ -180,7 +179,7 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
     });
   }
 
-   Widget _buildVirtualizedContent(bool hasActiveSidebar) {
+  Widget _buildVirtualizedContent(bool hasActiveSidebar) {
     return Focus(
       focusNode: widget.document.editorFocusNode,
       autofocus: true,
@@ -239,8 +238,7 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
       },
       child: Padding(
         padding: const EdgeInsets.all(24.0).copyWith(
-          right:
-              24.0 + (!hasActiveSidebar || _isSidebarCollapsed ? 0 : 300),
+          right: 24.0 + (!hasActiveSidebar || _isSidebarCollapsed ? 0 : 300),
         ),
         child: Center(
           child: ConstrainedBox(
@@ -303,7 +301,6 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
       });
     });
   }
-
 
   void _onDocumentChanged() {
     _updateImeCaretRect();
@@ -541,15 +538,14 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
     super.dispose();
   }
 
-
   Widget? _resolveSidebar(BuildContext context) {
     if (widget.sidebar != null) return widget.sidebar;
     if (!widget.document.registry.hasSidebarPlugins) return null;
-    final items = widget.document.registry.buildSidebarItems(context, widget.document);
-    return FluentUnifiedSidebar(
-      document: widget.document,
-      items: items,
+    final items = widget.document.registry.buildSidebarItems(
+      context,
+      widget.document,
     );
+    return FluentUnifiedSidebar(document: widget.document, items: items);
   }
 
   @override
