@@ -58,9 +58,9 @@ A powerful and feature-rich word processor for Flutter applications, inspired by
 
 | Plugin | Description |
 |--------|-------------|
-| [`fluent_editor_comments`](../fluent-editor-comments/) | Comments and annotations plugin — anchor comments to text ranges, reply, resolve, and manage discussion threads. |
-| [`fluent_editor_review`](../fluent-editor-review/) | Track Changes / Review plugin — captures additions and deletions as reviewable suggestions with accept/reject workflow. |
-| [`fluent_editor_character_map`](../fluent-editor-character-map/) | Special character grid, math symbols, and emoji picker. |
+| [`fluent_editor_comments`](https://github.com/exusr/fluent-editor-comments) | Comments and annotations plugin — anchor comments to text ranges, reply, resolve, and manage discussion threads. |
+| [`fluent_editor_review`](https://github.com/exusr/fluent-editor-review) | Track Changes / Review plugin — captures additions and deletions as reviewable suggestions with accept/reject workflow. |
+| [`fluent_editor_character_map`](https://github.com/exusr/fluent-editor-character-map) | Special character grid, math symbols, and emoji picker. |
 
 ## Getting Started
 
