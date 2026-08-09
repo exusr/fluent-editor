@@ -1,7 +1,9 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:fluent_editor/fluent_document.dart';
+import 'package:fluent_editor/factories.dart';
 import 'package:fluent_editor/widgets/fluent_document_widget.dart';
+import 'package:fluent_editor/utils/cursor_navigation.dart';
 
 /// Categories for items displayed in the sidebar.
 enum FluentSidebarItemCategory {
@@ -14,6 +16,7 @@ enum FluentSidebarItemCategory {
 class FluentSidebarItem {
   final String id;
   final String nodeId;
+  final CaretStop? stop;
   final Widget widget;
   final double estimatedHeight;
   final DateTime? createdAt;
@@ -22,6 +25,7 @@ class FluentSidebarItem {
   const FluentSidebarItem({
     required this.id,
     required this.nodeId,
+    this.stop,
     required this.widget,
     this.estimatedHeight = 130.0,
     this.createdAt,
@@ -138,20 +142,16 @@ class _FluentPositionedSidebarState extends State<FluentPositionedSidebar> {
       _invalidateNodeYCache();
     }
 
-    final nodeIds = <String>{};
     for (final item in widget.items) {
-      nodeIds.add(item.nodeId);
-    }
-    for (final nodeId in nodeIds) {
-      if (!_nodeYInContent.containsKey(nodeId)) {
-        final y = _computeNodeYInContent(doc, nodeId, scrollController);
-        if (_sidebarAreaKey.currentContext?.findRenderObject() is RenderBox) {
-          _nodeYInContent[nodeId] = y;
+      if (!_nodeYInContent.containsKey(item.id)) {
+        final y = _computeNodeYInContent(doc, item, scrollController);
+        if (y != null && _sidebarAreaKey.currentContext?.findRenderObject() is RenderBox) {
+          _nodeYInContent[item.id] = y;
         }
       }
     }
 
-    if (nodeIds.any((id) => !_nodeYInContent.containsKey(id))) {
+    if (widget.items.any((item) => !_nodeYInContent.containsKey(item.id))) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) setState(() {});
       });
@@ -192,8 +192,8 @@ class _FluentPositionedSidebarState extends State<FluentPositionedSidebar> {
       indexed.add(i);
     }
     indexed.sort((a, b) {
-      final ya = _nodeYInContent[widget.items[a].nodeId] ?? 0;
-      final yb = _nodeYInContent[widget.items[b].nodeId] ?? 0;
+      final ya = _nodeYInContent[widget.items[a].id] ?? 0;
+      final yb = _nodeYInContent[widget.items[b].id] ?? 0;
       if ((ya - yb).abs() > 0.1) return ya.compareTo(yb);
       final ca = widget.items[a].createdAt;
       final cb = widget.items[b].createdAt;
@@ -204,7 +204,7 @@ class _FluentPositionedSidebarState extends State<FluentPositionedSidebar> {
     final baseYs = List<double>.filled(widget.items.length, 0);
     double nextAvailable = -double.infinity;
     for (final i in indexed) {
-      final targetY = _nodeYInContent[widget.items[i].nodeId] ?? 0;
+      final targetY = _nodeYInContent[widget.items[i].id] ?? 0;
       var y = targetY < nextAvailable ? nextAvailable : targetY;
       baseYs[i] = y;
       final h = _cardHeights[widget.items[i].id] ?? widget.items[i].estimatedHeight;
@@ -248,36 +248,57 @@ class _FluentPositionedSidebarState extends State<FluentPositionedSidebar> {
     );
   }
 
-  double _computeNodeYInContent(
+  double? _computeNodeYInContent(
     FluentDocument doc,
-    String nodeId,
+    FluentSidebarItem item,
     ScrollController? scrollController,
   ) {
-    final resolvedNodeId = doc.findLogicalContainerId(nodeId) ?? nodeId;
-    final render = doc.paragraphRegistry.renderFor(resolvedNodeId);
-    if (render != null && render.attached && render.hasSize) {
+    double? nodeGlobalY;
+
+    if (item.stop != null) {
+      final preciseY = doc.resolveCaretY(item.stop!);
+      if (preciseY > 0) {
+        nodeGlobalY = preciseY;
+      }
+    }
+
+    if (nodeGlobalY == null) {
+      String targetId = item.stop != null
+          ? (doc.findLogicalContainerId(item.stop!.fragmentId) ?? item.nodeId)
+          : (doc.findLogicalContainerId(item.nodeId) ?? item.nodeId);
+      
+      final fallbackNode = doc.nodeById(targetId);
+      if (fallbackNode is ListItem && fallbackNode.children.isNotEmpty) {
+        targetId = fallbackNode.children.firstWhere((c) => c is Paragraph, orElse: () => fallbackNode.children.first).id;
+      }
+      
+      final render = doc.paragraphRegistry.renderFor(targetId);
+      if (render != null && render.attached && render.hasSize) {
+        nodeGlobalY = render.localToGlobal(Offset.zero).dy;
+      }
+    }
+
+    if (nodeGlobalY != null) {
       final areaBox =
           _sidebarAreaKey.currentContext?.findRenderObject() as RenderBox?;
       if (areaBox != null && areaBox.hasSize) {
-        final nodeGlobal = render.localToGlobal(Offset.zero);
         final areaGlobal = areaBox.localToGlobal(Offset.zero);
         final scrollOffset = scrollController?.hasClients == true
             ? scrollController!.position.pixels
             : 0.0;
-        return nodeGlobal.dy - areaGlobal.dy + scrollOffset;
+        return nodeGlobalY - areaGlobal.dy + scrollOffset;
       }
       final stackCtx =
           DocumentLayout.of(context)?.contentStackKey.currentContext;
       if (stackCtx?.findRenderObject() is RenderBox) {
         final stackBox = stackCtx!.findRenderObject() as RenderBox;
-        final nodeGlobal = render.localToGlobal(Offset.zero);
         final stackGlobal = stackBox.localToGlobal(Offset.zero);
         final scrollOffset = scrollController?.hasClients == true
             ? scrollController!.position.pixels
             : 0.0;
-        return nodeGlobal.dy - stackGlobal.dy + scrollOffset;
+        return nodeGlobalY - stackGlobal.dy + scrollOffset;
       }
     }
-    return 0.0;
+    return null;
   }
 }

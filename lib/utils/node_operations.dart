@@ -14,7 +14,7 @@ List<FNode> childrenOf(FNode node) {
     return node.getChildren().cast<FNode>();
   }
   if (node is FluentList) {
-    return node.getChildren().cast<FNode>();
+    return node.items.cast<FNode>();
   }
   if (node is InlineContainerNode) {
     return (node as InlineContainerNode).getChildren().cast<FNode>();
@@ -257,7 +257,7 @@ bool walkTree(FNode root, bool Function(FNode node, FNode? parent) visitor,
 /// [parent] doesn't support mutable children directly.
 List<FNode>? _mutableChildrenOf(FNode parent) {
   if (parent is Root) return parent.nodes;
-  if (parent is FluentList) return parent.getChildren().cast<FNode>();
+  if (parent is FluentList) return parent.items.cast<FNode>();
   if (parent is FluentTable) return parent.getChildren().cast<FNode>();
   if (parent is FluentRow) return parent.getChildren().cast<FNode>();
   if (parent is InlineContainerNode && parent is! FluentImage && parent is! HorizontalRule) {

@@ -392,12 +392,11 @@ class FluentList extends Paragraph implements InlineContainerNode {
     _items = value;
   }
   
+  @override
+  List<FNode> getChildren() => _items;
+  
   FluentList({required this.listType}) : super();
   
-  @override
-  List<ListItem> getChildren() {
-    return _items;
-  }
 
   @override
   String get text {
