@@ -69,7 +69,7 @@ class DocumentLayout extends InheritedWidget {
 
 class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
   bool _showStatsPanel = false;
-  bool _isSidebarCollapsed = false;
+  bool _isSidebarCollapsed = true;
   bool _pendingScrollToCursor = false;
   final ScrollController _scrollController = ScrollController();
   final GlobalKey _contentStackKey = GlobalKey();

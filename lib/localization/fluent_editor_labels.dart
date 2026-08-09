@@ -257,8 +257,9 @@ class FluentEditorLabels {
     this.addCommentLabel = 'Add comment',
     this.commentDialogTitle = 'Add comment',
     this.commentHint = 'Write a comment...',
-    this.commentOverlapWarning = 'Warning: the comment overlaps an existing comment.',
-    this.sidebarTitle = 'Activities & Reviews',
+    this.commentOverlapWarning =
+        'Warning: the comment overlaps an existing comment.',
+    this.sidebarTitle = 'Activities',
     this.emptySidebarMessage = 'No comments or suggestions in the document.',
     this.showResolvedLabel = 'Show resolved',
     this.showCommentsLabel = 'Show comments',
@@ -424,7 +425,8 @@ class FluentEditorLabels {
       cut: cut ?? this.cut,
       copy: copy ?? this.copy,
       paste: paste ?? this.paste,
-      pasteWithoutFormatting: pasteWithoutFormatting ?? this.pasteWithoutFormatting,
+      pasteWithoutFormatting:
+          pasteWithoutFormatting ?? this.pasteWithoutFormatting,
       selectAll: selectAll ?? this.selectAll,
       delete: delete ?? this.delete,
       wordCount: wordCount ?? this.wordCount,
@@ -501,7 +503,8 @@ class FluentEditorLabels {
       addCommentLabel: addCommentLabel ?? this.addCommentLabel,
       commentDialogTitle: commentDialogTitle ?? this.commentDialogTitle,
       commentHint: commentHint ?? this.commentHint,
-      commentOverlapWarning: commentOverlapWarning ?? this.commentOverlapWarning,
+      commentOverlapWarning:
+          commentOverlapWarning ?? this.commentOverlapWarning,
       sidebarTitle: sidebarTitle ?? this.sidebarTitle,
       emptySidebarMessage: emptySidebarMessage ?? this.emptySidebarMessage,
       showResolvedLabel: showResolvedLabel ?? this.showResolvedLabel,
@@ -514,7 +517,8 @@ class FluentEditorLabels {
       defaultAuthorName: defaultAuthorName ?? this.defaultAuthorName,
       anonymousLabel: anonymousLabel ?? this.anonymousLabel,
       pdfCommentSubject: pdfCommentSubject ?? this.pdfCommentSubject,
-      authorInfoDialogTitle: authorInfoDialogTitle ?? this.authorInfoDialogTitle,
+      authorInfoDialogTitle:
+          authorInfoDialogTitle ?? this.authorInfoDialogTitle,
       authorNameLabel: authorNameLabel ?? this.authorNameLabel,
       authorNameHint: authorNameHint ?? this.authorNameHint,
       setAuthorLabel: setAuthorLabel ?? this.setAuthorLabel,
