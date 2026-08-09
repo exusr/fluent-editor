@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:fluent_editor/fluent_document.dart';
 import 'package:fluent_editor/factories.dart';

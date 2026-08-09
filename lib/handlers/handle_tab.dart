@@ -157,7 +157,7 @@ bool _handleListOutdent(FluentDocument document, ListItem currentItem) {
     }
 
     recalculateListIndicesFor(root, {currentItem});
-    mergeConsecutiveListsInContainer(greatGrandparent is FluentList ? greatGrandparent : root, root);
+    mergeConsecutiveListsInContainer(greatGrandparent, root);
 
     final originalFrag = document.nodeById(savedFragId);
     if (originalFrag is Fragment) {

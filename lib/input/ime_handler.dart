@@ -1,5 +1,3 @@
-import 'dart:io';
-import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -152,7 +150,6 @@ class FluentTextInputHandler implements DeltaTextInputClient {
   @override
   void insertContent(KeyboardInsertedContent content) {}
 
-  @override
   bool onFocusReceived() => false;
 
   @override
@@ -906,8 +903,9 @@ class FluentTextInputHandler implements DeltaTextInputClient {
 
   void syncImeBufferToFragment() {
     if (connectionManager.connection == null ||
-        !connectionManager.connection!.attached)
+        !connectionManager.connection!.attached) {
       return;
+    }
     if (state.isComposing) return;
     final doc = _document;
     if (doc == null) return;

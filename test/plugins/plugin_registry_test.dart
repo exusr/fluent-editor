@@ -62,7 +62,7 @@ class _FixturePlugin extends FluentEditorPlugin {
     FluentUiContribution(
       id: 'fixture.toolbarButton',
       location: FluentPluginUiLocation.toolbar,
-      builder: (_, __) => const SizedBox(width: 10, height: 10),
+      builder: (_, _) => const SizedBox(width: 10, height: 10),
     ),
   ];
 

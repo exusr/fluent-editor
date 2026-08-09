@@ -107,7 +107,7 @@ bool executeHandleArrowKey(
       if (containerIdx >= 0) {
         candidateIds.add(containerOrder[containerIdx]);
 
-        String? _nearestStructure(String? id) {
+        String? nearestStructure(String? id) {
           if (id == null) return null;
           String? pid = id;
           while (pid != null) {
@@ -118,7 +118,7 @@ bool executeHandleArrowKey(
           return null;
         }
 
-        bool _isInsideStructure(String? containerId, String structureId) {
+        bool isInsideStructure(String? containerId, String structureId) {
           if (containerId == null) return false;
           String? pid = containerId;
           while (pid != null) {
@@ -128,7 +128,7 @@ bool executeHandleArrowKey(
           return false;
         }
 
-        String? _cellFor(String? containerId) {
+        String? cellFor(String? containerId) {
           if (containerId == null) return null;
           String? pid = containerId;
           while (pid != null) {
@@ -139,12 +139,12 @@ bool executeHandleArrowKey(
           return null;
         }
 
-        final currentEnclosing = _nearestStructure(currentContainerId);
+        final currentEnclosing = nearestStructure(currentContainerId);
         if (currentEnclosing != null) {
           final enclosingNode = document.nodeById(currentEnclosing);
           if (enclosingNode is FluentTable) {
             final table = enclosingNode;
-            final currentCellId = _cellFor(currentContainerId);
+            final currentCellId = cellFor(currentContainerId);
             if (currentCellId != null) {
               int rowIndex = -1;
               int logicalCol = -1;
@@ -163,7 +163,7 @@ bool executeHandleArrowKey(
               }
               if (rowIndex >= 0 && logicalCol >= 0) {
                 for (final id in containerOrder) {
-                  if (_isInsideStructure(id, currentCellId)) {
+                  if (isInsideStructure(id, currentCellId)) {
                     candidateIds.add(id);
                   }
                 }
@@ -172,7 +172,7 @@ bool executeHandleArrowKey(
                     table.rows[rowIndex - 1], logicalCol);
                   if (aboveCellId != null) {
                     for (final id in containerOrder) {
-                      if (_isInsideStructure(id, aboveCellId)) {
+                      if (isInsideStructure(id, aboveCellId)) {
                         candidateIds.add(id);
                       }
                     }
@@ -183,7 +183,7 @@ bool executeHandleArrowKey(
                     table.rows[rowIndex + 1], logicalCol);
                   if (belowCellId != null) {
                     for (final id in containerOrder) {
-                      if (_isInsideStructure(id, belowCellId)) {
+                      if (isInsideStructure(id, belowCellId)) {
                         candidateIds.add(id);
                       }
                     }
@@ -193,7 +193,7 @@ bool executeHandleArrowKey(
             }
           } else if (enclosingNode is FluentList) {
             for (final id in containerOrder) {
-              if (_isInsideStructure(id, currentEnclosing)) {
+              if (isInsideStructure(id, currentEnclosing)) {
                 candidateIds.add(id);
               }
             }
@@ -201,7 +201,7 @@ bool executeHandleArrowKey(
           if (containerIdx > 0) {
             for (int i = containerIdx - 1; i >= 0; i--) {
               final id = containerOrder[i];
-              if (!_isInsideStructure(id, currentEnclosing)) {
+              if (!isInsideStructure(id, currentEnclosing)) {
                 candidateIds.add(id);
                 break;
               }
@@ -210,7 +210,7 @@ bool executeHandleArrowKey(
           if (containerIdx < containerOrder.length - 1) {
             for (int i = containerIdx + 1; i < containerOrder.length; i++) {
               final id = containerOrder[i];
-              if (!_isInsideStructure(id, currentEnclosing)) {
+              if (!isInsideStructure(id, currentEnclosing)) {
                 candidateIds.add(id);
                 break;
               }

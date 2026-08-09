@@ -1,5 +1,4 @@
 import 'package:fluent_editor/fluent_document.dart';
-import 'package:fluent_editor/handlers/handle_insert_node.dart';
 import 'package:fluent_editor/widgets/editor/fluent_link_dialog.dart';
 import 'package:fluent_editor/widgets/dialogs/image_insert_dialog.dart';
 import 'package:flutter/widgets.dart';

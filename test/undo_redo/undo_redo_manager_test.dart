@@ -1,10 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fluent_editor/fluent_document.dart';
 import 'package:fluent_editor/fluent_editor.dart';
 import 'package:fluent_editor/factories.dart';
-import 'package:fluent_editor/undo_redo/undo_redo_manager.dart';
 import 'package:fluent_editor/utils/node_operations.dart';
 import 'package:fluent_editor/handlers/handle_insert_node.dart';
 import 'package:fluent_editor/handlers/handle_backspace.dart';
@@ -318,7 +316,6 @@ void main() {
       await tester.pump();
       expect(find.byType(InlineImageWidget), findsNothing);
 
-      final versionAfterDelete = document.contentVersion;
       document.undo();
       await tester.pump();
       expect(find.byType(InlineImageWidget), findsOneWidget);

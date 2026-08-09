@@ -403,7 +403,7 @@ class ExportService {
       segs.sort((a, b) => a.start.compareTo(b.start));
     }
 
-    void _maybeEmitAnnot(Map<String, dynamic>? comment) {
+    void maybeEmitAnnot(Map<String, dynamic>? comment) {
       if (comment == null) return;
       final id = comment['id'] as String? ?? '';
       if (id.isEmpty || emittedAnnots.contains(id)) return;
@@ -414,14 +414,13 @@ class ExportService {
       final replies = comment['replies'] as List? ?? [];
       final fullText = replies.isEmpty
           ? text
-          : '$text\n' +
-                replies
+          : '$text\n${replies
                     .map((r) {
                       final rAuthor = (r as Map)['authorName'] as String? ?? '';
                       final rText = r['text'] as String? ?? '';
                       return '  \u21b3 $rAuthor: $rText';
                     })
-                    .join('\n');
+                    .join('\n')}';
 
       spans.add(
         pw.WidgetSpan(
@@ -449,7 +448,7 @@ class ExportService {
               segs,
             );
             for (final sub in subs) {
-              _maybeEmitAnnot(sub.comment);
+              maybeEmitAnnot(sub.comment);
               spans.add(
                 pw.TextSpan(
                   text: sub.text,
@@ -490,7 +489,7 @@ class ExportService {
             child: pw.Text(frag.text, style: style),
           );
           if (hasComment) {
-            _maybeEmitAnnot(
+            maybeEmitAnnot(
               segs
                   .firstWhere(
                     (s) =>
@@ -514,7 +513,7 @@ class ExportService {
         } else {
           final subs = _extractSegments(frag.text, globalOffset, segs);
           for (final sub in subs) {
-            _maybeEmitAnnot(sub.comment);
+            maybeEmitAnnot(sub.comment);
             final style = _getPdfFragmentStyle(frag, pStyle);
             if (sub.comment != null) {
               spans.add(
@@ -1142,7 +1141,7 @@ class ExportService {
       final inlineChildren = children
           .where((c) => c is Paragraph || c is FluentImage)
           .toList();
-      final blockChildren = children.where((c) => c is FluentList).toList();
+      final blockChildren = children.whereType<FluentList>().toList();
 
       if (inlineChildren.isNotEmpty) {
         buffer.write('$indent$prefix ');
@@ -1162,11 +1161,9 @@ class ExportService {
       }
 
       for (final child in blockChildren) {
-        if (child is FluentList) {
-          buffer.write('\n');
-          buffer.write(_listToMarkdown(child, depth + 1));
-        }
-      }
+        buffer.write('\n');
+        buffer.write(_listToMarkdown(child, depth + 1));
+            }
 
       if (i < list.items.length - 1) buffer.write('\n');
     }
@@ -1383,10 +1380,12 @@ class ExportService {
           if (linkChild is FluentImage) {
             final resolvedSrc = _resolveImageSrc(linkChild.src);
             final imgAttrs = <String>[];
-            if (linkChild.width != null)
+            if (linkChild.width != null) {
               imgAttrs.add('width="${linkChild.width!.toInt()}"');
-            if (linkChild.height != null)
+            }
+            if (linkChild.height != null) {
               imgAttrs.add('height="${linkChild.height!.toInt()}"');
+            }
             final imgAttrStr = imgAttrs.isNotEmpty
                 ? ' ${imgAttrs.join(' ')}'
                 : '';
@@ -1402,8 +1401,9 @@ class ExportService {
         final resolvedSrc = _resolveImageSrc(frag.src);
         final imgAttrs = <String>[];
         if (frag.width != null) imgAttrs.add('width="${frag.width!.toInt()}"');
-        if (frag.height != null)
+        if (frag.height != null) {
           imgAttrs.add('height="${frag.height!.toInt()}"');
+        }
         final imgAttrStr = imgAttrs.isNotEmpty ? ' ${imgAttrs.join(' ')}' : '';
         buffer.write('<img src="$resolvedSrc"$imgAttrStr alt="">');
       } else if (frag is Fragment) {

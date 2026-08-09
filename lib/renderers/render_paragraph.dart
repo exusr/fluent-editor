@@ -101,7 +101,7 @@ class RenderFluentParagraph extends RenderFluentNode
 
   final List<_FragmentPosition> _fragmentPositions = [];
   final Map<String, _FragmentPosition> _fragmentPositionMap = {};
-  List<PlaceholderDimensions> _placeholderDimensions = [];
+  final List<PlaceholderDimensions> _placeholderDimensions = [];
   final List<_ScriptSpanInfo> _scriptSpans = [];
   int _totalTextLength = 0;
 
@@ -825,7 +825,7 @@ class RenderFluentParagraph extends RenderFluentNode
               }
               effectiveStyle = activeChildStyle;
               
-              if (childStyles != null && (childStyles.contains('superscript') || childStyles.contains('subscript'))) {
+              if ((childStyles.contains('superscript') || childStyles.contains('subscript'))) {
                 final fontSize = effectiveStyle.fontSize ?? 14;
                 final isSuperscript = childStyles.contains('superscript');
                 final scriptColor = effectiveStyle.color ?? defaultTextColor;

@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:fluent_editor/factories.dart';
 import 'package:fluent_editor/fluent_document.dart';
-import 'package:fluent_editor/renderers/style_hook.dart';
 
 /// Function signature to resolve text styling for addition or deletion suggestions.
 typedef SuggestionTextStyleResolver = TextStyle Function(

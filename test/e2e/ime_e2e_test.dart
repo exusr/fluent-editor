@@ -770,8 +770,8 @@ void main() {
         const TextEditingDeltaReplacement(
           oldText: 'Cross-platform support: Linux, macOS',
           replacementText: 'Liあ',
-          replacedRange: const TextRange(start: 24, end: 26),
-          selection: const TextSelection.collapsed(offset: 27),
+          replacedRange: TextRange(start: 24, end: 26),
+          selection: TextSelection.collapsed(offset: 27),
           composing: TextRange.empty,
         ),
       ]);
@@ -793,8 +793,8 @@ void main() {
           oldText: 'Cross-platform support: Linux, macOS',
           textInserted: 'あ',
           insertionOffset: 26,
-          selection: const TextSelection.collapsed(offset: 27),
-          composing: const TextRange(start: 26, end: 27),
+          selection: TextSelection.collapsed(offset: 27),
+          composing: TextRange(start: 26, end: 27),
         ),
       ]);
       expect(doc.imeHandler.isComposing, isTrue);
@@ -803,8 +803,8 @@ void main() {
         const TextEditingDeltaReplacement(
           oldText: 'Cross-platform support: Linux, macOS',
           replacementText: 'Cross-platform support: Liあnux, macOS',
-          replacedRange: const TextRange(start: 0, end: 36),
-          selection: const TextSelection.collapsed(offset: 27),
+          replacedRange: TextRange(start: 0, end: 36),
+          selection: TextSelection.collapsed(offset: 27),
           composing: TextRange.empty,
         ),
       ]);
@@ -833,8 +833,8 @@ void main() {
           oldText: 'Cross-platform support: Liあnux, macOS',
           textInserted: 'り',
           insertionOffset: 27,
-          selection: const TextSelection.collapsed(offset: 28),
-          composing: const TextRange(start: 26, end: 28),
+          selection: TextSelection.collapsed(offset: 28),
+          composing: TextRange(start: 26, end: 28),
         ),
       ]);
       expect(doc.imeHandler.isComposing, isTrue);
@@ -843,8 +843,8 @@ void main() {
         const TextEditingDeltaReplacement(
           oldText: 'Cross-platform support: Liあnux, macOS',
           replacementText: 'Cross-platform support: Liありnux, macOS',
-          replacedRange: const TextRange(start: 0, end: 37),
-          selection: const TextSelection.collapsed(offset: 28),
+          replacedRange: TextRange(start: 0, end: 37),
+          selection: TextSelection.collapsed(offset: 28),
           composing: TextRange.empty,
         ),
       ]);

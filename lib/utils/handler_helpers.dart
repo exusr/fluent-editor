@@ -1,4 +1,3 @@
-import 'dart:math' as math;
 import 'package:fluent_editor/cursor.dart';
 import 'package:fluent_editor/factories.dart';
 import 'package:fluent_editor/fluent_document.dart';
@@ -62,7 +61,6 @@ void saveAndDeleteNode(FluentDocument document, FNode node, {required String des
 
   for (final node in selection.nodes) {
     final container = node.container;
-    if (container == null) continue;
 
     late Fragment actualStartFrag;
     late Fragment actualEndFrag;
@@ -188,7 +186,7 @@ void saveAndDeleteNode(FluentDocument document, FNode node, {required String des
         final leaf = leaves[i];
         if (leaf is! FluentImage) {
           if (leaf.styles?.contains(document.suggestionStyleHook.deletionTag) != true) {
-            leavesToModify.add(leaf as Fragment);
+            leavesToModify.add(leaf);
           }
         }
       }

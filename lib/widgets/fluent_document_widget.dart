@@ -304,7 +304,6 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
     });
   }
 
-  int _lastTopLevelNodeCount = -1;
 
   void _onDocumentChanged() {
     _updateImeCaretRect();
@@ -436,11 +435,11 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
       return false; // Let IME consume everything else (incl. arrows)
     }
 
-    final _isVirtualKeyboard =
+    final isVirtualKeyboard =
         !kIsWeb &&
         (defaultTargetPlatform == TargetPlatform.iOS ||
             defaultTargetPlatform == TargetPlatform.android);
-    if (_isVirtualKeyboard &&
+    if (isVirtualKeyboard &&
         doc.imeHandler.shouldUseBufferSync &&
         doc.cursor.isCollapsed &&
         !doc.imeHandler.isComposing &&
@@ -542,14 +541,6 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
     super.dispose();
   }
 
-  List<Widget> _buildPluginUiContributions(FluentPluginUiLocation location) {
-    final doc = widget.document;
-    return doc.registry
-        .uiAt(location)
-        .where((c) => c.visible?.call(doc) ?? true)
-        .map((c) => Builder(builder: (ctx) => c.builder(ctx, doc)))
-        .toList();
-  }
 
   Widget? _resolveSidebar(BuildContext context) {
     if (widget.sidebar != null) return widget.sidebar;

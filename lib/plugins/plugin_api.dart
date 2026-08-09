@@ -1,10 +1,7 @@
 import 'dart:async';
-import 'dart:typed_data';
 
 import 'package:fluent_editor/factories.dart';
 import 'package:fluent_editor/fluent_document.dart';
-import 'package:fluent_editor/renderers/style_hook.dart';
-import 'package:fluent_editor/undo_redo/undo_redo_manager.dart';
 export 'package:fluent_editor/undo_redo/undo_redo_manager.dart';
 import 'package:fluent_editor/widgets/editor/fluent_positioned_sidebar.dart';
 import 'package:flutter/services.dart';

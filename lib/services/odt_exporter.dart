@@ -619,7 +619,6 @@ class OdtExporter {
 
     final fs = frag.styles ?? [];
     final isAddition = fs.contains(document.suggestionStyleHook.additionTag);
-    final isDeletion = fs.contains(document.suggestionStyleHook.deletionTag);
 
     Map<String, dynamic>? matchingSug;
     final suggestionProvider = document.suggestionProvider;
@@ -701,8 +700,9 @@ class OdtExporter {
     final smallcaps = fragStyles.contains('smallcaps');
 
     double fontSize = frag.fontSize;
-    if (fontSize == 14.0 && pStyle.fontSize != null)
+    if (fontSize == 14.0 && pStyle.fontSize != null) {
       fontSize = pStyle.fontSize!;
+    }
 
     final fontFamily = normalizeFontFamily(
       frag.fontFamily.isNotEmpty ? frag.fontFamily : pStyle.fontFamily,

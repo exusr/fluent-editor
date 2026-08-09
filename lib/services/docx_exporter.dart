@@ -388,14 +388,14 @@ class DocxExporter {
 
     final startedCommentIds = <int>{};
 
-    void _emitCommentStarts(
+    void emitCommentStarts(
         Map<String, dynamic> comment, int docxId, List<dynamic> replies) {
       if (startedCommentIds.contains(docxId)) return;
       startedCommentIds.add(docxId);
       _body.write('<w:commentRangeStart w:id="$docxId"/>');
     }
 
-    void _emitCommentEnds(
+    void emitCommentEnds(
         Map<String, dynamic> comment, int docxId, List<dynamic> replies) {
       _body.write('<w:commentRangeEnd w:id="$docxId"/>');
       _body.write('<w:r><w:commentReference w:id="$docxId"/></w:r>');
@@ -420,7 +420,7 @@ class DocxExporter {
         for (final seg in overlapping) {
           final cid = _ensureDocxCommentId(seg.comment);
           final replies = (seg.comment['replies'] as List<dynamic>?) ?? [];
-          _emitCommentStarts(seg.comment, cid, replies);
+          emitCommentStarts(seg.comment, cid, replies);
         }
 
         final rId = _addRel(
@@ -451,7 +451,7 @@ class DocxExporter {
           if (seg.end <= linkEnd) {
             final cid = _ensureDocxCommentId(seg.comment);
             final replies = (seg.comment['replies'] as List<dynamic>?) ?? [];
-            _emitCommentEnds(seg.comment, cid, replies);
+            emitCommentEnds(seg.comment, cid, replies);
           }
         }
         globalOffset += linkOffset;
@@ -467,7 +467,7 @@ class DocxExporter {
           if (sub.comment != null) {
             final cid = _ensureDocxCommentId(sub.comment!);
             final replies = (sub.comment!['replies'] as List<dynamic>?) ?? [];
-            _emitCommentStarts(sub.comment!, cid, replies);
+            emitCommentStarts(sub.comment!, cid, replies);
           }
           _body.write(_run(frag, pStyle,
               text: sub.text,
@@ -479,7 +479,7 @@ class DocxExporter {
           if (seg.end > fragStart && seg.end <= fragEnd) {
             final cid = _ensureDocxCommentId(seg.comment);
             final replies = (seg.comment['replies'] as List<dynamic>?) ?? [];
-            _emitCommentEnds(seg.comment, cid, replies);
+            emitCommentEnds(seg.comment, cid, replies);
           }
         }
 

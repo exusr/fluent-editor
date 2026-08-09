@@ -253,8 +253,11 @@ class ImportMarkdownService {
   int _leadingSpaces(String s) {
     int count = 0;
     for (final ch in s.runes) {
-      if (ch == 32) count++;
-      else break;
+      if (ch == 32) {
+        count++;
+      } else {
+        break;
+      }
     }
     return count;
   }

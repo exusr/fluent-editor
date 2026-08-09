@@ -27,8 +27,6 @@ class FluentUnifiedSidebar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final effectiveTitle =
-        title ?? document.labels?.sidebarTitle ?? 'Activities & Reviews';
     final effectiveEmptyMessage = emptyMessage ??
         document.labels?.emptySidebarMessage ??
         'No comments or suggestions in the document.';

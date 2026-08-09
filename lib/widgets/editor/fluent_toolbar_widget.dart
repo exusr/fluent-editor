@@ -313,8 +313,9 @@ class _FluentToolbarState extends State<FluentToolbar> {
         );
       } else if (!kIsWeb && file.path != null) {
         final fileOnDisk = File(file.path!);
-        if (binary)
+        if (binary) {
           return (content: null, bytes: await fileOnDisk.readAsBytes());
+        }
         return (content: await fileOnDisk.readAsString(), bytes: null);
       }
     }

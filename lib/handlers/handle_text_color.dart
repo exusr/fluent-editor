@@ -1,6 +1,5 @@
 import 'package:fluent_editor/fluent_document.dart';
 import 'package:fluent_editor/utils/handler_helpers.dart';
-import 'package:flutter/material.dart';
 
 /// Applies text color to fragments affected by the selection
 /// or stores the pending color for collapsed cursor.

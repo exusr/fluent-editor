@@ -56,7 +56,7 @@ class TestDocumentGenerator {
       }
       
       if (i % 25 == 0 && i > 0) {
-        final image = FluentImage("https://picsum.photos/seed/test${i}/600/400.jpg");
+        final image = FluentImage("https://picsum.photos/seed/test$i/600/400.jpg");
         document.content.nodes.add(image);
       }
       

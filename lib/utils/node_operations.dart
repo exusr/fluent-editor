@@ -668,11 +668,7 @@ Paragraph? outdentListItemToParagraph(
     removeNode(root, listParent);
   }
 
-  if (grandparent != null) {
-    mergeConsecutiveListsInContainer(grandparent, root);
-  } else {
-    mergeConsecutiveListsInContainer(root, root);
-  }
+  mergeConsecutiveListsInContainer(grandparent, root);
 
   recalculateListIndicesFor(root, {if (listParent.items.isNotEmpty) listParent, if (grandparent is FluentList) grandparent});
 
