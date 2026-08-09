@@ -7,15 +7,19 @@ import 'package:fluent_editor/utils/resolve_selection.dart';
 class FragmentOperations {
   /// Recursively collects all leaf fragments in order.
   /// A leaf fragment is a Fragment that is not an InlineContainerNode.
-  static List<Fragment> collectLeafFragments(FNode node) {
-    final result = <Fragment>[];
+  static void _collectLeafFragments(FNode node, List<Fragment> out) {
     if (node is Fragment && node is! InlineContainerNode) {
-      result.add(node);
+      out.add(node);
     } else if (node is InlineContainerNode) {
       for (final child in (node as InlineContainerNode).getChildren()) {
-        result.addAll(collectLeafFragments(child));
+        _collectLeafFragments(child, out);
       }
     }
+  }
+
+  static List<Fragment> collectLeafFragments(FNode node) {
+    final result = <Fragment>[];
+    _collectLeafFragments(node, result);
     return result;
   }
 
