@@ -96,7 +96,13 @@ bool _handleListIndent(FluentDocument document, ListItem currentItem) {
     appendChild(newSublist, currentItem);
   }
 
-  mergeConsecutiveLists(root);
+  recalculateListIndicesFor(root, {currentItem});
+  final grandparent = findParentCached(document, listParent);
+  if (grandparent != null) {
+    mergeConsecutiveListsInContainer(grandparent, root);
+  } else {
+    mergeConsecutiveListsInContainer(root, root);
+  }
   recalculateAndUpdate(document);
   return true;
 }
@@ -150,9 +156,8 @@ bool _handleListOutdent(FluentDocument document, ListItem currentItem) {
       removeNode(root, listParent);
     }
 
-    recalculateListIndices(root);
-
-    mergeConsecutiveLists(root);
+    recalculateListIndicesFor(root, {currentItem});
+    mergeConsecutiveListsInContainer(greatGrandparent is FluentList ? greatGrandparent : root, root);
 
     final originalFrag = document.nodeById(savedFragId);
     if (originalFrag is Fragment) {

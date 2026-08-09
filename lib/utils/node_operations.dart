@@ -502,6 +502,36 @@ void recalculateListIndicesFor(Root root, Set<FNode> affectedNodes, {FluentDocum
   }
 }
 
+/// Merges consecutive lists with the same listType inside a specific container.
+void mergeConsecutiveListsInContainer(FNode container, Root root) {
+  final children = childrenOf(container);
+  final listsToMerge = <FluentList>[];
+
+  for (var i = 0; i < children.length; i++) {
+    final child = children[i];
+    if (child is FluentList) {
+      if (listsToMerge.isEmpty || child.listType == listsToMerge.first.listType) {
+        listsToMerge.add(child);
+      } else {
+        if (listsToMerge.length > 1) {
+          _mergeLists(root, listsToMerge);
+        }
+        listsToMerge.clear();
+        listsToMerge.add(child);
+      }
+    } else {
+      if (listsToMerge.length > 1) {
+        _mergeLists(root, listsToMerge);
+      }
+      listsToMerge.clear();
+    }
+  }
+
+  if (listsToMerge.length > 1) {
+    _mergeLists(root, listsToMerge);
+  }
+}
+
 /// Merges consecutive lists with the same listType in the document.
 /// This ensures that if two bullet lists are adjacent, they become one list.
 /// This should be called after operations that create or modify lists.
@@ -638,9 +668,13 @@ Paragraph? outdentListItemToParagraph(
     removeNode(root, listParent);
   }
 
-  mergeConsecutiveLists(root);
+  if (grandparent != null) {
+    mergeConsecutiveListsInContainer(grandparent, root);
+  } else {
+    mergeConsecutiveListsInContainer(root, root);
+  }
 
-  recalculateListIndices(root);
+  recalculateListIndicesFor(root, {if (listParent.items.isNotEmpty) listParent, if (grandparent is FluentList) grandparent});
 
   return newParagraph;
 }
