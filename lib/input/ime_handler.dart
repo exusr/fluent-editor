@@ -11,6 +11,7 @@ import '../handlers/handle_enter.dart';
 import '../utils/node_operations.dart' show removeNode;
 import 'ime_connection_manager.dart';
 import 'ime_state_manager.dart';
+import 'linux_ime_handler.dart';
 
 const String _emptyFragmentPlaceholder = '\u200B';
 
@@ -27,6 +28,7 @@ class FluentTextInputHandler implements DeltaTextInputClient {
 
   final ImeStateManager state = ImeStateManager();
   late final ImeConnectionManager connectionManager;
+  final LinuxImeHandler linuxHandler = const LinuxImeHandler();
   TextEditingValue _currentPlatformValue = const TextEditingValue();
   DateTime? _lastEnterTime;
 
@@ -120,6 +122,9 @@ class FluentTextInputHandler implements DeltaTextInputClient {
 
   @override
   TextEditingValue? get currentTextEditingValue {
+    if (defaultTargetPlatform == TargetPlatform.linux) {
+      return linuxHandler.getCurrentTextEditingValue(this);
+    }
     if (defaultTargetPlatform == TargetPlatform.macOS) {
       return _currentPlatformValue;
     }
@@ -228,6 +233,10 @@ class FluentTextInputHandler implements DeltaTextInputClient {
 
   @override
   void updateEditingValue(TextEditingValue value) {
+    if (defaultTargetPlatform == TargetPlatform.linux) {
+      linuxHandler.updateEditingValue(value, this);
+      return;
+    }
     if (defaultTargetPlatform == TargetPlatform.macOS) {
       _currentPlatformValue = value;
     }
@@ -475,6 +484,11 @@ class FluentTextInputHandler implements DeltaTextInputClient {
     final doc = _document;
     if (doc == null) return;
     if (state.updatingSelf) return;
+
+    if (defaultTargetPlatform == TargetPlatform.linux) {
+      linuxHandler.updateEditingValueWithDeltas(deltas, this);
+      return;
+    }
 
     if (defaultTargetPlatform == TargetPlatform.macOS) {
       for (final delta in deltas) {
@@ -1012,6 +1026,11 @@ class FluentTextInputHandler implements DeltaTextInputClient {
     if (state.isComposing) return;
     final doc = _document;
     if (doc == null) return;
+
+    if (defaultTargetPlatform == TargetPlatform.linux) {
+      linuxHandler.syncImeBufferToFragment(this);
+      return;
+    }
     final currentFragId = doc.cursor.focusId.isNotEmpty
         ? doc.cursor.focusId
         : doc.cursor.anchorId;
@@ -1146,8 +1165,12 @@ class FluentTextInputHandler implements DeltaTextInputClient {
         final localOffset = doc.cursor.focusOffset.clamp(0, node.text.length);
         final before = node.text.substring(0, localOffset);
         final after = node.text.substring(localOffset);
-        node.text = before + text + after;
-        doc.cursor.moveTo(fragId, localOffset + text.length);
+        if (after.startsWith(text)) {
+          doc.cursor.moveTo(fragId, localOffset + text.length);
+        } else {
+          node.text = before + text + after;
+          doc.cursor.moveTo(fragId, localOffset + text.length);
+        }
       }
     } else {
       executeHandleBackspace(doc);
@@ -1159,8 +1182,12 @@ class FluentTextInputHandler implements DeltaTextInputClient {
         final localOffset = doc.cursor.focusOffset.clamp(0, node.text.length);
         final before = node.text.substring(0, localOffset);
         final after = node.text.substring(localOffset);
-        node.text = before + text + after;
-        doc.cursor.moveTo(fragId, localOffset + text.length);
+        if (after.startsWith(text)) {
+          doc.cursor.moveTo(fragId, localOffset + text.length);
+        } else {
+          node.text = before + text + after;
+          doc.cursor.moveTo(fragId, localOffset + text.length);
+        }
       }
     }
     doc.updateContent();
@@ -1326,4 +1353,32 @@ class FluentTextInputHandler implements DeltaTextInputClient {
     }
     return len;
   }
+
+  // ===========================================================================
+  // Public Delegates for Platform Execution Branches
+  // ===========================================================================
+
+  void executeBackspace() {
+    if (_document != null) {
+      executeHandleBackspace(_document!);
+    }
+  }
+
+  String extractPreeditText(TextEditingValue value) => _extractPreeditText(value);
+  void commitPreedit(String text) => _commitPreedit(text);
+  void resetComposition() => _resetComposition();
+  void invalidatePreeditRender() => _invalidatePreeditRender();
+  (String, String) getParagraphPrefixAndSuffix() => _getParagraphPrefixAndSuffix();
+  int findSuffixPos(String text, String suffix) => _findSuffixPos(text, suffix);
+  String sanitizeUtf16(String text) => _sanitizeUtf16(text);
+  String computeInsertedText(String oldText, String newText) =>
+      _computeInsertedText(oldText, newText);
+  int commonPrefixLength(String a, String b) => _commonPrefixLength(a, b);
+  int commonSuffixLength(String a, String b) => _commonSuffixLength(a, b);
+  void insertFinalizedText(String text) => _insertFinalizedText(text);
+  void replaceFragmentText(String newText, {int? cursorOffset}) =>
+      _replaceFragmentText(newText, cursorOffset: cursorOffset);
+  String? getCurrentFragmentText() => _getCurrentFragmentText();
+  int getCursorOffsetInFragment() => _getCursorOffsetInFragment();
+  void resetPlatformBuffer() => _resetPlatformBuffer();
 }

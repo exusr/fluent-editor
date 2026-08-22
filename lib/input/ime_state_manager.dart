@@ -35,8 +35,6 @@ class ImeStateManager {
     preeditLocalOffset = 0;
     preeditContainerId = '';
     preeditCaretOffset = 0;
-    justCommittedComposition = false;
-    lastCommittedText = '';
   }
 
   void attachInput() {
