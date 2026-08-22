@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:fluent_editor/fluent_document.dart';
 import 'package:fluent_editor/factories.dart';
 import 'package:fluent_editor/input/ime_handler.dart';
+import 'package:fluent_editor/handlers/handle_backspace.dart';
 
 /// Helper: create a document with a single paragraph containing [text].
 FluentDocument _docWithText(String text) {
@@ -194,6 +195,37 @@ void main() {
       expect(doc.content.nodes.length, 1);
       expect(doc.content.text, 'hello');
     });
+
+    test('iOS backspace at start of list item outdents item to paragraph', () {
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      addTearDown(() => debugDefaultTargetPlatformOverride = null);
+
+      final listItem = ListItem(
+        bulletType: 'bullet',
+        indexList: const [1],
+        children: [Paragraph(text: 'List item text')],
+      );
+      final list = FluentList(listType: 'bullet')..items = [listItem];
+      final doc = FluentDocument(content: Root(nodes: [list]));
+      doc.eventHandler.document = doc;
+      doc.imeHandler.attachInput(doc);
+
+      final p = listItem.children.first as Paragraph;
+      final frag = p.fragments.first as Fragment;
+      doc.cursor.moveTo(frag.id, 0);
+
+      doc.imeHandler.updateEditingValueWithDeltas([
+        TextEditingDeltaDeletion(
+          oldText: '\u200BList item text',
+          deletedRange: const TextRange(start: 0, end: 1),
+          selection: const TextSelection.collapsed(offset: 0),
+          composing: TextRange.empty,
+        ),
+      ]);
+
+      expect(doc.content.nodes.first, isA<Paragraph>());
+      expect(doc.content.text, 'List item text');
+    });
   });
 
   group('IME e2e — iOS newline during composition', () {
@@ -218,6 +250,107 @@ void main() {
       expect(doc.content.nodes.length, 2);
       expect((doc.content.nodes[0] as Paragraph).text, 'hello');
       expect((doc.content.nodes[1] as Paragraph).text, '');
+    });
+
+    test('iOS performAction + newline delta deduplicates duplicate enter', () {
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      addTearDown(() => debugDefaultTargetPlatformOverride = null);
+
+      final doc = _docWithText('hello');
+      final frag = _firstFrag(doc);
+      doc.cursor.moveTo(frag.id, 5);
+
+      // Simulate performAction and delta insertion arriving together on iOS
+      doc.imeHandler.performAction(TextInputAction.newline);
+      doc.imeHandler.updateEditingValueWithDeltas([
+        TextEditingDeltaInsertion(
+          oldText: 'hello',
+          textInserted: '\n',
+          insertionOffset: 5,
+          selection: const TextSelection.collapsed(offset: 1),
+          composing: TextRange.empty,
+        ),
+      ]);
+
+      expect(doc.content.nodes.length, 2);
+      expect((doc.content.nodes[0] as Paragraph).text, 'hello');
+      expect((doc.content.nodes[1] as Paragraph).text, '');
+    });
+
+    test('CJK composition on new list item after Enter shows preedit text immediately', () {
+      debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+      addTearDown(() => debugDefaultTargetPlatformOverride = null);
+
+      final listItem = ListItem(
+        bulletType: 'bullet',
+        indexList: const [1],
+        children: [Paragraph(text: 'Item 1')],
+      );
+      final list = FluentList(listType: 'bullet')..items = [listItem];
+      final doc = FluentDocument(content: Root(nodes: [list]));
+      doc.eventHandler.document = doc;
+      doc.imeHandler.attachInput(doc);
+
+      final p1 = listItem.children.first as Paragraph;
+      final frag1 = p1.fragments.first as Fragment;
+      doc.cursor.moveTo(frag1.id, 6);
+
+      // Press enter to create second list item
+      doc.imeHandler.performAction(TextInputAction.newline);
+
+      // Verify cursor is on new list item
+      expect(doc.cursor.focusId, isNot(frag1.id));
+
+      // Start CJK composition on the new empty list item
+      doc.imeHandler.updateEditingValue(const TextEditingValue(
+        text: 'ni',
+        selection: TextSelection.collapsed(offset: 2),
+        composing: TextRange(start: 0, end: 2),
+      ));
+
+      expect(doc.imeHandler.isComposing, isTrue);
+      expect(doc.imeHandler.preeditText, 'ni');
+    });
+
+    test('CJK composition on list item after backspace merge and enter split shows preedit', () {
+      debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+      addTearDown(() => debugDefaultTargetPlatformOverride = null);
+
+      final item1 = ListItem(
+        bulletType: 'bullet',
+        indexList: const [1],
+        children: [Paragraph(text: 'Item 1')],
+      );
+      final item2 = ListItem(
+        bulletType: 'bullet',
+        indexList: const [2],
+        children: [Paragraph(text: 'Item 2')],
+      );
+      final list = FluentList(listType: 'bullet')..items = [item1, item2];
+      final doc = FluentDocument(content: Root(nodes: [list]));
+      doc.eventHandler.document = doc;
+      doc.imeHandler.attachInput(doc);
+
+      final p2 = item2.children.first as Paragraph;
+      final frag2 = p2.fragments.first as Fragment;
+      doc.cursor.moveTo(frag2.id, 0);
+
+      // 1. Backspace to merge Item 2 into Item 1
+      executeHandleBackspace(doc);
+      doc.imeHandler.syncImeBufferToFragment();
+
+      // 2. Press Enter to split back into two items
+      doc.imeHandler.performAction(TextInputAction.newline);
+
+      // 3. Start CJK composition on the second list item
+      doc.imeHandler.updateEditingValue(const TextEditingValue(
+        text: 'niItem 2',
+        selection: TextSelection.collapsed(offset: 2),
+        composing: TextRange(start: 0, end: 2),
+      ));
+
+      expect(doc.imeHandler.isComposing, isTrue);
+      expect(doc.imeHandler.preeditText, 'ni');
     });
   });
 

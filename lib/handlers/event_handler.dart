@@ -203,8 +203,11 @@ class EventHandler {
       }
       if (document.registry.dispatchEnter(document)) return true;
       document.saveState(description: 'Enter', forceNewAction: true);
-      executeHandleEnter(document);
-      return true;
+      final handled = executeHandleEnter(document);
+      if (handled) {
+        document.imeHandler.syncImeBufferToFragment();
+      }
+      return handled;
     }
     return false;
   }

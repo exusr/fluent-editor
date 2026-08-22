@@ -121,6 +121,8 @@ class RenderFluentParagraph extends RenderFluentNode
   set imePreeditText(String value) {
     if (_imePreeditText != value) {
       _imePreeditText = value;
+      _cachedTextPicture?.dispose();
+      _cachedTextPicture = null;
       markNeedsLayout();
     }
   }
@@ -141,6 +143,8 @@ class RenderFluentParagraph extends RenderFluentNode
   set imePreeditFragmentId(String value) {
     if (_imePreeditFragmentId != value) {
       _imePreeditFragmentId = value;
+      _cachedTextPicture?.dispose();
+      _cachedTextPicture = null;
       markNeedsLayout();
     }
   }
@@ -151,6 +155,8 @@ class RenderFluentParagraph extends RenderFluentNode
   set isSuggestionMode(bool value) {
     if (_isSuggestionMode != value) {
       _isSuggestionMode = value;
+      _cachedTextPicture?.dispose();
+      _cachedTextPicture = null;
       markNeedsLayout();
     }
   }
@@ -161,6 +167,8 @@ class RenderFluentParagraph extends RenderFluentNode
   set imePreeditLocalOffset(int value) {
     if (_imePreeditLocalOffset != value) {
       _imePreeditLocalOffset = value;
+      _cachedTextPicture?.dispose();
+      _cachedTextPicture = null;
       markNeedsLayout();
     }
   }
@@ -182,6 +190,8 @@ class RenderFluentParagraph extends RenderFluentNode
       _container = value;
       node = value as FNode;
     }
+    _cachedTextPicture?.dispose();
+    _cachedTextPicture = null;
     markNeedsLayout();
     markNeedsPaint();
   }

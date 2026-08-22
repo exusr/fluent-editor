@@ -28,6 +28,7 @@ class FluentTextInputHandler implements DeltaTextInputClient {
   final ImeStateManager state = ImeStateManager();
   late final ImeConnectionManager connectionManager;
   TextEditingValue _currentPlatformValue = const TextEditingValue();
+  DateTime? _lastEnterTime;
 
   FluentTextInputHandler._internal() {
     connectionManager = ImeConnectionManager(this);
@@ -41,8 +42,31 @@ class FluentTextInputHandler implements DeltaTextInputClient {
   String get preeditFragmentId => state.preeditFragmentId;
   int get preeditLocalOffset => state.preeditLocalOffset;
 
-  bool isPreeditInContainer(String containerId) =>
-      state.isPreeditInContainer(containerId);
+  bool isPreeditInContainer(String containerId) {
+    if (!state.isComposing) return false;
+    if (state.preeditContainerId == containerId ||
+        state.preeditFragmentId == containerId) {
+      return true;
+    }
+    final doc = _document;
+    if (doc != null) {
+      if (state.preeditContainerId.isNotEmpty) {
+        String? curr = doc.findParentCached(state.preeditContainerId);
+        while (curr != null) {
+          if (curr == containerId) return true;
+          curr = doc.findParentCached(curr);
+        }
+      }
+      if (state.preeditFragmentId.isNotEmpty) {
+        String? curr = doc.findParentCached(state.preeditFragmentId);
+        while (curr != null) {
+          if (curr == containerId) return true;
+          curr = doc.findParentCached(curr);
+        }
+      }
+    }
+    return false;
+  }
 
   void showKeyboard(BuildContext context) {
     connectionManager.showKeyboard(
@@ -74,6 +98,7 @@ class FluentTextInputHandler implements DeltaTextInputClient {
 
   void attachInput(FluentDocument doc) {
     _document = doc;
+    _lastEnterTime = null;
     state.attachInput();
     connectionManager.attachInput(doc);
     syncImeBufferToFragment();
@@ -82,6 +107,7 @@ class FluentTextInputHandler implements DeltaTextInputClient {
   void detachInput() {
     connectionManager.detachInput();
     state.detachInput();
+    _lastEnterTime = null;
     _document = null;
   }
 
@@ -176,7 +202,7 @@ class FluentTextInputHandler implements DeltaTextInputClient {
         action == TextInputAction.go ||
         action == TextInputAction.send) {
       commitIfComposing();
-      executeHandleEnter(doc);
+      _executeHandleEnterDeduplicated(doc);
     }
   }
 
@@ -457,7 +483,9 @@ class FluentTextInputHandler implements DeltaTextInputClient {
     }
 
     final bool batchEndsComposing =
-        (kIsWeb || defaultTargetPlatform != TargetPlatform.macOS) &&
+        (kIsWeb ||
+            (defaultTargetPlatform != TargetPlatform.macOS &&
+                defaultTargetPlatform != TargetPlatform.iOS)) &&
         deltas.length > 1 &&
         deltas.last is TextEditingDeltaNonTextUpdate &&
         !(deltas.last as TextEditingDeltaNonTextUpdate).composing.isValid;
@@ -500,7 +528,13 @@ class FluentTextInputHandler implements DeltaTextInputClient {
           if (node is Fragment &&
               deletionRange.isValid &&
               deletionRange.start < deletionRange.end) {
-            final safeEnd = deletionRange.end.clamp(0, node.text.length);
+            final isIosPlaceholder =
+                defaultTargetPlatform == TargetPlatform.iOS &&
+                delta.oldText.startsWith(_emptyFragmentPlaceholder);
+            final adjustedEnd = isIosPlaceholder
+                ? deletionRange.end - 1
+                : deletionRange.end;
+            final safeEnd = adjustedEnd.clamp(0, node.text.length);
             doc.cursor.moveTo(fragId, safeEnd);
 
             final count = deletionRange.end - deletionRange.start;
@@ -526,6 +560,7 @@ class FluentTextInputHandler implements DeltaTextInputClient {
         if (delta.composing.isValid &&
             delta.composing.start < delta.composing.end) {
           state.isComposing = true;
+          state.preeditFragmentId = fragId;
           if (defaultTargetPlatform == TargetPlatform.iOS ||
               defaultTargetPlatform == TargetPlatform.macOS ||
               defaultTargetPlatform == TargetPlatform.linux ||
@@ -608,10 +643,31 @@ class FluentTextInputHandler implements DeltaTextInputClient {
       if (delta is TextEditingDeltaReplacement) {
         doc.saveState(description: 'Replace', forceNewAction: false);
 
-        if (delta.composing.isValid &&
+        final isIosSuggestionReplacement =
+            defaultTargetPlatform == TargetPlatform.iOS &&
+            doc.cursor.isCollapsed &&
+            delta.replacedRange.isValid &&
+            delta.replacedRange.start < delta.replacedRange.end &&
+            delta.replacementText.isNotEmpty;
+
+        if (!doc.cursor.isCollapsed &&
+            delta.composing.isValid &&
             delta.composing.start < delta.composing.end) {
+          executeHandleBackspace(doc);
+        }
+
+        if (delta.composing.isValid &&
+            delta.composing.start < delta.composing.end &&
+            !isIosSuggestionReplacement) {
           state.isComposing = true;
-          state.preeditText = delta.replacementText;
+          state.preeditFragmentId = fragId;
+          final parentId = doc.findParentCached(fragId);
+          state.preeditContainerId = parentId ?? '';
+          final cStart = delta.composing.start.clamp(0, delta.replacementText.length);
+          final cEnd = delta.composing.end.clamp(0, delta.replacementText.length);
+          state.preeditText = cStart < cEnd
+              ? delta.replacementText.substring(cStart, cEnd)
+              : delta.replacementText;
           state.composingRange = delta.composing;
           state.preeditLocalOffset = doc.cursor.focusOffset;
           doc.cursor.imeComposing = true;
@@ -626,8 +682,26 @@ class FluentTextInputHandler implements DeltaTextInputClient {
 
         // Unlock cursor at the end of composition
         if (state.isComposing) {
+          var textToCommit = delta.replacementText.isNotEmpty
+              ? delta.replacementText
+              : state.preeditText;
+          final (prefix, _) = _getParagraphPrefixAndSuffix();
+          if (prefix.isNotEmpty && textToCommit.startsWith(prefix)) {
+            final extracted = _extractPreeditText(TextEditingValue(
+              text: delta.replacementText,
+              composing: delta.composing,
+            ));
+            if (extracted.isNotEmpty) {
+              textToCommit = extracted;
+            }
+          }
           _resetComposition();
           _invalidatePreeditRender();
+          if (textToCommit.isNotEmpty) {
+            _insertFinalizedText(textToCommit);
+          }
+          syncImeBufferToFragment();
+          return;
         }
 
         if (!doc.cursor.isCollapsed) {
@@ -707,6 +781,13 @@ class FluentTextInputHandler implements DeltaTextInputClient {
         if (state.isComposing &&
             (!delta.composing.isValid ||
                 delta.composing.start >= delta.composing.end)) {
+          if (deltas.any(
+            (d) =>
+                d is TextEditingDeltaInsertion ||
+                d is TextEditingDeltaReplacement,
+          )) {
+            continue;
+          }
           commitIfComposing();
           syncImeBufferToFragment();
           return;
@@ -1007,6 +1088,7 @@ class FluentTextInputHandler implements DeltaTextInputClient {
         );
         final isDifferent =
             _currentPlatformValue.text != newValue.text ||
+            _currentPlatformValue.selection != newValue.selection ||
             _currentPlatformValue.composing != newValue.composing;
 
         if (isDifferent) {
@@ -1032,12 +1114,26 @@ class FluentTextInputHandler implements DeltaTextInputClient {
     final doc = _document;
     if (doc == null) return;
     if (text == '\n') {
-      executeHandleEnter(doc);
+      _executeHandleEnterDeduplicated(doc);
       return;
     }
     if (!doc.registry.dispatchInsertText(text, doc)) {
       _insertTextOrReplaceSelection(text, doc);
     }
+  }
+
+  bool _executeHandleEnterDeduplicated(FluentDocument doc) {
+    final now = DateTime.now();
+    if (_lastEnterTime != null &&
+        now.difference(_lastEnterTime!) < const Duration(milliseconds: 150)) {
+      return false;
+    }
+    _lastEnterTime = now;
+    final handled = executeHandleEnter(doc);
+    if (handled) {
+      syncImeBufferToFragment();
+    }
+    return handled;
   }
 
   void _insertTextOrReplaceSelection(String text, FluentDocument doc) {
@@ -1099,6 +1195,7 @@ class FluentTextInputHandler implements DeltaTextInputClient {
   void _resetPlatformBuffer() {
     state.lastSyncedText = '';
     state.prevSelectionKey = '';
+    _currentPlatformValue = const TextEditingValue();
     if (connectionManager.connection != null &&
         connectionManager.connection!.attached) {
       connectionManager.connection!.setEditingState(const TextEditingValue());

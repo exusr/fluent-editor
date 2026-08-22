@@ -49,6 +49,10 @@ class _FluentListItemWidgetState extends State<FluentListItemWidget> {
 
   void _onStateChange() {
     if (widget.document.cursorOnlyChange) return;
+    if (widget.document.imeHandler.isComposing) {
+      setState(() {});
+      return;
+    }
     if (!widget.document.isNodeDirty(widget.node.id)) return;
     final version = widget.document.contentVersion;
     if (version == _lastContentVersion) return;
@@ -99,6 +103,7 @@ class _FluentListItemWidgetState extends State<FluentListItemWidget> {
               if (useShrinkWrap)
                 Flexible(
                   child: FluentParagraphWidget(
+                    key: widget.document.getKeyForNode(firstParagraph.id),
                     node: firstParagraph,
                     document: widget.document,
                     applyParagraphSpacing: false,
@@ -108,6 +113,7 @@ class _FluentListItemWidgetState extends State<FluentListItemWidget> {
               else
                 Expanded(
                   child: FluentParagraphWidget(
+                    key: widget.document.getKeyForNode(firstParagraph.id),
                     node: firstParagraph,
                     document: widget.document,
                     applyParagraphSpacing: false,

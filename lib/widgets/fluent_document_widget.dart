@@ -471,7 +471,8 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
         doc.cursor.isCollapsed &&
         !doc.imeHandler.isComposing &&
         (key == LogicalKeyboardKey.backspace ||
-            key == LogicalKeyboardKey.delete)) {
+            key == LogicalKeyboardKey.delete ||
+            key == LogicalKeyboardKey.enter)) {
       return false;
     }
 

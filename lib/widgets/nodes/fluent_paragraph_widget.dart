@@ -89,6 +89,16 @@ class FluentParagraphWidgetState<T extends FluentParagraphWidget> extends State<
   @override
   void didUpdateWidget(T oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.node.id != widget.node.id) {
+      _lastContentVersion = -1;
+      _lastHadCursor = false;
+      _lastHadSelection = false;
+      _lastCursorOffset = null;
+      _lastCursorFragmentId = null;
+      _lastSelectionRange = null;
+      _lastImePreeditText = '';
+      _lastImePreeditFragmentId = '';
+    }
     if (oldWidget.document.cursor != widget.document.cursor) {
       oldWidget.document.cursor.removeListener(_onStateChange);
       widget.document.cursor.addListener(_onStateChange);
@@ -156,6 +166,10 @@ class FluentParagraphWidgetState<T extends FluentParagraphWidget> extends State<
   }
 
   void _onDocumentChange() {
+    if (widget.document.imeHandler.isComposing) {
+      setState(() {});
+      return;
+    }
     if (!widget.document.isNodeDirty(widget.node.id)) return;
 
     final currentVersion = widget.document.contentVersion;
