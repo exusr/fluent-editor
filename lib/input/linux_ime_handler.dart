@@ -91,20 +91,16 @@ class LinuxImeHandler {
       return;
     }
 
-    final fragId = cursor.focusId.isNotEmpty ? cursor.focusId : cursor.anchorId;
     final currentText = handler.getCurrentFragmentText() ?? '';
 
     // -------------------------------------------------------------------------
     // 2. Post-Commit Platform Buffer Sync Guard
     // -------------------------------------------------------------------------
-    if (handler.state.justCommittedComposition) {
-      if (!value.composing.isValid) {
-        handler.state.justCommittedComposition = false;
-        handler.state.lastSyncedText =
-            handler.getCurrentFragmentText() ?? value.text;
-        handler.syncImeBufferToFragment();
-        return;
-      }
+    if (handler.state.justCommittedComposition && !value.composing.isValid) {
+      handler.state.justCommittedComposition = false;
+      handler.state.lastSyncedText = currentText;
+      handler.syncImeBufferToFragment();
+      return;
     }
 
     // -------------------------------------------------------------------------
@@ -142,8 +138,9 @@ class LinuxImeHandler {
       final textToCommit = handler.state.preeditText;
       if (textToCommit.isNotEmpty) {
         handler.commitPreedit(textToCommit);
+      } else {
+        handler.resetComposition();
       }
-      handler.resetComposition();
       handler.invalidatePreeditRender();
       if (!value.composing.isValid) {
         handler.state.lastSyncedText = value.text;
@@ -212,6 +209,12 @@ class LinuxImeHandler {
         deltas.last is TextEditingDeltaNonTextUpdate &&
         !(deltas.last as TextEditingDeltaNonTextUpdate).composing.isValid;
 
+    final bool batchContainsTextPayload = deltas.any(
+      (d) =>
+          (d is TextEditingDeltaInsertion && d.textInserted.isNotEmpty) ||
+          (d is TextEditingDeltaReplacement && d.replacementText.isNotEmpty),
+    );
+
     for (final delta in deltas) {
       // -----------------------------------------------------------------------
       // 1. DELETION HANDLING
@@ -227,6 +230,23 @@ class LinuxImeHandler {
           'isComposing=${handler.state.isComposing} '
           'fragTextLenBefore=${(doc.nodeById(doc.cursor.focusId.isNotEmpty ? doc.cursor.focusId : doc.cursor.anchorId) as Fragment?)?.text.length}',
         );
+
+        if (handler.state.isComposing) {
+          if (batchContainsTextPayload) {
+            doc.selectionManager.clear();
+            continue;
+          }
+
+          if (handler.state.preeditText.isNotEmpty) {
+            handler.commitIfComposing();
+          } else {
+            handler.resetComposition();
+          }
+          doc.selectionManager.clear();
+          handler.invalidatePreeditRender();
+          handler.syncImeBufferToFragment();
+          return;
+        }
 
         doc.saveState(description: 'Delete', forceNewAction: false);
 
@@ -348,7 +368,11 @@ class LinuxImeHandler {
             'INSERTION ending composition (plain insert) '
             'preeditText="${handler.state.preeditText}" textInserted="${delta.textInserted}"',
           );
-          handler.resetComposition();
+          if (handler.state.preeditText.isNotEmpty) {
+            handler.commitIfComposing();
+          } else {
+            handler.resetComposition();
+          }
           doc.selectionManager.clear();
           handler.invalidatePreeditRender();
         }
@@ -444,11 +468,13 @@ class LinuxImeHandler {
             'preeditLocalOffset=${handler.state.preeditLocalOffset} '
             'fragTextBeforeCommit="${node is Fragment ? node.text : null}"',
           );
-          handler.resetComposition();
+
           doc.selectionManager.clear();
           handler.invalidatePreeditRender();
           if (textToCommit.isNotEmpty) {
-            handler.insertFinalizedText(textToCommit);
+            handler.commitPreedit(textToCommit);
+          } else {
+            handler.resetComposition();
           }
           final fragAfter = doc.nodeById(fragId);
           _log(

@@ -1,597 +1,353 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_test/flutter_test.dart';
 
-import 'package:fluent_editor/factories.dart' show Fragment, Paragraph;
-import '../fluent_document.dart';
-import 'ime_handler.dart';
+import 'package:fluent_editor/factories.dart';
+import 'package:fluent_editor/fluent_document.dart';
+import 'package:fluent_editor/input/ime_handler.dart';
 
-/// Dedicated execution branch for Linux platform Input Method Editor (IME) handling.
-///
-/// Encapsulates Linux desktop preedit composition lifecycles (IBus, Fcitx),
-/// delta batch reconciliation, platform buffer updates, and caret rect positioning.
-class LinuxImeHandler {
-  const LinuxImeHandler();
+FluentDocument _docWithText(String text) {
+  final p = Paragraph(text: text);
+  final doc = FluentDocument(content: Root(nodes: [p]));
+  doc.eventHandler.document = doc;
+  doc.imeHandler.attachInput(doc);
+  return doc;
+}
 
-  /// Processes [TextEditingValue] updates on Linux platform.
-  void updateEditingValue(
-    TextEditingValue value,
-    FluentTextInputHandler handler,
-  ) {
-    final doc = handler.document;
-    if (doc == null || handler.state.updatingSelf) return;
+Fragment _firstFrag(FluentDocument doc) {
+  final p = doc.content.nodes.first as Paragraph;
+  return p.fragments.first as Fragment;
+}
 
-    final cursor = doc.cursor;
+void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
 
-    // -------------------------------------------------------------------------
-    // 1. Preedit Active / Updating
-    // -------------------------------------------------------------------------
-    if (value.composing.isValid) {
-      final wasComposing = handler.state.isComposing;
-      if (!cursor.isCollapsed && !wasComposing) {
-        handler.executeBackspace();
-        doc.selectionManager.clear();
-      }
+  group('Linux IME Execution Branch Tests', () {
+    setUp(() {
+      FluentTextInputHandler().detachInput();
+      debugDefaultTargetPlatformOverride = TargetPlatform.linux;
+    });
 
-      final fragId = cursor.focusId.isNotEmpty
-          ? cursor.focusId
-          : cursor.anchorId;
+    tearDown(() {
+      debugDefaultTargetPlatformOverride = null;
+      FluentTextInputHandler().detachInput();
+    });
 
-      final hasPlaceholder = value.text.startsWith('\u200B');
-      final rawStart = (hasPlaceholder && value.composing.start > 0)
-          ? (value.composing.start - 1).clamp(0, value.text.length)
-          : value.composing.start.clamp(0, value.text.length);
-      final rawEnd = (hasPlaceholder && value.composing.end > 0)
-          ? (value.composing.end - 1).clamp(0, value.text.length)
-          : value.composing.end.clamp(0, value.text.length);
-      final actualStart = value.composing.start.clamp(0, value.text.length);
-      final actualEnd = value.composing.end.clamp(0, value.text.length);
-      final rawPreedit = value.text.substring(actualStart, actualEnd);
+    test('Linux updateEditingValue handles preedit lifecycle and commit', () {
+      final doc = _docWithText('Hello');
+      final frag = _firstFrag(doc);
+      doc.cursor.moveTo(frag.id, 5);
 
-      handler.state.preeditFragmentId = fragId;
-      if (!wasComposing) {
-        handler.state.isComposing = true;
-        final initialOffset = cursor.isCollapsed
-            ? cursor.focusOffset
-            : (cursor.anchorOffset < cursor.focusOffset
-                  ? cursor.anchorOffset
-                  : cursor.focusOffset);
-        handler.state.preeditLocalOffset = initialOffset;
-        handler.state.lastSyncedText = handler.getCurrentFragmentText() ?? '';
-        final parentId = doc.findParentCached(fragId);
-        handler.state.preeditContainerId = parentId ?? '';
-        handler.state.justCommittedComposition = false;
-      }
-      handler.state.isComposing = true;
+      // Start preedit composition on Linux
+      doc.imeHandler.updateEditingValue(const TextEditingValue(
+        text: 'Hello世',
+        selection: TextSelection.collapsed(offset: 6),
+        composing: TextRange(start: 5, end: 6),
+      ));
 
-      if (rawPreedit.isNotEmpty) {
-        final preeditText = handler.extractPreeditText(value);
-        if (preeditText.isNotEmpty) {
-          handler.state.preeditText = preeditText;
-          handler.state.composingRange = value.composing;
-          handler.state.preeditCaretOffset = value.selection.isValid
-              ? (value.selection.extentOffset - rawStart).clamp(
-                  0,
-                  preeditText.length,
-                )
-              : preeditText.length;
+      expect(doc.imeHandler.isComposing, isTrue);
+      expect(doc.imeHandler.preeditText, '世');
 
-          cursor.imeComposing = true;
-          cursor.imeComposingStart = handler.state.preeditLocalOffset;
-        }
-      }
+      // Update preedit with candidate
+      doc.imeHandler.updateEditingValue(const TextEditingValue(
+        text: 'Hello世界',
+        selection: TextSelection.collapsed(offset: 7),
+        composing: TextRange(start: 5, end: 7),
+      ));
 
-      doc.selectionManager.clear();
-      handler.invalidatePreeditRender();
-      return;
-    }
+      expect(doc.imeHandler.isComposing, isTrue);
+      expect(doc.imeHandler.preeditText, '世界');
 
-    final fragId = cursor.focusId.isNotEmpty ? cursor.focusId : cursor.anchorId;
-    final currentText = handler.getCurrentFragmentText() ?? '';
+      // Finish composition
+      doc.imeHandler.updateEditingValue(const TextEditingValue(
+        text: 'Hello世界',
+        selection: TextSelection.collapsed(offset: 7),
+        composing: TextRange.empty,
+      ));
 
-    // -------------------------------------------------------------------------
-    // 2. Post-Commit Platform Buffer Sync Guard
-    // -------------------------------------------------------------------------
-    if (handler.state.justCommittedComposition) {
-      if (!value.composing.isValid) {
-        handler.state.justCommittedComposition = false;
-        handler.state.lastSyncedText =
-            handler.getCurrentFragmentText() ?? value.text;
-        handler.syncImeBufferToFragment();
-        return;
-      }
-    }
+      expect(doc.imeHandler.isComposing, isFalse);
+      expect(frag.text, 'Hello世界');
+    });
 
-    // -------------------------------------------------------------------------
-    // 3. Composition Transition / Commit
-    // -------------------------------------------------------------------------
-    if (handler.state.isComposing) {
-      if (value.text.isNotEmpty) {
-        final (prefix, suffix) = handler.getParagraphPrefixAndSuffix();
-        final prefixPos = prefix.isNotEmpty ? value.text.indexOf(prefix) : 0;
-        final suffixPos = suffix.isNotEmpty
-            ? handler.findSuffixPos(value.text, suffix)
-            : value.text.length;
-        if (prefixPos != -1 &&
-            suffixPos != -1 &&
-            suffixPos >= prefixPos + prefix.length) {
-          final extracted = value.text.substring(
-            prefixPos + prefix.length,
-            suffixPos,
-          );
-          final current = handler.getCurrentFragmentText() ?? '';
-          if (extracted.isNotEmpty &&
-              extracted != current &&
-              !current.contains(extracted)) {
-            final cleaned =
-                (handler.state.preeditText.isNotEmpty &&
-                    extracted.trim() == handler.state.preeditText.trim())
-                ? handler.state.preeditText
-                : extracted.trim();
-            if (cleaned.isNotEmpty) {
-              handler.state.preeditText = handler.sanitizeUtf16(cleaned);
-            }
-          }
-        }
-      }
-      final textToCommit = handler.state.preeditText;
-      if (textToCommit.isNotEmpty) {
-        handler.commitPreedit(textToCommit);
-      } else {
-        handler.resetComposition();
-      }
-      doc.selectionManager.clear();
-      handler.invalidatePreeditRender();
-      if (!value.composing.isValid) {
-        handler.state.lastSyncedText = value.text;
-        handler.syncImeBufferToFragment();
-        return;
-      }
-    }
+    test('Linux updateEditingValue CJK composition replaces active selection and clears selection rendering', () {
+      final doc = _docWithText('Hello World');
+      final frag = _firstFrag(doc);
+      final p = doc.content.nodes.first as Paragraph;
+      // Select "World" (offset 6 to 11)
+      doc.cursor.anchorId = frag.id;
+      doc.cursor.anchorOffset = 6;
+      doc.cursor.focusId = frag.id;
+      doc.cursor.focusOffset = 11;
+      doc.selectionManager.startSelection(p.id, frag.id, 6);
+      doc.selectionManager.updateFocus(p.id, frag.id, 11);
+      expect(doc.selectionManager.hasSelection, isTrue);
 
-    // -------------------------------------------------------------------------
-    // 4. Non-Composing Text Edits (Typing, Selection Replace, Deletion)
-    // -------------------------------------------------------------------------
-    final oldText = currentText;
-    final newText = value.text;
+      // Start CJK composition replacing selected text "World"
+      doc.imeHandler.updateEditingValue(const TextEditingValue(
+        text: 'Hello 漢',
+        selection: TextSelection.collapsed(offset: 7),
+        composing: TextRange(start: 6, end: 7),
+      ));
 
-    if (newText != oldText) {
-      if (!cursor.isCollapsed) {
-        doc.saveState(description: 'Replace selection', forceNewAction: false);
-        handler.executeBackspace();
-        doc.selectionManager.clear();
-        final inserted = handler.computeInsertedText(oldText, newText);
-        if (inserted.isNotEmpty) {
-          handler.insertFinalizedText(inserted);
-        }
-        handler.syncImeBufferToFragment();
-        return;
-      } else {
-        doc.saveState(description: 'Text edit', forceNewAction: false);
-        final inserted = handler.computeInsertedText(oldText, newText);
-        if (inserted.isNotEmpty) {
-          handler.insertFinalizedText(inserted);
-        }
-        doc.selectionManager.clear();
-        handler.syncImeBufferToFragment();
-        return;
-      }
-    }
+      expect(doc.imeHandler.isComposing, isTrue);
+      expect(doc.imeHandler.preeditText, '漢');
+      expect(frag.text, 'Hello '); // "World" was deleted upon preedit start!
 
-    doc.selectionManager.clear();
-    handler.syncImeBufferToFragment();
-  }
+      // Commit CJK composition
+      doc.imeHandler.updateEditingValue(const TextEditingValue(
+        text: 'Hello 漢字',
+        selection: TextSelection.collapsed(offset: 8),
+        composing: TextRange.empty,
+      ));
 
-  /// Processes [TextEditingDelta] list updates on Linux platform.
-  void updateEditingValueWithDeltas(
-    List<TextEditingDelta> deltas,
-    FluentTextInputHandler handler,
-  ) {
-    final doc = handler.document;
-    if (doc == null || handler.state.updatingSelf) return;
+      expect(doc.imeHandler.isComposing, isFalse);
+      expect(frag.text, 'Hello 漢字');
+      expect(doc.selectionManager.hasSelection, isFalse); // Selection rendering cleared!
+    });
 
-    if (handler.state.justCommittedComposition) {
-      handler.state.justCommittedComposition = false;
-      handler.state.lastSyncedText = handler.getCurrentFragmentText() ?? '';
-      handler.syncImeBufferToFragment();
-      return;
-    }
+    test('Linux CJK replace does not delete characters from unaffected text after commit', () {
+      final doc = _docWithText('Hello World, testing Linux IME replace!');
+      final frag = _firstFrag(doc);
+      final p = doc.content.nodes.first as Paragraph;
 
-    final bool batchEndsComposing =
-        deltas.length > 1 &&
-        deltas.last is TextEditingDeltaNonTextUpdate &&
-        !(deltas.last as TextEditingDeltaNonTextUpdate).composing.isValid;
+      // Select "World" (offset 6 to 11)
+      doc.cursor.anchorId = frag.id;
+      doc.cursor.anchorOffset = 6;
+      doc.cursor.focusId = frag.id;
+      doc.cursor.focusOffset = 11;
+      doc.selectionManager.startSelection(p.id, frag.id, 6);
+      doc.selectionManager.updateFocus(p.id, frag.id, 11);
 
-    for (final delta in deltas) {
-      // -----------------------------------------------------------------------
-      // 1. DELETION HANDLING
-      // -----------------------------------------------------------------------
-      if (delta is TextEditingDeltaDeletion ||
-          (delta is TextEditingDeltaReplacement &&
-              delta.replacementText.isEmpty)) {
-        doc.saveState(description: 'Delete', forceNewAction: false);
+      // Start preedit with CJK character
+      doc.imeHandler.updateEditingValue(const TextEditingValue(
+        text: 'Hello 世界, testing Linux IME replace!',
+        selection: TextSelection.collapsed(offset: 8),
+        composing: TextRange(start: 6, end: 8),
+      ));
 
-        // FIX: durante la composizione IME il testo di preedit non è
-        // mai scritto realmente in node.text (è overlay, tracciato via
-        // preeditText/composingRange). Una Deletion ricevuta mentre
-        // isComposing è true riporta un range relativo al buffer
-        // interno del motore IME (che include la preview), non al
-        // documento reale: applicarla a node.text cancellava
-        // caratteri veri adiacenti al cursore invece di limitarsi ad
-        // annullare/chiudere la composizione.
-        if (handler.state.isComposing) {
-          handler.resetComposition();
-          doc.selectionManager.clear();
-          handler.invalidatePreeditRender();
-          doc.selectionManager.clear();
-          handler.syncImeBufferToFragment();
-          return;
-        }
+      expect(doc.imeHandler.isComposing, isTrue);
+      expect(doc.imeHandler.preeditText, '世界');
+      expect(frag.text, 'Hello , testing Linux IME replace!'); // Only "World" was removed!
 
-        if (!doc.cursor.isCollapsed) {
-          handler.executeBackspace();
-          doc.selectionManager.clear();
-        } else {
-          final fragId = doc.cursor.focusId.isNotEmpty
-              ? doc.cursor.focusId
-              : doc.cursor.anchorId;
-          final node = doc.nodeById(fragId);
+      // Commit preedit
+      doc.imeHandler.updateEditingValue(const TextEditingValue(
+        text: 'Hello 世界, testing Linux IME replace!',
+        selection: TextSelection.collapsed(offset: 8),
+        composing: TextRange.empty,
+      ));
 
-          final deletionRange = delta is TextEditingDeltaDeletion
-              ? delta.deletedRange
-              : (delta as TextEditingDeltaReplacement).replacedRange;
+      // Post-commit buffer sync update from Linux engine
+      doc.imeHandler.updateEditingValue(const TextEditingValue(
+        text: 'Hello , testing Linux IME replace!',
+        selection: TextSelection.collapsed(offset: 6),
+        composing: TextRange.empty,
+      ));
 
-          if (node is Fragment &&
-              deletionRange.isValid &&
-              deletionRange.start < deletionRange.end) {
-            // FIX: clamp sia start che end sulla lunghezza reale del
-            // fragment, e calcola `count` dai valori clampati. Prima
-            // `count` usava deletionRange.end - deletionRange.start
-            // (non clampati) mentre il cursore veniva spostato su
-            // safeEnd (clampato): se il delta riportato dal motore IME
-            // era "stale" rispetto al contenuto attuale del nodo,
-            // il loop eseguiva troppi executeBackspace(), cancellando
-            // testo oltre l'intervallo richiesto.
-            final safeStart = deletionRange.start.clamp(0, node.text.length);
-            final safeEnd = deletionRange.end.clamp(0, node.text.length);
+      expect(frag.text, 'Hello 世界, testing Linux IME replace!');
+    });
 
-            if (safeStart < safeEnd) {
-              doc.cursor.moveTo(fragId, safeEnd);
+    test('Linux CJK replace commitment is retained during post-commit platform sync', () {
+      final doc = _docWithText('Hello World');
+      final frag = _firstFrag(doc);
+      final p = doc.content.nodes.first as Paragraph;
+      // Select "World" (offset 6 to 11)
+      doc.cursor.anchorId = frag.id;
+      doc.cursor.anchorOffset = 6;
+      doc.cursor.focusId = frag.id;
+      doc.cursor.focusOffset = 11;
 
-              final count = safeEnd - safeStart;
-              for (var i = 0; i < count; i++) {
-                handler.executeBackspace();
-              }
-            } else {
-              handler.executeBackspace();
-            }
-          } else {
-            handler.executeBackspace();
-          }
-        }
-        doc.selectionManager.clear();
-        handler.syncImeBufferToFragment();
-        return;
-      }
+      // 1. Start preedit
+      doc.imeHandler.updateEditingValue(const TextEditingValue(
+        text: 'Hello 漢',
+        selection: TextSelection.collapsed(offset: 7),
+        composing: TextRange(start: 6, end: 7),
+      ));
 
-      // -----------------------------------------------------------------------
-      // 2. INSERTION HANDLING
-      // -----------------------------------------------------------------------
-      if (delta is TextEditingDeltaInsertion) {
-        doc.saveState(description: 'Type', forceNewAction: false);
+      expect(doc.imeHandler.isComposing, isTrue);
 
-        if (delta.composing.isValid &&
-            delta.composing.start < delta.composing.end) {
-          final wasComposing = handler.state.isComposing;
-          if (!doc.cursor.isCollapsed && !wasComposing) {
-            handler.executeBackspace();
-            doc.selectionManager.clear();
-          }
+      // 2. Commit preedit with "漢字"
+      doc.imeHandler.updateEditingValue(const TextEditingValue(
+        text: 'Hello 漢字',
+        selection: TextSelection.collapsed(offset: 8),
+        composing: TextRange.empty,
+      ));
 
-          final fragId = doc.cursor.focusId.isNotEmpty
-              ? doc.cursor.focusId
-              : doc.cursor.anchorId;
+      expect(frag.text, 'Hello 漢字');
 
-          handler.state.isComposing = true;
-          handler.state.preeditFragmentId = fragId;
+      // 3. Post-commit platform sync carrying stale platform buffer "Hello "
+      doc.imeHandler.updateEditingValue(const TextEditingValue(
+        text: 'Hello ',
+        selection: TextSelection.collapsed(offset: 6),
+        composing: TextRange.empty,
+      ));
 
-          final fullText = delta.oldText.replaceRange(
-            delta.insertionOffset,
-            delta.insertionOffset,
-            delta.textInserted,
-          );
-          final composingStart = delta.composing.start.clamp(
-            0,
-            fullText.length,
-          );
-          final composingEnd = delta.composing.end.clamp(0, fullText.length);
-          handler.state.preeditText = fullText.substring(
-            composingStart,
-            composingEnd,
-          );
-          handler.state.composingRange = delta.composing;
+      expect(frag.text, 'Hello 漢字');
+    });
 
-          handler.state.preeditLocalOffset = doc.cursor.focusOffset;
-          final parentId = doc.findParentCached(fragId);
-          handler.state.preeditContainerId = parentId ?? '';
-          doc.cursor.imeComposing = true;
-          doc.cursor.imeComposingStart = handler.state.preeditLocalOffset;
-          doc.selectionManager.clear();
+    test('Linux updateEditingValueWithDeltas CJK selection replace commits preedit on standalone Deletion delta', () {
+      final doc = _docWithText('Hello World');
+      final frag = _firstFrag(doc);
+      final p = doc.content.nodes.first as Paragraph;
 
-          if (batchEndsComposing) {
-            handler.commitIfComposing();
-          } else {
-            handler.invalidatePreeditRender();
-          }
-          return;
-        }
+      // Select "World" (offset 6 to 11)
+      doc.cursor.anchorId = frag.id;
+      doc.cursor.anchorOffset = 6;
+      doc.cursor.focusId = frag.id;
+      doc.cursor.focusOffset = 11;
+      doc.selectionManager.startSelection(p.id, frag.id, 6);
+      doc.selectionManager.updateFocus(p.id, frag.id, 11);
 
-        if (handler.state.isComposing) {
-          handler.resetComposition();
-          doc.selectionManager.clear();
-          handler.invalidatePreeditRender();
-        }
+      // 1. Start preedit with deltas
+      final startDeltas = <TextEditingDelta>[
+        TextEditingDeltaInsertion(
+          oldText: 'Hello World',
+          textInserted: '日本',
+          insertionOffset: 6,
+          selection: const TextSelection.collapsed(offset: 8),
+          composing: const TextRange(start: 6, end: 8),
+        ),
+      ];
+      doc.imeHandler.updateEditingValueWithDeltas(startDeltas);
+      expect(doc.imeHandler.isComposing, isTrue);
+      expect(doc.imeHandler.preeditText, '日本');
+      expect(frag.text, 'Hello '); // "World" was deleted
 
-        if (!doc.cursor.isCollapsed) {
-          handler.executeBackspace();
-          doc.selectionManager.clear();
-        }
-
-        handler.insertFinalizedText(delta.textInserted);
-        doc.selectionManager.clear();
-        handler.syncImeBufferToFragment();
-        return;
-      }
-
-      // -----------------------------------------------------------------------
-      // 3. REPLACEMENT HANDLING
-      // -----------------------------------------------------------------------
-      if (delta is TextEditingDeltaReplacement) {
-        doc.saveState(description: 'Replace', forceNewAction: false);
-
-        final wasComposing = handler.state.isComposing;
-        if (!doc.cursor.isCollapsed && !wasComposing) {
-          handler.executeBackspace();
-          doc.selectionManager.clear();
-        }
-
-        final fragId = doc.cursor.focusId.isNotEmpty
-            ? doc.cursor.focusId
-            : doc.cursor.anchorId;
-        final node = doc.nodeById(fragId);
-
-        if (delta.composing.isValid &&
-            delta.composing.start < delta.composing.end) {
-          handler.state.isComposing = true;
-          handler.state.preeditFragmentId = fragId;
-          final parentId = doc.findParentCached(fragId);
-          handler.state.preeditContainerId = parentId ?? '';
-          final cStart = delta.composing.start.clamp(
-            0,
-            delta.replacementText.length,
-          );
-          final cEnd = delta.composing.end.clamp(
-            0,
-            delta.replacementText.length,
-          );
-          handler.state.preeditText = cStart < cEnd
-              ? delta.replacementText.substring(cStart, cEnd)
-              : delta.replacementText;
-          handler.state.composingRange = delta.composing;
-          handler.state.preeditLocalOffset = doc.cursor.focusOffset;
-          doc.cursor.imeComposing = true;
-          doc.cursor.imeComposingStart = handler.state.preeditLocalOffset;
-          doc.selectionManager.clear();
-          if (batchEndsComposing) {
-            handler.commitIfComposing();
-          } else {
-            handler.invalidatePreeditRender();
-          }
-          return;
-        }
-
-        if (handler.state.isComposing) {
-          var textToCommit = delta.replacementText.isNotEmpty
-              ? delta.replacementText
-              : handler.state.preeditText;
-          final (prefix, _) = handler.getParagraphPrefixAndSuffix();
-          if (prefix.isNotEmpty && textToCommit.startsWith(prefix)) {
-            final extracted = handler.extractPreeditText(
-              TextEditingValue(
-                text: delta.replacementText,
-                composing: delta.composing,
-              ),
-            );
-            if (extracted.isNotEmpty) {
-              textToCommit = extracted;
-            }
-          }
-          // FIX: usare commitPreedit invece di resetComposition() +
-          // insertFinalizedText(). Era l'unico percorso di chiusura
-          // composizione a non usare commitPreedit (usato invece nel
-          // ramo equivalente di updateEditingValue e nella sezione 3
-          // non-delta). resetComposition() da solo non riallinea il
-          // cursore/l'intervallo di preedit tracciato prima
-          // dell'inserimento, causando un disallineamento che porta
-          // a cancellare caratteri successivi al testo committato.
-          doc.selectionManager.clear();
-          handler.invalidatePreeditRender();
-          if (textToCommit.isNotEmpty) {
-            handler.commitPreedit(textToCommit);
-          } else {
-            handler.resetComposition();
-          }
-          doc.selectionManager.clear();
-          handler.syncImeBufferToFragment();
-          return;
-        }
-
-        if (!doc.cursor.isCollapsed) {
-          handler.executeBackspace();
-          doc.selectionManager.clear();
-          if (delta.replacementText.isNotEmpty) {
-            handler.insertFinalizedText(delta.replacementText);
-          }
-        } else if (node is Fragment &&
-            delta.replacedRange.isValid &&
-            delta.replacedRange.start < delta.replacedRange.end) {
-          final currentText = node.text;
-          final safeStart = delta.replacedRange.start.clamp(
-            0,
-            currentText.length,
-          );
-          final safeEnd = delta.replacedRange.end.clamp(0, currentText.length);
-          if (safeStart < safeEnd) {
-            doc.cursor.moveTo(fragId, safeEnd);
-            final count = safeEnd - safeStart;
-            for (var i = 0; i < count; i++) {
-              handler.executeBackspace();
-            }
-          }
-          if (delta.replacementText.isNotEmpty) {
-            handler.insertFinalizedText(delta.replacementText);
-          }
-        } else {
-          if (delta.replacementText.isNotEmpty) {
-            handler.insertFinalizedText(delta.replacementText);
-          }
-        }
-        doc.selectionManager.clear();
-        handler.syncImeBufferToFragment();
-        return;
-      }
-
-      // -----------------------------------------------------------------------
-      // 4. NON-TEXT UPDATE HANDLING
-      // -----------------------------------------------------------------------
-      if (delta is TextEditingDeltaNonTextUpdate) {
-        if (handler.state.isComposing &&
-            (!delta.composing.isValid ||
-                delta.composing.start >= delta.composing.end)) {
-          if (deltas.any(
-            (d) =>
-                d is TextEditingDeltaInsertion ||
-                d is TextEditingDeltaReplacement,
-          )) {
-            continue;
-          }
-          handler.commitIfComposing();
-          doc.selectionManager.clear();
-          handler.syncImeBufferToFragment();
-          return;
-        }
-        if (doc.cursor.imeComposing && !handler.state.isComposing) {
-          doc.cursor.imeComposing = false;
-          doc.cursor.imeComposingStart = 0;
-          doc.selectionManager.clear();
-        }
-        continue;
-      }
-    }
-  }
-
-  /// Calculates current [TextEditingValue] for Linux desktop clients.
-  TextEditingValue? getCurrentTextEditingValue(FluentTextInputHandler handler) {
-    final doc = handler.document;
-    final text = handler.getCurrentFragmentText() ?? '';
-    if (doc == null) {
-      return TextEditingValue(
-        text: text,
-        selection: const TextSelection.collapsed(offset: 0),
-      );
-    }
-
-    final cursor = doc.cursor;
-    final isSingleFragSelection =
-        !cursor.isCollapsed && cursor.anchorId == cursor.focusId;
-    final isMultiFragSelection =
-        !cursor.isCollapsed && cursor.anchorId != cursor.focusId;
-    final offset = handler.getCursorOffsetInFragment();
-
-    final TextSelection selection;
-    if (isSingleFragSelection) {
-      selection = TextSelection(
-        baseOffset: cursor.anchorOffset.clamp(0, text.length),
-        extentOffset: cursor.focusOffset.clamp(0, text.length),
-      );
-    } else if (isMultiFragSelection) {
-      selection = TextSelection(baseOffset: 0, extentOffset: text.length);
-    } else {
-      selection = TextSelection.collapsed(offset: offset);
-    }
-
-    return TextEditingValue(
-      text: text,
-      selection: selection,
-      composing:
-          handler.state.isComposing && handler.state.composingRange.isValid
-          ? handler.state.composingRange
-          : TextRange.empty,
-    );
-  }
-
-  /// Synchronizes engine text editing state for Linux clients.
-  void syncImeBufferToFragment(FluentTextInputHandler handler) {
-    if (handler.connectionManager.connection == null ||
-        !handler.connectionManager.connection!.attached) {
-      return;
-    }
-    if (handler.state.isComposing) return;
-    final doc = handler.document;
-    if (doc == null) return;
-    final currentFragId = doc.cursor.focusId.isNotEmpty
-        ? doc.cursor.focusId
-        : doc.cursor.anchorId;
-
-    if (currentFragId != handler.state.lastSyncedFragmentId) {
-      handler.resetPlatformBuffer();
-    }
-    handler.state.lastSyncedFragmentId = currentFragId;
-
-    final text = handler.getCurrentFragmentText();
-    if (text == null) {
-      handler.resetPlatformBuffer();
-      return;
-    }
-    final cursor = doc.cursor;
-    final isSingleFragSelection =
-        !cursor.isCollapsed && cursor.anchorId == cursor.focusId;
-    final isMultiFragSelection =
-        !cursor.isCollapsed && cursor.anchorId != cursor.focusId;
-    final offset = handler.getCursorOffsetInFragment();
-
-    final syncedText = text;
-    final syncedOffset = offset.clamp(0, syncedText.length);
-    final TextSelection syncedSelection;
-    if (isSingleFragSelection) {
-      syncedSelection = TextSelection(
-        baseOffset: cursor.anchorOffset.clamp(0, syncedText.length),
-        extentOffset: cursor.focusOffset.clamp(0, syncedText.length),
-      );
-    } else if (isMultiFragSelection) {
-      syncedSelection = TextSelection(
-        baseOffset: 0,
-        extentOffset: syncedText.length,
-      );
-    } else {
-      syncedSelection = TextSelection.collapsed(offset: syncedOffset);
-    }
-
-    handler.state.prevSelectionKey =
-        '${syncedSelection.baseOffset}:${syncedSelection.extentOffset}';
-
-    final wasUpdatingSelf = handler.state.updatingSelf;
-    handler.state.updatingSelf = true;
-    try {
-      handler.connectionManager.connection!.setEditingState(
-        TextEditingValue(
-          text: syncedText,
-          selection: syncedSelection,
+      // 2. Fcitx/IBus standalone preedit-clear Deletion delta before commit
+      final clearPreeditDeltas = <TextEditingDelta>[
+        TextEditingDeltaDeletion(
+          oldText: 'Hello 日本',
+          deletedRange: const TextRange(start: 6, end: 8),
+          selection: const TextSelection.collapsed(offset: 6),
           composing: TextRange.empty,
         ),
-      );
-      handler.state.lastSyncedText = syncedText;
-    } finally {
-      handler.state.updatingSelf = wasUpdatingSelf;
-    }
-  }
+      ];
+      doc.imeHandler.updateEditingValueWithDeltas(clearPreeditDeltas);
+
+      // Candidate "日本" MUST be committed to document text!
+      expect(doc.imeHandler.isComposing, isFalse);
+      expect(frag.text, 'Hello 日本');
+    });
+
+    test('Linux updateEditingValueWithDeltas CJK composition replaces active selection and clears selection rendering', () {
+      final doc = _docWithText('Hello World');
+      final frag = _firstFrag(doc);
+      final p = doc.content.nodes.first as Paragraph;
+      // Select "World" (offset 6 to 11)
+      doc.cursor.anchorId = frag.id;
+      doc.cursor.anchorOffset = 6;
+      doc.cursor.focusId = frag.id;
+      doc.cursor.focusOffset = 11;
+      doc.selectionManager.startSelection(p.id, frag.id, 6);
+      doc.selectionManager.updateFocus(p.id, frag.id, 11);
+      expect(doc.selectionManager.hasSelection, isTrue);
+
+      final deltas = <TextEditingDelta>[
+        TextEditingDeltaInsertion(
+          oldText: 'Hello World',
+          textInserted: '漢',
+          insertionOffset: 6,
+          selection: const TextSelection.collapsed(offset: 7),
+          composing: const TextRange(start: 6, end: 7),
+        ),
+      ];
+
+      doc.imeHandler.updateEditingValueWithDeltas(deltas);
+
+      expect(doc.imeHandler.isComposing, isTrue);
+      expect(doc.imeHandler.preeditText, '漢');
+      expect(frag.text, 'Hello '); // Selected text "World" was deleted!
+
+      // Commit composition via NonTextUpdate
+      final commitDeltas = <TextEditingDelta>[
+        TextEditingDeltaNonTextUpdate(
+          oldText: 'Hello 漢字',
+          selection: const TextSelection.collapsed(offset: 8),
+          composing: TextRange.empty,
+        ),
+      ];
+
+      doc.imeHandler.updateEditingValueWithDeltas(commitDeltas);
+
+      expect(doc.imeHandler.isComposing, isFalse);
+      expect(frag.text, 'Hello 漢');
+      expect(doc.selectionManager.hasSelection, isFalse); // Selection rendering cleared!
+    });
+
+    test('Linux updateEditingValueWithDeltas handles insertion deltas', () {
+      final doc = _docWithText('Test');
+      final frag = _firstFrag(doc);
+      doc.cursor.moveTo(frag.id, 4);
+
+      final deltas = <TextEditingDelta>[
+        TextEditingDeltaInsertion(
+          oldText: 'Test',
+          textInserted: '!',
+          insertionOffset: 4,
+          selection: const TextSelection.collapsed(offset: 5),
+          composing: TextRange.empty,
+        ),
+      ];
+
+      doc.imeHandler.updateEditingValueWithDeltas(deltas);
+
+      expect(frag.text, 'Test!');
+    });
+
+    test('Linux updateEditingValueWithDeltas batchEndsComposing commits composition', () {
+      final doc = _docWithText('Base');
+      final frag = _firstFrag(doc);
+      doc.cursor.moveTo(frag.id, 4);
+
+      final deltas = <TextEditingDelta>[
+        TextEditingDeltaInsertion(
+          oldText: 'Base',
+          textInserted: 'A',
+          insertionOffset: 4,
+          selection: const TextSelection.collapsed(offset: 5),
+          composing: const TextRange(start: 4, end: 5),
+        ),
+        TextEditingDeltaNonTextUpdate(
+          oldText: 'BaseA',
+          selection: const TextSelection.collapsed(offset: 5),
+          composing: TextRange.empty,
+        ),
+      ];
+
+      doc.imeHandler.updateEditingValueWithDeltas(deltas);
+
+      expect(doc.imeHandler.isComposing, isFalse);
+      expect(frag.text, 'BaseA');
+    });
+
+    test('Linux updateEditingValueWithDeltas deletion delta handles character removal', () {
+      final doc = _docWithText('RemoveMe');
+      final frag = _firstFrag(doc);
+      doc.cursor.moveTo(frag.id, 8);
+
+      final deltas = <TextEditingDelta>[
+        TextEditingDeltaDeletion(
+          oldText: 'RemoveMe',
+          deletedRange: const TextRange(start: 6, end: 8),
+          selection: const TextSelection.collapsed(offset: 6),
+          composing: TextRange.empty,
+        ),
+      ];
+
+      doc.imeHandler.updateEditingValueWithDeltas(deltas);
+
+      expect(frag.text, 'Remove');
+    });
+
+    test('Linux currentTextEditingValue returns Linux platform editing state', () {
+      final doc = _docWithText('Sample');
+      final frag = _firstFrag(doc);
+      doc.cursor.moveTo(frag.id, 3);
+
+      final editingValue = doc.imeHandler.currentTextEditingValue;
+
+      expect(editingValue, isNotNull);
+      expect(editingValue!.text, 'Sample');
+      expect(editingValue.selection, const TextSelection.collapsed(offset: 3));
+    });
+  });
 }
