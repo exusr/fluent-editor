@@ -15,6 +15,8 @@ import 'package:fluent_editor/widgets/editor/fluent_toolbar_widget.dart';
 import 'package:fluent_editor/widgets/editor/fluent_bubble_toolbar.dart';
 import 'package:fluent_editor/widgets/nodes/virtualized_selectable_area.dart';
 import 'package:fluent_editor/widgets/editor/fluent_unified_sidebar.dart';
+import 'package:fluent_editor/handlers/handle_select_all.dart';
+import 'package:fluent_editor/handlers/handle_clipboard.dart';
 
 /// Toolbar display mode.
 enum FluentToolbarMode { fixed, bubble }
@@ -72,6 +74,8 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
   bool _pendingScrollToCursor = false;
   final ScrollController _scrollController = ScrollController();
   final GlobalKey _contentStackKey = GlobalKey();
+
+  int _lastNodesCount = -1;
 
   final Map<int, double> _itemHeights = {};
   double _averageItemHeight = 40.0;
@@ -236,7 +240,23 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
         }
         return KeyEventResult.ignored;
       },
-      child: Padding(
+      child: Actions(
+        actions: {
+          SelectAllTextIntent: CallbackAction<SelectAllTextIntent>(
+            onInvoke: (intent) => handleSelectAll(widget.document),
+          ),
+          CopySelectionTextIntent: CallbackAction<CopySelectionTextIntent>(
+            onInvoke: (intent) => executeHandleCopy(widget.document),
+          ),
+          PasteTextIntent: CallbackAction<PasteTextIntent>(
+            onInvoke: (intent) {
+              widget.document.saveState(description: 'Paste', forceNewAction: true);
+              executeHandlePaste(widget.document);
+              return null;
+            },
+          ),
+        },
+        child: Padding(
         padding: const EdgeInsets.all(24.0).copyWith(
           right: 24.0 + (!hasActiveSidebar || _isSidebarCollapsed ? 0 : 300),
         ),
@@ -267,6 +287,7 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
             ),
           ),
         ),
+      ),
       ),
     );
   }
@@ -318,7 +339,15 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
       return;
     }
 
-    setState(() {});
+    final currentLength = widget.document.content.nodes.length;
+    final needsStatsUpdate = _showStatsPanel && _statsContentVersion != widget.document.contentVersion;
+
+    if (widget.document.isFullDocumentDirty || 
+        _lastNodesCount != currentLength ||
+        needsStatsUpdate) {
+      _lastNodesCount = currentLength;
+      setState(() {});
+    }
 
     _restartBlink();
     if (!_pendingScrollToCursor) {
@@ -357,7 +386,7 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
       forceNewAction: true,
     );
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      widget.document.imeHandler.showKeyboard(context);
+      if (mounted) widget.document.imeHandler.attachConnectionSilently(context);
     });
     _initDocumentLanguage();
     DocumentLanguageController.instance.currentLanguage.addListener(
@@ -384,6 +413,7 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
       widget.document.imeHandler.showKeyboard(context);
     } else {
       widget.document.imeHandler.commitIfComposing();
+      widget.document.imeHandler.hideKeyboard();
     }
   }
 
@@ -564,7 +594,15 @@ class _FluentDocumentWidgetState extends State<FluentDocumentWidget> {
               children: [
                 Stack(
                   children: [
-                    _buildVirtualizedContent(activeSidebar != null),
+                    LayoutBuilder(
+                      builder: (context, constraints) {
+                        widget.document.imeHandler.setViewSize(Size(
+                          constraints.maxWidth,
+                          constraints.maxHeight,
+                        ));
+                        return _buildVirtualizedContent(activeSidebar != null);
+                      }
+                    ),
                     if (activeSidebar != null && !_isSidebarCollapsed)
                       Positioned(
                         top: 0,

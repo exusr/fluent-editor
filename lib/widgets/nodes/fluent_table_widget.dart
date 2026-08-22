@@ -120,6 +120,7 @@ class _FluentTableWidgetState extends State<FluentTableWidget> {
 
   @override
   Widget build(BuildContext context) {
+    final liveTable = (findById(widget.document.content, widget.node.id) as FluentTable?) ?? widget.node;
     return LayoutBuilder(builder: (context, constraints) {
       final availableWidth = constraints.maxWidth;
       final tWidth = _tableWidth(availableWidth);
@@ -137,7 +138,7 @@ class _FluentTableWidgetState extends State<FluentTableWidget> {
             width: tWidth,
             child: _TableWithHandles(
               tableKey: _tableKey,
-              node: widget.node,
+              node: liveTable,
               document: widget.document,
               colWidths: colWidths,
               availableWidth: availableWidth,
@@ -1275,6 +1276,7 @@ class RenderFluentTable extends RenderFluentNode
   set node(covariant FluentTable value) {
     super.node = value;
     markNeedsLayout();
+    markNeedsPaint();
   }
   
   @override

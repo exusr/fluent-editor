@@ -53,6 +53,7 @@ class RenderFluentFragment extends RenderFluentLeaf {
     if (text == v) return;
     _painter.text = TextSpan(text: v, style: style);
     markNeedsLayout();
+    markNeedsPaint();
   }
 
   TextStyle? get style => (_painter.text as TextSpan).style;
@@ -60,6 +61,7 @@ class RenderFluentFragment extends RenderFluentLeaf {
     if (style == v) return;
     _painter.text = TextSpan(text: text, style: v);
     markNeedsLayout();
+    markNeedsPaint();
   }
 
   TextDirection get textDirection => _painter.textDirection!;
@@ -67,6 +69,7 @@ class RenderFluentFragment extends RenderFluentLeaf {
     if (_painter.textDirection == v) return;
     _painter.textDirection = v;
     markNeedsLayout();
+    markNeedsPaint();
   }
 
   @override

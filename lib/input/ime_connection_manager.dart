@@ -140,6 +140,7 @@ class ImeConnectionManager {
   bool attachConnection({
     required int viewId,
     required VoidCallback onSyncBuffer,
+    bool show = true,
   }) {
     if (document == null) return false;
     try {
@@ -159,7 +160,7 @@ class ImeConnectionManager {
       );
       if (connection == null || !connection!.attached) return false;
       connection!.setEditingState(const TextEditingValue());
-      connection!.show();
+      if (show) connection!.show();
       onSyncBuffer();
       connectionRetryCount = 0;
       connectionRetryTimer?.cancel();

@@ -183,6 +183,7 @@ class RenderFluentParagraph extends RenderFluentNode
       node = value as FNode;
     }
     markNeedsLayout();
+    markNeedsPaint();
   }
 
   List<RenderStyleHook> _styleHooks = const [];

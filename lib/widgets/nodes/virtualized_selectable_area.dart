@@ -65,6 +65,16 @@ class _VirtualizedSelectableAreaState extends State<VirtualizedSelectableArea> {
   Timer? _selectionUpdateTimer;
 
   @override
+  void didUpdateWidget(VirtualizedSelectableArea oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.itemCount != widget.itemCount) {
+      _itemHeights.clear();
+      _cumulativeHeights.clear();
+      _cumulativeHeightsDirty = true;
+    }
+  }
+
+  @override
   void dispose() {
     _selectionUpdateTimer?.cancel();
     _tapTimer?.cancel();
@@ -89,6 +99,11 @@ class _VirtualizedSelectableAreaState extends State<VirtualizedSelectableArea> {
     _isDragging = false;
     _isSelecting = false;
     _isScrolling = false;
+
+    if (_isMobile) {
+      widget.document.requestEditorFocus();
+      widget.document.requestMobileKeyboardFocus(context);
+    }
 
     _tapTimer?.cancel();
     _longPressTimer?.cancel();
@@ -178,6 +193,7 @@ class _VirtualizedSelectableAreaState extends State<VirtualizedSelectableArea> {
       setState(() {});
       widget.document.cursorOnlyUpdate();
       if (_isMobile) {
+        widget.document.requestEditorFocus();
         widget.document.requestMobileKeyboardFocus(context);
       }
     } else if (wasScrolling) {
@@ -424,6 +440,17 @@ class _VirtualizedSelectableAreaState extends State<VirtualizedSelectableArea> {
         child: ListView.builder(
           controller: _scrollController,
           padding: const EdgeInsets.symmetric(horizontal: 32.0),
+          addAutomaticKeepAlives: false,
+          findChildIndexCallback: (Key key) {
+            if (key is ValueKey<String>) {
+              final id = key.value;
+              final nodes = widget.document.content.nodes;
+              for (int i = 0; i < nodes.length; i++) {
+                if (nodes[i].id == id) return i;
+              }
+            }
+            return null;
+          },
           physics: (isResizeActive || _isDragging)
               ? const NeverScrollableScrollPhysics()
               : null,
@@ -476,6 +503,21 @@ class _VisibilityTrackerState extends State<_VisibilityTracker> {
     _containerId = _computeContainerId();
     if (_containerId != null) {
       widget.document.paragraphRegistry.markVisible(_containerId!);
+    }
+  }
+
+  @override
+  void didUpdateWidget(_VisibilityTracker oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final newContainerId = _computeContainerId();
+    if (newContainerId != _containerId) {
+      if (_containerId != null) {
+        widget.document.paragraphRegistry.markInvisible(_containerId!);
+      }
+      _containerId = newContainerId;
+      if (_containerId != null) {
+        widget.document.paragraphRegistry.markVisible(_containerId!);
+      }
     }
   }
 

@@ -242,6 +242,7 @@ class FluentImage extends Fragment implements InlineContainerNode {
   @override
   Map<String, dynamic> toJson() {
     final json = _$FluentImageToJson(this);
+    json['type'] = type;
     if (textAlign != 'left') json['textAlign'] = textAlign;
     if (width != null) json['width'] = width;
     if (height != null) json['height'] = height;
@@ -373,7 +374,7 @@ class Link extends Paragraph implements Fragment, InlineContainerNode {
   factory Link.fromJson(Map<String, dynamic> json) => _$LinkFromJson(json);
 
   @override
-  Map<String, dynamic> toJson() => _$LinkToJson(this);
+  Map<String, dynamic> toJson() => {..._$LinkToJson(this), 'type': type};
 }
 
 @JsonSerializable()

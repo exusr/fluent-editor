@@ -22,7 +22,9 @@ Future<void> main() async {
     return true;
   };
 
-  await loadBundledFonts();
+  // We do not await this, so the app starts immediately (preventing the white screen).
+  // Fonts will "pop in" automatically as they finish downloading in the background.
+  loadBundledFonts();
 
   runApp(const MyApp());
 }
@@ -30,6 +32,8 @@ Future<void> main() async {
 /// Loads all bundled fonts from the fluent_editor package assets.
 /// Includes DejaVu family, Google Fonts, and NotoColorEmoji.
 Future<void> loadBundledFonts() async {
+  final tasks = <Future<void>>[];
+
   // DejaVu family (in assets/fonts/)
   const dejavuFonts = [
     (
@@ -60,24 +64,27 @@ Future<void> loadBundledFonts() async {
   ];
 
   for (final (familyName, files) in dejavuFonts) {
-    final loader = FontLoader(familyName);
-    var loadedAny = false;
-    for (final file in files) {
-      try {
-        final data =
-            await rootBundle.load('packages/fluent_editor/assets/fonts/$file');
-        loader.addFont(Future.value(data));
-        loadedAny = true;
-      } catch (_) {}
-    }
-    if (loadedAny) {
-      try {
-        await loader.load();
-      } catch (_) {}
-    }
+    tasks.add(() async {
+      final loader = FontLoader(familyName);
+      var loadedAny = false;
+      final results = await Future.wait(files.map((file) =>
+          rootBundle.load('packages/fluent_editor/assets/fonts/$file').catchError((_) => ByteData(0))));
+      
+      for (final data in results) {
+        if (data.lengthInBytes > 0) {
+          loader.addFont(Future.value(data));
+          loadedAny = true;
+        }
+      }
+      if (loadedAny) {
+        try { await loader.load(); } catch (_) {}
+      }
+    }());
   }
 
   // Google Fonts (in assets/fonts/)
+  // Commented out to prevent massive 10s parsing freeze in CanvasKit on Web startup.
+  /*
   const googleFonts = [
     'Crimson Text',
     'Fira Sans',
@@ -89,39 +96,42 @@ Future<void> loadBundledFonts() async {
   ];
 
   for (final fontName in googleFonts) {
-    final loader = FontLoader(fontName);
-    final fileName = fontName.replaceAll(' ', '');
-    var loadedAny = false;
+    tasks.add(() async {
+      final loader = FontLoader(fontName);
+      final fileName = fontName.replaceAll(' ', '');
+      var loadedAny = false;
 
-    for (final suffix in [
-      '-Regular.ttf',
-      '-Italic.ttf',
-      '-Bold.ttf',
-      '-BoldItalic.ttf'
-    ]) {
-      try {
-        final data = await rootBundle.load(
-          'packages/fluent_editor/assets/fonts/$fileName$suffix',
-        );
-        loader.addFont(Future.value(data));
-        loadedAny = true;
-      } catch (_) {}
-    }
-
-    if (loadedAny) {
-      try {
-        await loader.load();
-      } catch (_) {}
-    }
+      final suffixes = ['-Regular.ttf', '-Italic.ttf', '-Bold.ttf', '-BoldItalic.ttf'];
+      final results = await Future.wait(suffixes.map((suffix) =>
+          rootBundle.load('packages/fluent_editor/assets/fonts/$fileName$suffix').catchError((_) => ByteData(0))));
+      
+      for (final data in results) {
+        if (data.lengthInBytes > 0) {
+          loader.addFont(Future.value(data));
+          loadedAny = true;
+        }
+      }
+      if (loadedAny) {
+        try { await loader.load(); } catch (_) {}
+      }
+    }());
   }
+  */
 
-  // NotoColorEmoji (in assets/fonts/)
-  try {
-    final emojiLoader = FontLoader('NotoColorEmoji')
-      ..addFont(rootBundle
-          .load('packages/fluent_editor/assets/fonts/NotoColorEmoji.ttf'));
-    await emojiLoader.load();
-  } catch (_) {}
+  // NotoColorEmoji is extremely heavy (11MB) and can cause network/server 
+  // bottlenecks during startup on local development. We disable it by default.
+  /*
+  tasks.add(() async {
+    try {
+      final loader = FontLoader('NotoColorEmoji');
+      final data = await rootBundle.load('packages/fluent_editor/assets/fonts/NotoColorEmoji.ttf');
+      loader.addFont(Future.value(data));
+      await loader.load();
+    } catch (_) {}
+  }());
+  */
+
+  await Future.wait(tasks);
 }
 
 class MyApp extends StatefulWidget {

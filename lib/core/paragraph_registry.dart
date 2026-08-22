@@ -29,6 +29,12 @@ class ParagraphRegistry {
   /// Mark a container as no longer visible (called on item disposal / recycle).
   void markInvisible(String containerId) => _visibleContainerIds.remove(containerId);
 
+  /// Cleans up container IDs and renders that are no longer active in the document.
+  void syncVisibleContainers(Set<String> activeContainerIds) {
+    _visibleContainerIds.removeWhere((id) => !activeContainerIds.contains(id));
+    _renders.removeWhere((id, _) => !activeContainerIds.contains(id));
+  }
+
   /// Iterates only the renders whose containers are currently in view.
   /// Used by selection sync to avoid an O(n) scan over every paragraph in the
   /// document, reducing the per-frame cost to O(visible) on key-hold.

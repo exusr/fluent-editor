@@ -116,10 +116,10 @@ class NodeReplaceDelta extends DocumentDelta {
     for (int i = 0; i <= maxIndex; i++) {
       final json = changeMap[i];
       if (json != null) {
-        if (json['type'] != null) {
+        if (json.isNotEmpty) {
           newNodes.add(_deserializeNode(json, document.registry));
         }
-        // Empty JSON (no 'type') → node doesn't exist in target state
+        // Empty JSON ({}) → node doesn't exist in target state
       } else if (i < nodes.length) {
         // No change at this index — keep existing node
         newNodes.add(nodes[i]);

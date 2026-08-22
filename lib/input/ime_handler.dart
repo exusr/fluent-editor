@@ -51,6 +51,21 @@ class FluentTextInputHandler implements DeltaTextInputClient {
     );
   }
 
+  void attachConnectionSilently(BuildContext context) {
+    connectionManager.attachConnection(
+      viewId: View.of(context).viewId,
+      onSyncBuffer: syncImeBufferToFragment,
+      show: false,
+    );
+    if (kIsWeb) {
+      connectionManager.updateWebImePosition();
+    }
+  }
+
+  void hideKeyboard() {
+    connectionManager.hideKeyboard();
+  }
+
   bool get _shouldSyncBuffer => true;
 
   // ===========================================================================
@@ -352,10 +367,7 @@ class FluentTextInputHandler implements DeltaTextInputClient {
         if (inserted.isNotEmpty) {
           _insertFinalizedText(inserted);
         } else {
-          _replaceFragmentText(
-            newText,
-            cursorOffset: value.selection.extentOffset,
-          );
+          executeHandleBackspace(doc);
         }
         syncImeBufferToFragment();
         return;
@@ -475,26 +487,31 @@ class FluentTextInputHandler implements DeltaTextInputClient {
               delta.replacementText.isEmpty)) {
         doc.saveState(description: 'Delete', forceNewAction: false);
 
-        final deletionRange = delta is TextEditingDeltaDeletion
-            ? delta.deletedRange
-            : (delta as TextEditingDeltaReplacement).replacedRange;
+        if (!doc.cursor.isCollapsed) {
+          // If there's an active selection, just delete it directly.
+          executeHandleBackspace(doc);
+        } else {
+          final deletionRange = delta is TextEditingDeltaDeletion
+              ? delta.deletedRange
+              : (delta as TextEditingDeltaReplacement).replacedRange;
 
-        // We reposition ONLY if the keyboard provides a mathematically
-        // valid range (e.g., selecting and deleting a whole word).
-        if (node is Fragment &&
-            deletionRange.isValid &&
-            deletionRange.start < deletionRange.end) {
-          final safeEnd = deletionRange.end.clamp(0, node.text.length);
-          doc.cursor.moveTo(fragId, safeEnd);
+          // We reposition ONLY if the keyboard provides a mathematically
+          // valid range (e.g., selecting and deleting a whole word).
+          if (node is Fragment &&
+              deletionRange.isValid &&
+              deletionRange.start < deletionRange.end) {
+            final safeEnd = deletionRange.end.clamp(0, node.text.length);
+            doc.cursor.moveTo(fragId, safeEnd);
 
-          final count = deletionRange.end - deletionRange.start;
-          for (var i = 0; i < count; i++) {
+            final count = deletionRange.end - deletionRange.start;
+            for (var i = 0; i < count; i++) {
+              executeHandleBackspace(doc);
+            }
+          } else {
+            // Fallback for physical keyboards: a normal backspace stroke
+            // starting from the current cursor position.
             executeHandleBackspace(doc);
           }
-        } else {
-          // Fallback for physical keyboards: a normal backspace stroke
-          // starting from the current cursor position.
-          executeHandleBackspace(doc);
         }
         syncImeBufferToFragment();
         return;
@@ -613,7 +630,12 @@ class FluentTextInputHandler implements DeltaTextInputClient {
           _invalidatePreeditRender();
         }
 
-        if (node is Fragment && delta.replacedRange.isValid) {
+        if (!doc.cursor.isCollapsed) {
+          executeHandleBackspace(doc);
+          if (delta.replacementText.isNotEmpty) {
+            _insertFinalizedText(delta.replacementText);
+          }
+        } else if (node is Fragment && delta.replacedRange.isValid) {
           final currentText = node.text;
           final safeStart = delta.replacedRange.start.clamp(
             0,

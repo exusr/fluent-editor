@@ -1,6 +1,7 @@
 import 'package:fluent_editor/factories.dart';
 import 'package:fluent_editor/fluent_document.dart';
 import 'package:fluent_editor/utils/cursor_navigation.dart';
+import 'package:fluent_editor/utils/node_operations.dart';
 import 'package:flutter/material.dart';
 
 class FluentHrWidget extends StatefulWidget {
@@ -85,7 +86,7 @@ class _FluentHrWidgetState extends State<FluentHrWidget> {
   @override
   Widget build(BuildContext context) {
     final cursor = widget.document.cursor;
-    final node = widget.node;
+    final node = (findById(widget.document.content, widget.node.id) as HorizontalRule?) ?? widget.node;
 
     final cursorOnHr = cursor.isCollapsed && cursor.anchorId == node.id;
     final cursorBefore = cursorOnHr && cursor.anchorOffset == 0;

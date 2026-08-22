@@ -56,6 +56,11 @@ class UndoRedoManager {
   bool _isRestoringState = false;
   bool _forceNewAction = false;
 
+  Set<String> _lastCommittedNodeIds = {};
+  Set<String> get lastCommittedNodeIds => _lastCommittedNodeIds;
+
+  int get undoStackSize => _undoStack.length;
+
   /// Pending snapshot captured by [beginSaveState]; committed by
   /// [commitSaveState] (called from [updateContent]).
   _PendingSnapshot? _pending;
@@ -107,7 +112,7 @@ class UndoRedoManager {
       if (cached != null) {
         oldJsonList.add(cached);
       } else {
-        final json = _deepCopyJsonMap(node.toJson());
+        final json = node.toJson();
         _jsonCache[node.id] = json;
         oldJsonList.add(json);
       }
@@ -149,11 +154,10 @@ class UndoRedoManager {
 
         final newJson = newNode.toJson();
         if (!_mapsEqual(oldJson, newJson)) {
-          final frozenNewJson = _deepCopyJsonMap(newJson);
           changes.add(NodeChange(
             index: i,
             oldJson: oldJson,
-            newJson: frozenNewJson,
+            newJson: newJson,
           ));
         }
       }
@@ -169,7 +173,7 @@ class UndoRedoManager {
           changes.add(NodeChange(
             index: i,
             oldJson: oldJson ?? <String, dynamic>{},
-            newJson: newJson != null ? _deepCopyJsonMap(newJson) : <String, dynamic>{},
+            newJson: newJson ?? <String, dynamic>{},
           ));
         }
       }
@@ -177,8 +181,23 @@ class UndoRedoManager {
 
     if (changes.isEmpty) {
       _pending = null;
+      _lastCommittedNodeIds = {};
       return SaveStateResult.noChange;
     }
+
+    final committedIds = <String>{};
+    for (final change in changes) {
+      final oldId = change.oldJson['id'];
+      if (oldId is String) committedIds.add(oldId);
+
+      final newId = change.newJson['id'];
+      if (newId is String) committedIds.add(newId);
+
+      if (change.index < newNodes.length) {
+        committedIds.add(newNodes[change.index].id);
+      }
+    }
+    _lastCommittedNodeIds = committedIds;
 
     final delta = NodeReplaceDelta(
       description: pending.description,
@@ -251,9 +270,8 @@ class UndoRedoManager {
     } finally {
       _isRestoringState = false;
     }
-    final affectedIds = _collectAffectedIds(delta, document);
-    document.notifyDocumentChanged(affectedIds: affectedIds);
     _updateJsonCache(document);
+    document.notifyDocumentChanged();
     _resetGrouping();
     return true;
   }
@@ -274,36 +292,13 @@ class UndoRedoManager {
     } finally {
       _isRestoringState = false;
     }
-    final affectedIds = _collectAffectedIds(delta, document);
-    document.notifyDocumentChanged(affectedIds: affectedIds);
     _updateJsonCache(document);
+    document.notifyDocumentChanged();
     _resetGrouping();
     return true;
   }
 
-  /// Collects the IDs of top-level nodes touched by [delta].
-  Set<String> _collectAffectedIds(DocumentDelta delta, FluentDocument document) {
-    final ids = <String>{};
-    if (delta is NodeReplaceDelta) {
-      for (final change in delta.changes) {
-        if (change.index < document.content.nodes.length) {
-          ids.add(document.content.nodes[change.index].id);
-        }
-      }
-    } else if (delta is NodeInsertDelta) {
-      if (delta.index < document.content.nodes.length) {
-        ids.add(document.content.nodes[delta.index].id);
-      }
-    } else if (delta is NodeDeleteDelta) {
-      if (delta.index < document.content.nodes.length) {
-        ids.add(document.content.nodes[delta.index].id);
-      }
-      if (delta.index > 0 && delta.index - 1 < document.content.nodes.length) {
-        ids.add(document.content.nodes[delta.index - 1].id);
-      }
-    }
-    return ids;
-  }
+
 
   void clear() {
     _undoStack.clear();
@@ -349,6 +344,7 @@ class UndoRedoManager {
     _groupingTimer = null;
     _currentGroupDescription = null;
     _lastActionTime = null;
+    _forceNewAction = true;
   }
 
   /// Refreshes [_jsonCache] with the current state of all top-level nodes.
@@ -362,33 +358,11 @@ class UndoRedoManager {
   }
 
   /// Incrementally updates [_jsonCache] using the [changes] from a commit.
-  /// Only changed nodes are re-serialized; unchanged entries are kept.
-  /// Ceiling: O(changed_nodes) instead of O(all_nodes). Upgrade path: if
-  /// the document grows very large, this is already optimal per-commit.
   void _updateJsonCacheFromChanges(
     FluentDocument document,
     List<NodeChange> changes,
   ) {
-    final newNodes = document.content.nodes;
-    final currentIds = <String>{};
-    for (final node in newNodes) {
-      currentIds.add(node.id);
-    }
-    // Remove deleted nodes from cache
-    final deletedIds = <String>[];
-    _jsonCache.forEach((id, _) {
-      if (!currentIds.contains(id)) deletedIds.add(id);
-    });
-    for (final id in deletedIds) {
-      _jsonCache.remove(id);
-    }
-    // Update changed nodes from pre-serialized newJson
-    for (final change in changes) {
-      if (change.index < newNodes.length) {
-        final node = newNodes[change.index];
-        _jsonCache[node.id] = change.newJson;
-      }
-    }
+    _updateJsonCache(document);
   }
 
   void dispose() {
@@ -427,35 +401,4 @@ bool _mapsEqual(Map<String, dynamic> a, Map<String, dynamic> b) {
     }
   }
   return true;
-}
-
-Map<String, dynamic> _deepCopyJsonMap(Map<String, dynamic> map) {
-  final copy = <String, dynamic>{};
-  for (final entry in map.entries) {
-    final value = entry.value;
-    if (value is Map<String, dynamic>) {
-      copy[entry.key] = _deepCopyJsonMap(value);
-    } else if (value is Map) {
-      copy[entry.key] = _deepCopyJsonMap(value.cast<String, dynamic>());
-    } else if (value is List) {
-      copy[entry.key] = _deepCopyJsonList(value);
-    } else {
-      copy[entry.key] = value;
-    }
-  }
-  return copy;
-}
-
-List<dynamic> _deepCopyJsonList(List list) {
-  return list.map((item) {
-    if (item is Map<String, dynamic>) {
-      return _deepCopyJsonMap(item);
-    } else if (item is Map) {
-      return _deepCopyJsonMap(item.cast<String, dynamic>());
-    } else if (item is List) {
-      return _deepCopyJsonList(item);
-    } else {
-      return item;
-    }
-  }).toList();
 }

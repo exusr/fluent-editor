@@ -13,6 +13,7 @@ import 'package:fluent_editor/utils/handler_helpers.dart';
 import 'package:fluent_editor/utils/cursor_utils.dart';
 import 'package:fluent_editor/widgets/editor/fluent_link_dialog.dart';
 import 'package:fluent_editor/widgets/editor/fluent_context_menu.dart';
+import 'package:fluent_editor/utils/node_operations.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -166,12 +167,13 @@ class FluentParagraphWidgetState<T extends FluentParagraphWidget> extends State<
 
   @override
   Widget build(BuildContext context) {
+    final liveNode = findById(widget.document.content, widget.node.id) ?? widget.node;
     final cursor = widget.document.cursor;
-    final container = widget.node as InlineContainerNode;
-    final nodeId = widget.node.id;
+    final container = liveNode as InlineContainerNode;
+    final nodeId = liveNode.id;
     final hasPreedit = widget.document.imeHandler.isPreeditInContainer(nodeId);
 
-    final paragraph = widget.node is Paragraph ? widget.node as Paragraph : null;
+    final paragraph = liveNode is Paragraph ? liveNode : null;
     final style = paragraph?.getStyle();
     final suggestionHook = widget.document.allStyleHooks.whereType<SuggestionStyleHook>().firstOrNull ?? widget.document.suggestionStyleHook;
 
@@ -200,7 +202,7 @@ class FluentParagraphWidgetState<T extends FluentParagraphWidget> extends State<
     final commentAnnotations = _comment?.commentsForNode(nodeId) ?? const [];
     final selectedCommentId = _comment?.selectedCommentId;
 
-    final indentLevel = (widget.node as Paragraph).indent;
+    final indentLevel = (liveNode as Paragraph).indent;
     final indentPadding = indentLevel * 24.0;
 
     final isSuggestionMode = widget.document.registry.plugins.any((p) {
@@ -300,7 +302,7 @@ class FluentParagraphWidgetState<T extends FluentParagraphWidget> extends State<
               styleHooks: widget.document.allStyleHooks,
               suggestionStyleHook: suggestionHook,
               lineHeight: style?.lineHeight ?? widget.document.pendingLineHeight,
-              textAlign: parseTextAlign((widget.node as Paragraph).textAlign),
+              textAlign: parseTextAlign(paragraph?.textAlign ?? 'left'),
               shrinkWrap: widget.shrinkWrap,
               paragraphStyle: style, // Pass the style for fallbacks
               defaultTextColor: Theme.of(context).colorScheme.onSurface,

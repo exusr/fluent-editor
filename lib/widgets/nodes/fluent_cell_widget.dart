@@ -1,5 +1,6 @@
 import 'package:fluent_editor/factories.dart';
 import 'package:fluent_editor/fluent_document.dart';
+import 'package:fluent_editor/utils/node_operations.dart';
 import 'package:fluent_editor/widgets/node_widget_builder.dart';
 import 'package:flutter/material.dart';
 
@@ -63,9 +64,10 @@ class _FluentCellWidgetState extends State<FluentCellWidget> {
 
   @override
   Widget build(BuildContext context) {
+    final liveCell = (findById(widget.document.content, widget.node.id) as FluentCell?) ?? widget.node;
     final childrenWidgets = <Widget>[];
 
-    for (final child in widget.node.children) {
+    for (final child in liveCell.children) {
       childrenWidgets.add(buildFNodeWidget(child, widget.document));
     }
 

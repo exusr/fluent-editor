@@ -243,6 +243,7 @@ class FluentDocument extends ChangeNotifier {
     _flattenedCache = null;
     _flattenedByFragIdCache = null;
     _logicalContainerCache.clear();
+    _nodeKeys.clear();
     cachedSelectionKey = null;
     cachedSelection = null;
   }
@@ -681,6 +682,8 @@ class FluentDocument extends ChangeNotifier {
       _dirtyNodeIds = affectedIds;
     } else if (targetNodeId != null) {
       _dirtyNodeIds = {targetNodeId};
+    } else if (_undoRedoManager.lastCommittedNodeIds.isNotEmpty) {
+      _dirtyNodeIds = Set.from(_undoRedoManager.lastCommittedNodeIds);
     } else {
       final focusId = cursor.focusId;
       if (focusId.isNotEmpty) {
@@ -690,6 +693,7 @@ class FluentDocument extends ChangeNotifier {
         }
       }
     }
+    _expandDirtyNodeIds();
     notifyListeners();
     if (_dirtyNodeIds.isNotEmpty) {
       try {
@@ -702,6 +706,19 @@ class FluentDocument extends ChangeNotifier {
     }
   }
 
+  void _expandDirtyNodeIds() {
+    if (_dirtyNodeIds.isEmpty) return;
+    final expanded = Set<String>.from(_dirtyNodeIds);
+    for (final id in _dirtyNodeIds) {
+      String? curr = findParentCached(id);
+      while (curr != null) {
+        expanded.add(curr);
+        curr = findParentCached(curr);
+      }
+    }
+    _dirtyNodeIds = expanded;
+  }
+
   /// Notifies document listeners that the content changed.
   /// Use this after undo/redo where [updateContent] must NOT be called
   /// (it would create a new undo record).
@@ -711,11 +728,18 @@ class FluentDocument extends ChangeNotifier {
   void notifyDocumentChanged({Set<String>? affectedIds}) {
     _contentVersion++;
     _dirtyNodeIds = affectedIds ?? {};
+    _expandDirtyNodeIds();
     _cachedCursorContainerId = cursor.focusId.isNotEmpty
         ? findLogicalContainerId(cursor.focusId)
         : null;
     cachedSelectionKey = null;
     cachedSelection = null;
+    final activeContainerIds = <String>{};
+    walkTree(content, (node, _) {
+      if (node is InlineContainerNode) activeContainerIds.add(node.id);
+      return true;
+    });
+    paragraphRegistry.syncVisibleContainers(activeContainerIds);
     cursor.notifyListeners();
     notifyListeners();
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -726,8 +750,12 @@ class FluentDocument extends ChangeNotifier {
   /// Returns true if [nodeId] was marked dirty by the last
   /// [notifyDocumentChanged] or [updateContent] call. If no specific dirty nodes were set,
   /// returns true for all IDs (backward-compatible behaviour).
-  bool isNodeDirty(String nodeId) =>
-      _dirtyNodeIds.isEmpty || _dirtyNodeIds.contains(nodeId);
+  bool isNodeDirty(String nodeId) {
+    if (_dirtyNodeIds.isEmpty || _dirtyNodeIds.contains(nodeId)) return true;
+    final parentId = findParentCached(nodeId);
+    if (parentId != null) return isNodeDirty(parentId);
+    return false;
+  }
 
   /// Returns true if all nodes are considered dirty (e.g. full document refresh).
   bool get isFullDocumentDirty => _dirtyNodeIds.isEmpty;

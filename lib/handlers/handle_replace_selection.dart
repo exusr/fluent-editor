@@ -97,7 +97,9 @@ void executeHandleReplaceSelection(String character, FluentDocument document) {
     document: document,
   );
 
-  document.updateContent();
+  document.updateContent(
+    affectedIds: sel.nodes.map((n) => (n.container as FNode).id).toSet(),
+  );
   document.cursorOnlyUpdate();
 }
 

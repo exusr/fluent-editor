@@ -58,7 +58,8 @@ class _FluentListItemWidgetState extends State<FluentListItemWidget> {
 
   @override
   Widget build(BuildContext context) {
-    final allChildren = widget.node.getChildren();
+    final liveNode = (findById(widget.document.content, widget.node.id) as ListItem?) ?? widget.node;
+    final allChildren = liveNode.getChildren();
 
     int firstParagraphIndex = -1;
     for (int i = 0; i < allChildren.length; i++) {
